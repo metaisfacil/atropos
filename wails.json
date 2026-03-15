@@ -1,0 +1,44 @@
+{
+  "name": "atropos",
+  "outputfilename": "atropos",
+  "frontend": {
+    "install": "npm install",
+    "build": "npm run build",
+    "dev": "npm run dev",
+    "dir": "./frontend"
+  },
+  "author": {
+    "name": "Atropos Team",
+    "email": ""
+  },
+  "info": {
+    "productName": "Atropos",
+    "productVersion": "1.0.0",
+    "companyName": "Atropos",
+    "companyWebsite": "",
+    "copyright": "Copyright (c) 2026"
+  },
+  "build": {
+    "debug": "darwin",
+    "devServer": "http://localhost:34115",
+    "frontend:dev:serverUrl": "http://localhost:5173",
+    "nsis": {
+      "template": null,
+      "licenseFile": "",
+      "icon": "",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Atropos"
+    },
+    "webkitPrivateMode": false,
+    "windows": {
+      "windowStartState": "maximised"
+    },
+    "mac": {
+      "universalBuild": true,
+      "codeSigningIdentity": ""
+    }
+  }
+}
