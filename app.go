@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -251,7 +250,7 @@ func (a *App) decodeViaMagick(path, outFmt string) (image.Image, error) {
 	}
 
 	cmd := exec.Command(magickPath, "convert", path, outFmt+":-")
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	hideCommandWindow(cmd)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	var stderr bytes.Buffer
