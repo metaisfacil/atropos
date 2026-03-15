@@ -272,23 +272,13 @@ func TestApplyCLAHE_OutputRange(t *testing.T) {
 	if dst.Bounds().Dx() != 32 || dst.Bounds().Dy() != 32 {
 		t.Fatal("CLAHE should preserve dimensions")
 	}
-
-	// All output values should be valid [0, 255]
-	for y := 0; y < 32; y++ {
-		for x := 0; x < 32; x++ {
-			v := dst.GrayAt(x, y).Y
-			if v > 255 {
-				t.Fatalf("out of range at (%d,%d): %d", x, y, v)
-			}
-		}
-	}
 }
 
 func TestApplyCLAHE_UniformImage(t *testing.T) {
 	// Uniform image: CLAHE should return all same value (or close to it)
 	src := image.NewGray(image.Rect(0, 0, 16, 16))
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
+	for y := range 16 {
+		for x := range 16 {
 			src.SetGray(x, y, color.Gray{Y: 128})
 		}
 	}
