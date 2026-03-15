@@ -23,8 +23,8 @@ jobs:
           - name: macOS
             os: macos-latest
             build-flags: ""
-            binary: build/bin/atropos
-            asset-name: atropos-macos-universal
+            binary: build/bin/atropos.app
+            asset-name: atropos-macos-universal.zip
           - name: Linux
             os: ubuntu-latest
             build-flags: -tags webkit2_41
@@ -66,9 +66,14 @@ jobs:
       - name: Build application
         run: wails build ${{ matrix.build-flags }}
 
-      - name: Rename binary for release
+      - name: Package binary for release
         shell: bash
-        run: cp "${{ matrix.binary }}" "${{ matrix.asset-name }}"
+        run: |
+          if [[ "${{ matrix.binary }}" == *.app ]]; then
+            cd build/bin && zip -r "$GITHUB_WORKSPACE/${{ matrix.asset-name }}" atropos.app
+          else
+            cp "${{ matrix.binary }}" "${{ matrix.asset-name }}"
+          fi
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

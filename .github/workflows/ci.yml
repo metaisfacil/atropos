@@ -40,7 +40,7 @@ jobs:
             os: macos-latest
             artifact: atropos-macos
             build-flags: ""
-            binary: build/bin/atropos
+            binary: build/bin/atropos.app
           - name: Linux
             os: ubuntu-latest
             artifact: atropos-linux
