@@ -27,7 +27,7 @@ jobs:
             asset-name: atropos-macos-universal
           - name: Linux
             os: ubuntu-latest
-            build-flags: ""
+            build-flags: -tags webkit2_41
             binary: build/bin/atropos
             asset-name: atropos-linux-amd64
 
