@@ -371,6 +371,7 @@ export default function App() {
 
     // Disc mode: Shift+drag = rotate disc
     if (mode === 'disc' && e.shiftKey && discActive) {
+      ctrlDragRef.current = null
       shiftDragRef.current = { startX: e.clientX, appliedAngle: 0 }
       shiftDragBusy.current = false
       setDragging(true)
@@ -381,6 +382,7 @@ export default function App() {
 
     // Disc mode: Ctrl+drag = shift disc
     if (mode === 'disc' && e.ctrlKey && discActive) {
+      shiftDragRef.current = null
       const imgPt = displayToImage(pos.x, pos.y)
       ctrlDragRef.current = { lastImg: imgPt }
       ctrlDragBusy.current = false
@@ -389,6 +391,9 @@ export default function App() {
       setDragCurrent(pos)
       return
     }
+
+    // Disc mode: block regular drag if a disc region already exists (must Reset first)
+    if (mode === 'disc' && discActive) return
 
     // Disc & Line mode: start drag
     ctrlDragRef.current = null

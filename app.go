@@ -211,11 +211,11 @@ func (a *App) decodeImageFile(path string) (image.Image, error) {
 
 	// ── Fast path for TIFFs: use ImageMagick if available ──────────
 	if ext == ".tif" || ext == ".tiff" {
-		if img, err := a.decodeViaMagick(path, "bmp3"); err == nil {
+		img, err := a.decodeViaMagick(path, "bmp3")
+		if err == nil {
 			return img, nil
-		} else {
-			a.logf("decodeImageFile: magick fast-path failed (%v), trying Go decoder", err)
 		}
+		a.logf("decodeImageFile: magick fast-path failed (%v), trying Go decoder", err)
 	}
 
 	// ── Standard Go decoders ───────────────────────────────────────
@@ -770,6 +770,12 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 	localCenter := image.Pt(a.discCenter.X-x1, a.discCenter.Y-y1)
 
 	feathered := applyCircularMaskWithFeather(cropped, localCenter, a.discRadius, a.featherSize, a.bgColor)
+
+	// Re-apply accumulated rotation so that ShiftDisc / SetFeatherSize / etc.
+	// don't discard a rotation the user already applied.
+	if a.rotationAngle != 0 {
+		feathered = rotateArbitrary(feathered, a.rotationAngle, a.bgColor)
+	}
 	a.warpedImage = feathered
 
 	preview, err := imageToBase64(a.warpedImage)
@@ -786,18 +792,12 @@ type DiscRotateRequest struct {
 
 // RotateDisc rotates the disc image by the specified angle.
 func (a *App) RotateDisc(req DiscRotateRequest) (*ProcessResult, error) {
-	a.logf("RotateDisc: angle=%.2f", req.Angle)
-	if a.warpedImage == nil {
-		return nil, fmt.Errorf("no disc image")
+	a.logf("RotateDisc: angle=%.2f (cumulative before: %.2f)", req.Angle, a.rotationAngle)
+	if a.discRadius <= 0 {
+		return nil, fmt.Errorf("no disc defined")
 	}
-	a.rotationAngle = req.Angle
-	a.warpedImage = rotateArbitrary(a.warpedImage, a.rotationAngle, a.bgColor)
-
-	preview, err := imageToBase64(a.warpedImage)
-	if err != nil {
-		return nil, err
-	}
-	return &ProcessResult{Preview: preview}, nil
+	a.rotationAngle += req.Angle
+	return a.redrawDisc()
 }
 
 // PixelColorRequest holds image-space coordinates for colour sampling.
