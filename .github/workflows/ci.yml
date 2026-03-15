@@ -18,6 +18,9 @@ jobs:
         with:
           go-version: "1.22"
 
+      - name: Create frontend dist placeholder
+        run: mkdir -p frontend/dist && touch frontend/dist/.gitkeep
+
       - name: Run Go tests
         run: go test ./... -count=1 -v
 
