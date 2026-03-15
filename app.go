@@ -244,12 +244,22 @@ func (a *App) decodeImageFile(path string) (image.Image, error) {
 // decodeViaMagick shells out to ImageMagick to decode an image file.
 // outFmt should be a fast-to-decode format like "bmp3" (raw pixels, tiny header).
 func (a *App) decodeViaMagick(path, outFmt string) (image.Image, error) {
+	// Try "magick" first (ImageMagick 7+), then fall back to "convert" (IM 6 / Linux distros)
 	magickPath, lookErr := exec.LookPath("magick")
 	if lookErr != nil {
-		return nil, fmt.Errorf("ImageMagick not found")
+		magickPath, lookErr = exec.LookPath("convert")
+		if lookErr != nil {
+			return nil, fmt.Errorf("ImageMagick not found")
+		}
 	}
 
-	cmd := exec.Command(magickPath, "convert", path, outFmt+":-")
+	var cmd *exec.Cmd
+	if strings.HasSuffix(magickPath, "magick") || strings.HasSuffix(magickPath, "magick.exe") {
+		cmd = exec.Command(magickPath, "convert", path, outFmt+":-")
+	} else {
+		// "convert" is the binary itself — no sub-command needed
+		cmd = exec.Command(magickPath, path, outFmt+":-")
+	}
 	hideCommandWindow(cmd)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout

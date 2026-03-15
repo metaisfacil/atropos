@@ -1,5 +1,12 @@
 .PHONY: build dev clean setup frontend test help
 
+# Detect OS for platform-specific output name
+ifeq ($(OS),Windows_NT)
+	EXE_NAME := atropos.exe
+else
+	EXE_NAME := atropos
+endif
+
 # Default target
 help:
 	@echo Atropos Wails Build Targets
@@ -26,7 +33,7 @@ frontend:
 
 # Production build: frontend first, then Wails embeds dist/ into the binary
 build: frontend
-	wails build -o atropos.exe
+	wails build -o $(EXE_NAME)
 
 # Run Go tests
 test:

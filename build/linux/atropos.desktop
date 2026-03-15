@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Atropos
+Comment=Image perspective correction and disc cropping tool
+Exec=atropos %F
+Icon=atropos
+Terminal=false
+Categories=Graphics;ImageProcessing;
+MimeType=image/png;image/jpeg;image/tiff;image/bmp;
