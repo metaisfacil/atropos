@@ -193,6 +193,8 @@ export namespace main {
 	    message: string;
 	    width: number;
 	    height: number;
+	    black?: number;
+	    white?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProcessResult(source);
@@ -204,6 +206,8 @@ export namespace main {
 	        this.message = source["message"];
 	        this.width = source["width"];
 	        this.height = source["height"];
+	        this.black = source["black"];
+	        this.white = source["white"];
 	    }
 	}
 	export class RotateRequest {
