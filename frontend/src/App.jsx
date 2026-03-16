@@ -706,9 +706,6 @@ export default function App() {
 
     const handler = async (e) => {
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation()
-      log(`[ZOOM-WHEEL] deltaY=${e.deltaY} ctrlKey=${e.ctrlKey} mode=${mode} discActive=${discActive}`)
-      log(`[ZOOM-WHEEL] BEFORE: scrollLeft=${el.scrollLeft} scrollTop=${el.scrollTop} scrollWidth=${el.scrollWidth} scrollHeight=${el.scrollHeight} clientWidth=${el.clientWidth} clientHeight=${el.clientHeight}`)
-
       if (e.ctrlKey && mode === 'disc' && discActive) {
         const delta = e.deltaY < 0 ? 1 : -1
         const newF  = Math.max(0, Math.min(100, featherSize + delta))
@@ -723,7 +720,6 @@ export default function App() {
       const factor = e.deltaY < 0 ? 1.1 : 0.9
       setZoom(z => {
         const newZ = Math.min(5, Math.max(0.1, z * factor))
-        log(`[ZOOM-SETZOOM] oldZ=${z.toFixed(4)} newZ=${newZ.toFixed(4)}`)
         if (newZ === z) return z
         const rect      = el.getBoundingClientRect()
         const cursorX   = e.clientX - rect.left + el.scrollLeft
@@ -735,11 +731,9 @@ export default function App() {
         }
         return newZ
       })
-      log(`[ZOOM-WHEEL] AFTER setZoom call: scrollLeft=${el.scrollLeft} scrollTop=${el.scrollTop}`)
     }
 
     const scrollSpy = () => {
-      log(`[SCROLL-SPY] scrollLeft=${el.scrollLeft} scrollTop=${el.scrollTop}`)
     }
     el.addEventListener('scroll', scrollSpy, { passive: true })
     el.addEventListener('wheel', handler, { passive: false, capture: true })
@@ -753,15 +747,11 @@ export default function App() {
     const el  = canvasRef.current
     const log = (msg) => LogFrontend(msg).catch(() => {})
     if (pendingScrollRef.current) {
-      log(`[ZOOM-LAYOUT] zoom=${zoom.toFixed(4)} BEFORE apply: scrollLeft=${el?.scrollLeft} scrollTop=${el?.scrollTop}`)
       if (el) {
         el.scrollLeft = pendingScrollRef.current.left
         el.scrollTop  = pendingScrollRef.current.top
-        log(`[ZOOM-LAYOUT] AFTER apply: scrollLeft=${el.scrollLeft} scrollTop=${el.scrollTop}`)
       }
       pendingScrollRef.current = null
-    } else {
-      log(`[ZOOM-LAYOUT] zoom=${zoom.toFixed(4)} NO pending scroll. scrollLeft=${el?.scrollLeft} scrollTop=${el?.scrollTop}`)
     }
   }, [zoom])
 
