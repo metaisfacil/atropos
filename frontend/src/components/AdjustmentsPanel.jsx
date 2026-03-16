@@ -34,8 +34,11 @@ export default function AdjustmentsPanel({
     try {
       const result = await AutoContrast()
       if (result?.preview) setPreview(result.preview)
-      setBlackPoint(0)
-      setWhitePoint(255)
+      // AutoContrast returns a message like "Auto Contrast applied (black=12, white=243)".
+      if (typeof result?.black === 'number' && typeof result?.white === 'number') {
+        setBlackPoint(result.black)
+        setWhitePoint(result.white)
+      }
     } catch (err) {
       console.error('AutoContrast error:', err)
     } finally {

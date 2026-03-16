@@ -91,6 +91,9 @@ type ProcessResult struct {
 	Message string `json:"message"`
 	Width   int    `json:"width"`
 	Height  int    `json:"height"`
+	// Optional numeric results (e.g. from AutoContrast)
+	Black int `json:"black,omitempty"`
+	White int `json:"white,omitempty"`
 }
 
 // LaunchArgs contains the initial file path and mode from CLI arguments.
