@@ -1,0 +1,267 @@
+package main
+
+import (
+	"fmt"
+	"image"
+)
+
+// CropRequest specifies which edge to crop.
+type CropRequest struct {
+	Direction string `json:"direction"`
+}
+
+// RotateRequest specifies the rotation/flip operation to apply.
+type RotateRequest struct {
+	FlipCode int `json:"flipCode"`
+}
+
+// SetLevelsRequest carries explicit black- and white-point values.
+type SetLevelsRequest struct {
+	Black int `json:"black"`
+	White int `json:"white"`
+}
+
+// workingImage returns the image that adjustment operations should act on.
+// Once a warp/crop/disc operation has produced a warpedImage that is what
+// the user is editing; before any such operation it is currentImage.
+func (a *App) workingImage() *image.NRGBA {
+	if a.warpedImage != nil {
+		return a.warpedImage
+	}
+	return a.currentImage
+}
+
+// setWorkingImage stores the result of an adjustment. It always writes to
+// warpedImage so that SaveImage (which only reads warpedImage) always has
+// something to save, even when the user adjusts before cropping.
+func (a *App) setWorkingImage(img *image.NRGBA) {
+	a.warpedImage = img
+}
+
+// saveUndo pushes the current working image onto the undo stack and clears
+// the levels baseline so the next SetLevels session gets a fresh snapshot.
+func (a *App) saveUndo() {
+	if len(a.undoStack) >= a.undoLimit {
+		a.undoStack = a.undoStack[1:]
+	}
+	// warpedImage may be nil when a committing op runs before any warp
+	// (e.g. AutoContrast in corner mode). Store currentImage in that case.
+	if a.warpedImage != nil {
+		a.undoStack = append(a.undoStack, cloneImage(a.warpedImage))
+	} else if a.currentImage != nil {
+		a.undoStack = append(a.undoStack, cloneImage(a.currentImage))
+	}
+	// Any committing operation invalidates the levels baseline so that the
+	// next SetLevels call re-snapshots from the new working image.
+	a.levelsBaseImage = nil
+}
+
+// Undo reverts the last operation on the image.
+func (a *App) Undo() (*ProcessResult, error) {
+	a.logf("Undo: stack depth=%d", len(a.undoStack))
+	if len(a.undoStack) == 0 {
+		a.logf("Undo: nothing to undo")
+		return &ProcessResult{Message: "Nothing to undo"}, nil
+	}
+	a.warpedImage = a.undoStack[len(a.undoStack)-1]
+	a.undoStack = a.undoStack[:len(a.undoStack)-1]
+
+	preview, err := imageToBase64(a.warpedImage)
+	if err != nil {
+		return nil, err
+	}
+	return &ProcessResult{Preview: preview}, nil
+}
+
+// Crop removes pixels from the specified edge of the warped image.
+func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
+	a.logf("Crop: direction=%q", req.Direction)
+	if a.warpedImage == nil {
+		a.logf("Crop: no warped image")
+		return nil, fmt.Errorf("no warped image")
+	}
+	a.saveUndo()
+
+	b := a.warpedImage.Bounds()
+	r := b
+
+	switch req.Direction {
+	case "top":
+		if a.cropTop < b.Dy()-1 {
+			a.cropTop += a.cropAmount
+			r.Min.Y += a.cropAmount
+		}
+	case "bottom":
+		if a.cropBottom < b.Dy()-1 {
+			a.cropBottom += a.cropAmount
+			r.Max.Y -= a.cropAmount
+		}
+	case "left":
+		if a.cropLeft < b.Dx()-1 {
+			a.cropLeft += a.cropAmount
+			r.Min.X += a.cropAmount
+		}
+	case "right":
+		if a.cropRight < b.Dx()-1 {
+			a.cropRight += a.cropAmount
+			r.Max.X -= a.cropAmount
+		}
+	}
+
+	a.warpedImage = subImage(a.warpedImage, r)
+
+	preview, err := imageToBase64(a.warpedImage)
+	if err != nil {
+		return nil, err
+	}
+	return &ProcessResult{Preview: preview}, nil
+}
+
+// Rotate applies a 90-degree rotation to the warped image.
+func (a *App) Rotate(req RotateRequest) (*ProcessResult, error) {
+	a.logf("Rotate: flipCode=%d", req.FlipCode)
+	if a.warpedImage == nil {
+		a.logf("Rotate: no warped image")
+		return nil, fmt.Errorf("no warped image")
+	}
+	a.saveUndo()
+
+	a.warpedImage = rotate90(a.warpedImage, req.FlipCode)
+
+	preview, err := imageToBase64(a.warpedImage)
+	if err != nil {
+		return nil, err
+	}
+	return &ProcessResult{Preview: preview}, nil
+}
+
+// AutoContrast computes the luminance min/max of the working image, stretches
+// all channels so that min->0 and max->255, and returns the updated preview.
+// Matches the behaviour of Photoshop Image > Auto Contrast.
+//
+// Pre-warp path: applies to currentImage and re-renders the corner overlay so
+// dots remain visible.  Post-warp path: applies to warpedImage as normal.
+// If the sliders have been partially dragged (levelsBaseImage != nil), the
+// stretch runs against that base so it does not stack on a partial drag.
+func (a *App) AutoContrast() (*ProcessResult, error) {
+	a.logf("AutoContrast")
+
+	if a.currentImage == nil {
+		return nil, fmt.Errorf("no image loaded")
+	}
+
+	preWarp := a.warpedImage == nil
+
+	// Prefer the pre-adjustment base when the sliders have been touched.
+	var img *image.NRGBA
+	if a.levelsBaseImage != nil {
+		img = a.levelsBaseImage
+	} else if preWarp {
+		img = a.currentImage
+	} else {
+		img = a.warpedImage
+	}
+
+	// saveUndo also clears levelsBaseImage — the baked result is now the base.
+	a.saveUndo()
+
+	bp, wp := computeAutoContrastPoints(img)
+	a.logf("AutoContrast: blackPt=%d whitePt=%d", bp, wp)
+	adjusted := applyLevels(img, bp, wp)
+
+	if preWarp {
+		a.currentImage = adjusted
+		if len(a.detectedCorners) > 0 {
+			result, err := a.drawCornerOverlay(a.cornerDotRadius)
+			if err != nil {
+				return nil, err
+			}
+			result.Message = fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp)
+			return result, nil
+		}
+		preview, err := imageToBase64(adjusted)
+		if err != nil {
+			return nil, err
+		}
+		b := adjusted.Bounds()
+		return &ProcessResult{
+			Preview: preview,
+			Message: fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp),
+			Width:   b.Dx(),
+			Height:  b.Dy(),
+		}, nil
+	}
+
+	// Post-warp path.
+	a.warpedImage = adjusted
+	preview, err := imageToBase64(adjusted)
+	if err != nil {
+		return nil, err
+	}
+	b := adjusted.Bounds()
+	return &ProcessResult{
+		Preview: preview,
+		Message: fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp),
+		Width:   b.Dx(),
+		Height:  b.Dy(),
+	}, nil
+}
+
+// SetLevels applies an explicit levels stretch to the working image.
+// Called while the user drags the Black Point / White Point sliders.
+//
+// Each call always applies against levelsBaseImage — a snapshot taken the
+// first time the sliders are touched after a committing operation. This
+// prevents the stacking bug where each drag re-stretches the already-stretched
+// result.  saveUndo (called by Crop, Rotate, AutoContrast, etc.) clears
+// levelsBaseImage so the next slider session gets a fresh base.
+//
+// Pre-warp path: writes to currentImage so drawCornerOverlay keeps rendering
+// dots on top of the adjusted pixels.
+func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
+	a.logf("SetLevels: black=%d white=%d", req.Black, req.White)
+
+	if a.currentImage == nil {
+		return nil, fmt.Errorf("no image loaded")
+	}
+
+	preWarp := a.warpedImage == nil
+
+	// Snapshot the base on first touch; reuse on every subsequent drag.
+	if a.levelsBaseImage == nil {
+		if preWarp {
+			a.levelsBaseImage = cloneImage(a.currentImage)
+		} else {
+			a.levelsBaseImage = cloneImage(a.warpedImage)
+		}
+		a.logf("SetLevels: captured levelsBaseImage (preWarp=%v)", preWarp)
+	}
+
+	adjusted := applyLevels(a.levelsBaseImage, req.Black, req.White)
+	// Do NOT call saveUndo — slider ticks must not flood the undo stack.
+
+	if preWarp {
+		// Write back to currentImage so drawCornerOverlay stays in sync.
+		a.currentImage = adjusted
+		// Re-render corner overlay if dots have been placed.
+		if len(a.detectedCorners) > 0 {
+			return a.drawCornerOverlay(a.cornerDotRadius)
+		}
+		// No corners yet — return a plain preview.
+		preview, err := imageToBase64(adjusted)
+		if err != nil {
+			return nil, err
+		}
+		b := adjusted.Bounds()
+		return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy()}, nil
+	}
+
+	// Post-warp path: write to warpedImage as before.
+	a.warpedImage = adjusted
+	preview, err := imageToBase64(adjusted)
+	if err != nil {
+		return nil, err
+	}
+	b := adjusted.Bounds()
+	return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy()}, nil
+}
