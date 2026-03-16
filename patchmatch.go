@@ -3,7 +3,6 @@ package main
 import (
 	"image"
 	"image/draw"
-	"image/png"
 	"math"
 	"math/rand"
 	"runtime"
@@ -375,20 +374,3 @@ func PatchMatchFill(src *image.NRGBA, mask *image.Alpha, patchSize, iterations i
 
 	return dst
 }
-
-// Auxiliary convenience: encode an image to PNG bytes (used in tests/debug)
-func encodePNG(img image.Image) []byte {
-	buf := &bytesBuffer{}
-	_ = png.Encode(buf, img)
-	return buf.Bytes()
-}
-
-// small bytes buffer to avoid importing bytes in multiple places
-type bytesBuffer struct{ b []byte }
-
-func (bb *bytesBuffer) Write(p []byte) (int, error) {
-	bb.b = append(bb.b, p...)
-	return len(p), nil
-}
-
-func (bb *bytesBuffer) Bytes() []byte { return bb.b }
