@@ -1,5 +1,7 @@
 # Atropos
 
+![Atropos social preview](https://github.com/metaisfacil/atropos/blob/master/preview-2.png)
+
 Atropos is a desktop image processing tool for perspective correction and circular cropping. It is specifically intended for those digitizing musical materials such as CD, vinyl, and cassette inserts. The application is built with [Wails v2](https://wails.io), combining a Go backend for all pixel-level operations with a React frontend. All image processing is implemented in pure Go with no C dependencies; the only optional external dependency is ImageMagick, used as a decode fallback for TIFF files.
 
 ---
