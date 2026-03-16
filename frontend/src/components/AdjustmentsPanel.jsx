@@ -22,6 +22,10 @@ export default function AdjustmentsPanel({
   setPreview,
   useStretchPreprocess,
   setUseStretchPreprocess,
+  useTouchupTool,
+  setUseTouchupTool,
+  brushSize,
+  setBrushSize,
 }) {
   const applyAutoContrast = async () => {
     if (!imageLoaded) return
@@ -65,7 +69,27 @@ export default function AdjustmentsPanel({
 
       {adjPanelOpen && (
         <div className="keyboard-shortcuts-content">
-          <div className="shortcut-item" style={{ marginBottom: 10, position: 'relative' }}>
+          <div className="shortcut-item">
+            <DelayedHint hint="Toggles the touch-up brush which uses a PatchMatch-style content-aware fill. Draw strokes on the preview to build a mask, then commit to fill.">
+              <button
+                className={`primary touchup-btn ${useTouchupTool ? 'active' : ''}`}
+                onClick={() => setUseTouchupTool(!useTouchupTool)}
+                aria-pressed={useTouchupTool}
+              >
+                Touch-up brush
+              </button>
+            </DelayedHint>
+          </div>
+
+          {useTouchupTool && (
+            <div className="shortcut-item level-row">
+              <label className="level-label">Radius</label>
+              <input className="level-range" type="range" min="4" max="200" value={brushSize} onChange={e => setBrushSize(Number(e.target.value))} />
+              <span className="level-value">{brushSize}px</span>
+            </div>
+          )}
+          
+          <div className="shortcut-item" style={{ position: 'relative' }}>
             <DelayedHint hint="Clamps the image's luminance around the brightest and darkest points to enhance contrast.">
               <button
                 className="primary"
@@ -73,12 +97,12 @@ export default function AdjustmentsPanel({
                 onClick={applyAutoContrast}
                 disabled={autoContrastPending || !imageLoaded || loading}
               >
-                {autoContrastPending ? 'Auto Contrast…' : 'Auto Contrast'}
+                {autoContrastPending ? 'Auto-contrast…' : 'Auto-contrast'}
               </button>
             </DelayedHint>
           </div>
 
-          <div className="shortcut-item" style={{ marginBottom: 10 }}>
+          <div className="shortcut-item">
             <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <input type="checkbox" checked={useStretchPreprocess} onChange={e => setUseStretchPreprocess(e.target.checked)} />
               <DelayedHint hint="Remaps 1%/99% luminance to full range before corner detection. This can improve outcomes on scans with dark backgrounds.">
@@ -87,7 +111,7 @@ export default function AdjustmentsPanel({
             </label>
           </div>
 
-          <div className="shortcut-item level-row" style={{ marginBottom: 10 }}>
+          <div className="shortcut-item level-row">
             <label className="level-label">Black</label>
               <input
                 className="level-range"
@@ -102,7 +126,7 @@ export default function AdjustmentsPanel({
               <span className="level-value">{blackPoint}</span>
           </div>
 
-          <div className="shortcut-item level-row" style={{ marginBottom: 10 }}>
+          <div className="shortcut-item level-row">
             <label className="level-label">White</label>
               <input
                 className="level-range"
