@@ -25,6 +25,7 @@
   padding-left: 10px; /* small left gutter so content appears centered */
   /* Keep scrollbar gutter stable to avoid layout shift when it appears. */
   scrollbar-gutter: stable both-edges;
+  align-items: center;
 }
 
 /* WebKit scrollbar styling for the inner scroll area */
