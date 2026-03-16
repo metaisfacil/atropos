@@ -14,7 +14,11 @@ The application operates in three mutually exclusive modes, selectable from the 
 
 Corner mode performs perspective correction by warping a quadrilateral region of the image into a rectangle.
 
-On image load, Shi-Tomasi corner detection runs automatically. Detection uses a downsampled working copy (longest edge capped at 1500 px) for speed, then maps the detected coordinates back to full-resolution image space. Detection parameters exposed in the sidebar are:
+On image load, Shi–Tomasi corner detection runs automatically. Detection uses a downsampled working copy (longest edge capped at 1500 px) for speed, then maps detected coordinates back to full-resolution image space.
+
+Detection is performed at multiple scales: the detector is applied to the working resolution and to coarser scales; candidate points are aggregated, deduplicated, and mapped back to full resolution. An optional percentile pre‑stretch (default 1%/99% luminance → full range), available in the Adjustments panel, remaps low/high luminance prior to detection to improve robustness on dark or uneven backgrounds.
+
+Detection parameters exposed in the sidebar are:
 
 - **Max Corners** — upper bound on the number of candidates returned
 - **Quality Level** — fraction of the strongest corner response used as a threshold (1–100 maps to 0.01–1.0)
