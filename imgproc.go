@@ -473,14 +473,13 @@ func perspectiveTransform(src *image.NRGBA, srcPts, dstPts [4]image.Point, outW,
 			ffx := sx - float64(ix0)
 			ffy := sy - float64(iy0)
 
-			if ix0 < sb.Min.X || ix0+1 >= sb.Max.X || iy0 < sb.Min.Y || iy0+1 >= sb.Max.Y {
-				continue
-			}
-
-			c00 := src.NRGBAAt(ix0, iy0)
-			c10 := src.NRGBAAt(ix0+1, iy0)
-			c01 := src.NRGBAAt(ix0, iy0+1)
-			c11 := src.NRGBAAt(ix0+1, iy0+1)
+			// Clamp coordinates to valid range to avoid transparent pixels at edges
+			ix0c := clamp(ix0, sb.Min.X, sb.Max.X-2)
+			iy0c := clamp(iy0, sb.Min.Y, sb.Max.Y-2)
+			c00 := src.NRGBAAt(ix0c, iy0c)
+			c10 := src.NRGBAAt(ix0c+1, iy0c)
+			c01 := src.NRGBAAt(ix0c, iy0c+1)
+			c11 := src.NRGBAAt(ix0c+1, iy0c+1)
 
 			r := bilinear(float64(c00.R), float64(c10.R), float64(c01.R), float64(c11.R), ffx, ffy)
 			g := bilinear(float64(c00.G), float64(c10.G), float64(c01.G), float64(c11.G), ffx, ffy)
