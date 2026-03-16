@@ -209,10 +209,10 @@ button.save-btn:hover {
 .sidebar-bottom::before {
   content: "";
   position: absolute;
-  top: -56px;
+  top: -40px;
   left: 0;
   right: 0;
-  height: 56px;
+  height: 40px;
   pointer-events: none;
   background: linear-gradient(to bottom, rgba(37,37,38,0), rgba(37,37,38,0.95));
   z-index: 1;
