@@ -121,6 +121,11 @@ export default function App() {
             setRealImageDims({ w: detectResult.width, h: detectResult.height })
           }
           setCornersDetected(true)
+          // Ensure dot size matches slider after detection
+          try {
+            const dotResult = await SetCornerDotRadius({ dotRadius });
+            if (dotResult?.preview) setPreview(dotResult.preview);
+          } catch (_) {}
         }
       } catch (err) {
         console.error('Drop load error:', err)
