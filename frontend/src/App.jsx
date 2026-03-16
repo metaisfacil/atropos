@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
+import ReactDOM from 'react-dom'
 import './App.css'
 import { OnFileDrop, OnFileDropOff } from '../wailsjs/runtime/runtime'
 import { 
@@ -26,6 +27,72 @@ import {
   GetCleanPreview,
   LogFrontend
 } from '../wailsjs/go/main/App'
+
+// DelayedHint: shows a tooltip after hovering for a delay (default 1s), rendered in a portal to avoid clipping
+function DelayedHint({ children, hint, delay = 1000, offset = 10 }) {
+  const [showHint, setShowHint] = React.useState(false);
+  const [hintPos, setHintPos] = React.useState({ top: 0, left: 0 });
+  const hintTimeout = React.useRef();
+  const childRef = React.useRef();
+
+  // Show tooltip after delay, and measure position
+  const handleShow = () => {
+    hintTimeout.current = setTimeout(() => {
+      if (childRef.current) {
+        const rect = childRef.current.getBoundingClientRect();
+        setHintPos({
+          top: rect.top + rect.height / 2,
+          left: rect.right + offset
+        });
+      }
+      setShowHint(true);
+    }, delay);
+  };
+  const handleHide = () => {
+    clearTimeout(hintTimeout.current);
+    setShowHint(false);
+  };
+
+  // Render tooltip in portal
+  const tooltip = showHint ? ReactDOM.createPortal(
+    <span
+      style={{
+        position: 'fixed',
+        left: hintPos.left,
+        top: hintPos.top,
+        transform: 'translateY(-50%)',
+        background: '#222',
+        color: '#fff',
+        fontSize: 13,
+        borderRadius: 4,
+        padding: '4px 10px',
+        whiteSpace: 'nowrap',
+        zIndex: 9999,
+        boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+      }}
+    >
+      {hint}
+    </span>,
+    document.body
+  ) : null;
+
+  // Clone child to attach ref and handlers
+  const child = React.Children.only(children);
+  const childWithProps = React.cloneElement(child, {
+    ref: childRef,
+    onMouseEnter: handleShow,
+    onMouseLeave: handleHide,
+    onBlur: handleHide,
+    tabIndex: child.props.tabIndex || 0 // ensure focusable for keyboard
+  });
+
+  return (
+    <>
+      {childWithProps}
+      {tooltip}
+    </>
+  );
+}
 
 export default function App() {
   const [mode, setMode] = useState('corner')
@@ -73,6 +140,35 @@ export default function App() {
   const canvasRef = useRef(null)
   const pendingScrollRef = useRef(null) // scroll target after zoom change
   const [fitWidth, setFitWidth] = useState(0) // image display width at zoom=1 (fits container)
+
+  // Adjustment Curve Panel state
+  const [adjPanelOpen, setAdjPanelOpen] = useState(false)
+  const [autoContrastPending, setAutoContrastPending] = useState(false)
+  const [blackPoint, setBlackPoint] = useState(0)
+  const [whitePoint, setWhitePoint] = useState(255)
+
+  // --- Backend integration for preview updates ---
+  // These are stubbed; replace with real backend calls
+  const applyLevels = async (bp, wp) => {
+    // TODO: Replace with backend call
+    // Simulate preview update by overlaying a CSS filter (for demo only)
+    // In real use, call Go backend and setPreview(result.preview)
+    setBlackPoint(bp)
+    setWhitePoint(wp)
+    // Example: setLoading(true); const result = await SetLevels({ black: bp, white: wp }); setPreview(result.preview); setLoading(false);
+  }
+  const applyAutoContrast = async () => {
+    setAutoContrastPending(true)
+    // TODO: Replace with backend call
+    // Simulate auto contrast
+    setTimeout(() => {
+      const bp = 12, wp = 243
+      setBlackPoint(bp)
+      setWhitePoint(wp)
+      // Example: setLoading(true); const result = await AutoContrast(); setPreview(result.preview); setLoading(false);
+      setAutoContrastPending(false)
+    }, 600)
+  }
 
   // Loading overlay: opaque for image loads, semi-transparent for operations
   const [loadingFull, setLoadingFull] = useState(false)
@@ -874,6 +970,8 @@ export default function App() {
     }
   }
 
+
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -1067,7 +1165,54 @@ export default function App() {
               </button>
             )}
           </div>
-
+          {/* === Adjustment Curve Panel (styled like shortcuts panel) === */}
+          <div className="keyboard-shortcuts adj-panel">
+            <div className="shortcut-title adj-panel-header" onClick={() => setAdjPanelOpen(o => !o)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+              Adjustments <span className="shortcut-toggle">{adjPanelOpen ? '▾' : '▸'}</span>
+            </div>
+            {adjPanelOpen && (
+              <>
+                <div className="shortcut-item" style={{ marginBottom: 10, position: 'relative' }}>
+                  <DelayedHint hint="Sets black/white points to min/max luma">
+                    <button
+                      className="primary"
+                      style={{ minWidth: 120 }}
+                      onClick={applyAutoContrast}
+                      disabled={autoContrastPending || !imageLoaded}
+                    >
+                      {autoContrastPending ? 'Auto Contrast…' : 'Auto Contrast'}
+                    </button>
+                  </DelayedHint>
+                </div>
+                <div className="shortcut-item" style={{ marginBottom: 10 }}>
+                  <label style={{ fontWeight: 500 }}>Black Point</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max={whitePoint - 1}
+                    value={blackPoint}
+                    onChange={e => applyLevels(Number(e.target.value), whitePoint)}
+                    style={{ width: 120, marginLeft: 8 }}
+                    disabled={!imageLoaded}
+                  />
+                  <span style={{ marginLeft: 8 }}>{blackPoint}</span>
+                </div>
+                <div className="shortcut-item" style={{ marginBottom: 10 }}>
+                  <label style={{ fontWeight: 500 }}>White Point</label>
+                  <input
+                    type="range"
+                    min={blackPoint + 1}
+                    max="255"
+                    value={whitePoint}
+                    onChange={e => applyLevels(blackPoint, Number(e.target.value))}
+                    style={{ width: 120, marginLeft: 8 }}
+                    disabled={!imageLoaded}
+                  />
+                  <span style={{ marginLeft: 8 }}>{whitePoint}</span>
+                </div>
+              </>
+            )}
+          </div>
           <div className="keyboard-shortcuts">
             <div className="shortcut-title" onClick={() => setShortcutsOpen(s => !s)} style={{ cursor: 'pointer', userSelect: 'none' }}>
               Shortcuts <span className="shortcut-toggle">{shortcutsOpen ? '▾' : '▸'}</span>
@@ -1083,10 +1228,10 @@ export default function App() {
                     <div className="shortcut-divider" />
                     <div className="shortcut-item"><kbd>Y</kbd> Eyedrop background</div>
                     <div className="shortcut-item"><kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd> Shift disc</div>
-                  <div className="shortcut-item"><kbd>Ctrl</kbd>+<kbd>Drag</kbd> Shift disc</div>
-                  <div className="shortcut-item"><kbd>Shift</kbd>+<kbd>Drag</kbd> Rotate disc</div>
-                  <div className="shortcut-item"><kbd>+</kbd>/<kbd>-</kbd> Feather radius</div>
-                  <div className="shortcut-item"><kbd>Ctrl</kbd>+<kbd>Scroll</kbd> Feather radius</div>
+                    <div className="shortcut-item"><kbd>Ctrl</kbd>+<kbd>Drag</kbd> Shift disc</div>
+                    <div className="shortcut-item"><kbd>Shift</kbd>+<kbd>Drag</kbd> Rotate disc</div>
+                    <div className="shortcut-item"><kbd>+</kbd>/<kbd>-</kbd> Feather radius</div>
+                    <div className="shortcut-item"><kbd>Ctrl</kbd>+<kbd>Scroll</kbd> Feather radius</div>
                   </>
                 )}
               </>
