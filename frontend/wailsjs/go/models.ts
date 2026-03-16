@@ -42,6 +42,9 @@ export namespace main {
 	    minDistance: number;
 	    accentValue: number;
 	    dotRadius: number;
+	    useStretch: boolean;
+	    stretchLow: number;
+	    stretchHigh: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new CornerDetectRequest(source);
@@ -54,6 +57,9 @@ export namespace main {
 	        this.minDistance = source["minDistance"];
 	        this.accentValue = source["accentValue"];
 	        this.dotRadius = source["dotRadius"];
+	        this.useStretch = source["useStretch"];
+	        this.stretchLow = source["stretchLow"];
+	        this.stretchHigh = source["stretchHigh"];
 	    }
 	}
 	export class CropRequest {

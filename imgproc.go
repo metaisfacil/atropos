@@ -211,6 +211,78 @@ func toGrayscale(src *image.NRGBA) *image.Gray {
 	return dst
 }
 
+// stretchGrayPercentiles remaps the grayscale values so that the lowPct
+// percentile maps to 0 and the highPct percentile maps to 255. Useful as
+// a pre-processing step to boost contrast on images with non-white
+// backgrounds or clipped histograms.
+func stretchGrayPercentiles(src *image.Gray, lowPct, highPct float64) *image.Gray {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w == 0 || h == 0 {
+		return src
+	}
+
+	var hist [256]int
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			hist[src.GrayAt(x, y).Y]++
+		}
+	}
+
+	total := w * h
+	if total == 0 {
+		return src
+	}
+
+	// Clamp percentiles
+	if lowPct < 0 {
+		lowPct = 0
+	}
+	if highPct > 1 {
+		highPct = 1
+	}
+	if lowPct >= highPct {
+		return src
+	}
+
+	lowCount := int(float64(total) * lowPct)
+	highCount := int(float64(total) * highPct)
+
+	cum := 0
+	vlow := 0
+	for i := 0; i < 256; i++ {
+		cum += hist[i]
+		if cum >= lowCount {
+			vlow = i
+			break
+		}
+	}
+	cum = 0
+	vhigh := 255
+	for i := 0; i < 256; i++ {
+		cum += hist[i]
+		if cum >= highCount {
+			vhigh = i
+			break
+		}
+	}
+
+	if vlow >= vhigh {
+		return src
+	}
+
+	dst := image.NewGray(image.Rect(0, 0, w, h))
+	scale := 255.0 / float64(vhigh-vlow)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			v := int(src.GrayAt(x, y).Y)
+			mapped := int(float64(v-vlow) * scale)
+			dst.SetGray(x, y, color.Gray{Y: clampByte(mapped)})
+		}
+	}
+	return dst
+}
+
 // ---- Accent adjustment (brightness shift) ----
 
 // applyAccentAdjustment shifts all pixel values by accentValue, clamping to [0,255].

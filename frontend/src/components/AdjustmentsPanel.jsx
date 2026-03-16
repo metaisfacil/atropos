@@ -20,6 +20,8 @@ export default function AdjustmentsPanel({
   imageLoaded,
   loading, setLoading,
   setPreview,
+  useStretchPreprocess,
+  setUseStretchPreprocess,
 }) {
   const applyAutoContrast = async () => {
     if (!imageLoaded) return
@@ -64,7 +66,7 @@ export default function AdjustmentsPanel({
       {adjPanelOpen && (
         <>
           <div className="shortcut-item" style={{ marginBottom: 10, position: 'relative' }}>
-            <DelayedHint hint="Sets black/white points to min/max luma">
+            <DelayedHint hint="Clamps the image's luminance around the brightest and darkest points to enhance contrast.">
               <button
                 className="primary"
                 style={{ minWidth: 120 }}
@@ -74,6 +76,15 @@ export default function AdjustmentsPanel({
                 {autoContrastPending ? 'Auto Contrast…' : 'Auto Contrast'}
               </button>
             </DelayedHint>
+          </div>
+
+          <div className="shortcut-item" style={{ marginBottom: 10 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input type="checkbox" checked={useStretchPreprocess} onChange={e => setUseStretchPreprocess(e.target.checked)} />
+              <DelayedHint hint="Remaps 1%/99% luminance to full range before corner detection. This can improve outcomes on scans with dark backgrounds.">
+                <span style={{ fontWeight: 500 }}>Pre-stretch contrast for detection</span>
+              </DelayedHint>
+            </label>
           </div>
 
           <div className="shortcut-item" style={{ marginBottom: 10 }}>

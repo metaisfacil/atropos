@@ -14,6 +14,9 @@ type CornerDetectRequest struct {
 	MinDistance  int     `json:"minDistance"`
 	AccentValue  int     `json:"accentValue"`
 	DotRadius    int     `json:"dotRadius"`
+	UseStretch   bool    `json:"useStretch"`
+	StretchLow   float64 `json:"stretchLow"`
+	StretchHigh  float64 `json:"stretchHigh"`
 }
 
 // ClickCornerRequest holds the image-space coordinates of a user click.
@@ -127,6 +130,26 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 		workGray = gray
 	}
 
+	// Optionally pre-stretch contrast using percentiles to handle non-white backgrounds
+	if req.UseStretch {
+		low := req.StretchLow
+		high := req.StretchHigh
+		if low <= 0 || low >= 1 {
+			low = 0.01
+		}
+		if high <= 0 || high > 1 {
+			high = 0.99
+		}
+		stretched := stretchGrayPercentiles(workGray, low, high)
+		enhanced := applyCLAHE(stretched, 2.0, 8)
+
+		// replace enhanced variable in outer scope
+		_ = enhanced
+		// Now set enhanced variable that the rest of the function expects by shadowing
+		workGray = stretched
+	}
+
+	// If not using stretch, or after stretch we continue with CLAHE on workGray
 	enhanced := applyCLAHE(workGray, 2.0, 8)
 
 	quality := req.QualityLevel / 100.0

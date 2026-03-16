@@ -79,6 +79,8 @@ export default function App() {
   const [autoContrastPending, setAutoContrastPending] = useState(false)
   const [blackPoint, setBlackPoint] = useState(0)
   const [whitePoint, setWhitePoint] = useState(255)
+  // Toggle to enable percentile pre-stretch before corner detection
+  const [useStretchPreprocess, setUseStretchPreprocess] = useState(true)
 
   // ── Zoom / scroll state ───────────────────────────────────────────────────
   const [zoom, setZoom]         = useState(1)
@@ -150,6 +152,9 @@ export default function App() {
         minDistance: cornerState.minDistance,
         accentValue: cornerState.accent,
         dotRadius,
+        useStretch: useStretchPreprocess,
+        stretchLow: 0.01,
+        stretchHigh: 0.99,
       })
       setPreview(dr.preview)
       setImageInfo(dr.message + ' — click 4 corners')
@@ -208,6 +213,9 @@ export default function App() {
         minDistance:  cornerState.minDistance,
         accentValue:  cornerState.accent,
         dotRadius,
+        useStretch: useStretchPreprocess,
+        stretchLow: 0.01,
+        stretchHigh: 0.99,
       })
       setPreview(result.preview)
       setImageInfo(result.message + ' — click 4 corners')
@@ -746,6 +754,8 @@ export default function App() {
             imageLoaded={imageLoaded}
             loading={loading}                     setLoading={setLoading}
             setPreview={setPreview}
+            useStretchPreprocess={useStretchPreprocess}
+            setUseStretchPreprocess={setUseStretchPreprocess}
           />
 
           <ShortcutsPanel
