@@ -765,35 +765,61 @@ func (a *App) setWorkingImage(img *image.NRGBA) {
 // all channels so that min->0 and max->255, and returns the updated preview.
 // Matches the behaviour of Photoshop Image > Auto Contrast.
 //
-// If the user has a live levels adjustment in progress (levelsBaseImage != nil),
-// Auto Contrast runs against the pre-adjustment base, not the current preview,
-// so it does not stack on top of a partial slider drag.
+// Pre-warp path: applies to currentImage and re-renders the corner overlay so
+// dots remain visible.  Post-warp path: applies to warpedImage as normal.
+// If the sliders have been partially dragged (levelsBaseImage != nil), the
+// stretch runs against that base so it does not stack on a partial drag.
 func (a *App) AutoContrast() (*ProcessResult, error) {
 	a.logf("AutoContrast")
+
+	if a.currentImage == nil {
+		return nil, fmt.Errorf("no image loaded")
+	}
+
+	preWarp := a.warpedImage == nil
 
 	// Prefer the pre-adjustment base when the sliders have been touched.
 	var img *image.NRGBA
 	if a.levelsBaseImage != nil {
 		img = a.levelsBaseImage
+	} else if preWarp {
+		img = a.currentImage
 	} else {
-		img = a.workingImage()
-	}
-	if img == nil {
-		return nil, fmt.Errorf("no image loaded")
+		img = a.warpedImage
 	}
 
-	// Bootstrap warpedImage so saveUndo (which clones it) cannot panic.
-	if a.warpedImage == nil {
-		a.warpedImage = cloneImage(a.currentImage)
-	}
 	// saveUndo also clears levelsBaseImage — the baked result is now the base.
 	a.saveUndo()
 
 	bp, wp := computeAutoContrastPoints(img)
 	a.logf("AutoContrast: blackPt=%d whitePt=%d", bp, wp)
 	adjusted := applyLevels(img, bp, wp)
-	a.setWorkingImage(adjusted)
 
+	if preWarp {
+		a.currentImage = adjusted
+		if len(a.detectedCorners) > 0 {
+			result, err := a.drawCornerOverlay(a.cornerDotRadius)
+			if err != nil {
+				return nil, err
+			}
+			result.Message = fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp)
+			return result, nil
+		}
+		preview, err := imageToBase64(adjusted)
+		if err != nil {
+			return nil, err
+		}
+		b := adjusted.Bounds()
+		return &ProcessResult{
+			Preview: preview,
+			Message: fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp),
+			Width:   b.Dx(),
+			Height:  b.Dy(),
+		}, nil
+	}
+
+	// Post-warp path.
+	a.warpedImage = adjusted
 	preview, err := imageToBase64(adjusted)
 	if err != nil {
 		return nil, err
@@ -818,31 +844,53 @@ type SetLevelsRequest struct {
 //
 // Each call always applies against levelsBaseImage — a snapshot taken the
 // first time the sliders are touched after a committing operation. This
-// prevents the well-known stacking bug where each drag re-stretches the
-// already-stretched result.  saveUndo (called by Crop, Rotate, AutoContrast,
-// etc.) clears levelsBaseImage so the next slider session gets a fresh base.
+// prevents the stacking bug where each drag re-stretches the already-stretched
+// result.  saveUndo (called by Crop, Rotate, AutoContrast, etc.) clears
+// levelsBaseImage so the next slider session gets a fresh base.
+//
+// Pre-warp path (warpedImage == nil): the adjustment is applied to
+// currentImage so that drawCornerOverlay (which reads currentImage) keeps
+// rendering dots on top of the adjusted pixels.
 func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 	a.logf("SetLevels: black=%d white=%d", req.Black, req.White)
 
-	// Ensure warpedImage exists so setWorkingImage has somewhere to write.
-	if a.warpedImage == nil {
-		if a.currentImage == nil {
-			return nil, fmt.Errorf("no image loaded")
-		}
-		a.warpedImage = cloneImage(a.currentImage)
+	if a.currentImage == nil {
+		return nil, fmt.Errorf("no image loaded")
 	}
 
-	// Snapshot the current state on first touch; reuse on subsequent drags.
+	preWarp := a.warpedImage == nil
+
+	// Snapshot the base on first touch; reuse on every subsequent drag.
 	if a.levelsBaseImage == nil {
-		a.levelsBaseImage = cloneImage(a.warpedImage)
-		a.logf("SetLevels: captured levelsBaseImage")
+		if preWarp {
+			a.levelsBaseImage = cloneImage(a.currentImage)
+		} else {
+			a.levelsBaseImage = cloneImage(a.warpedImage)
+		}
+		a.logf("SetLevels: captured levelsBaseImage (preWarp=%v)", preWarp)
 	}
 
 	adjusted := applyLevels(a.levelsBaseImage, req.Black, req.White)
-	// Write to warpedImage directly — do NOT call saveUndo here so that
-	// every slider tick doesn't flood the undo stack.
-	a.warpedImage = adjusted
+	// Do NOT call saveUndo — slider ticks must not flood the undo stack.
 
+	if preWarp {
+		// Write back to currentImage so drawCornerOverlay stays in sync.
+		a.currentImage = adjusted
+		// Re-render corner overlay if dots have been placed.
+		if len(a.detectedCorners) > 0 {
+			return a.drawCornerOverlay(a.cornerDotRadius)
+		}
+		// No corners yet — return a plain preview.
+		preview, err := imageToBase64(adjusted)
+		if err != nil {
+			return nil, err
+		}
+		b := adjusted.Bounds()
+		return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy()}, nil
+	}
+
+	// Post-warp path: write to warpedImage as before.
+	a.warpedImage = adjusted
 	preview, err := imageToBase64(adjusted)
 	if err != nil {
 		return nil, err
@@ -1175,7 +1223,13 @@ func (a *App) saveUndo() {
 	if len(a.undoStack) >= a.undoLimit {
 		a.undoStack = a.undoStack[1:]
 	}
-	a.undoStack = append(a.undoStack, cloneImage(a.warpedImage))
+	// warpedImage may be nil when a committing op runs before any warp
+	// (e.g. AutoContrast in corner mode). Store currentImage in that case.
+	if a.warpedImage != nil {
+		a.undoStack = append(a.undoStack, cloneImage(a.warpedImage))
+	} else if a.currentImage != nil {
+		a.undoStack = append(a.undoStack, cloneImage(a.currentImage))
+	}
 	// Any committing operation invalidates the levels baseline so that the
 	// next SetLevels call re-snapshots from the new working image.
 	a.levelsBaseImage = nil

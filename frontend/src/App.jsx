@@ -1202,7 +1202,8 @@ export default function App() {
                     min="0"
                     max={whitePoint - 1}
                     value={blackPoint}
-                    onChange={e => applyLevels(Number(e.target.value), whitePoint)}
+                    onChange={e => setBlackPoint(Number(e.target.value))}
+                    onMouseUp={e => applyLevels(Number(e.target.value), whitePoint)}
                     style={{ width: 120, marginLeft: 8 }}
                     disabled={!imageLoaded}
                   />
@@ -1215,7 +1216,8 @@ export default function App() {
                     min={blackPoint + 1}
                     max="255"
                     value={whitePoint}
-                    onChange={e => applyLevels(blackPoint, Number(e.target.value))}
+                    onChange={e => setWhitePoint(Number(e.target.value))}
+                    onMouseUp={e => applyLevels(blackPoint, Number(e.target.value))}
                     style={{ width: 120, marginLeft: 8 }}
                     disabled={!imageLoaded}
                   />
