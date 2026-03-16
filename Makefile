@@ -4,7 +4,16 @@
 ifeq ($(OS),Windows_NT)
 	EXE_NAME := atropos.exe
 else
-	EXE_NAME := atropos
+	UNAME_S := $(shell uname -s 2>/dev/null)
+	ifeq ($(UNAME_S),Windows_NT)
+		EXE_NAME := atropos.exe
+	else
+		EXE_NAME := atropos
+	endif
+endif
+# Fallback: if EXE_NAME is still empty, default to atropos.exe (for Windows shells where above logic fails)
+ifeq ($(strip $(EXE_NAME)),)
+EXE_NAME := atropos.exe
 endif
 
 # Default target
