@@ -178,6 +178,22 @@ button.primary {
   background: #007acc;
 }
 
+/* Touch-up brush button: distinct color and depressed appearance when active */
+button.touchup-btn {
+  background: #7f5371
+}
+
+button.touchup-btn:hover {
+  background: #69445a;
+}
+
+button.touchup-btn.active,
+button.touchup-btn:active {
+    background: #8f2f89;
+    box-shadow: inset 0 3px 1px #0004;
+    transform: translateY(1px);
+}
+
 button.load-btn {
   background: #10793f;
 }
@@ -300,7 +316,7 @@ button.save-btn:hover {
 }
 
 .shortcut-item {
-  margin-top: 15px;
+  margin-top: 10px;
   display: flex;
   gap: 8px;
   align-items: center;
