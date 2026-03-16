@@ -18,6 +18,7 @@
    the scrolling region so it remains reachable and doesn't overlay content. */
 .sidebar-scroll {
   display: flex;
+  flex-direction: column; /* stack mode panels vertically */
   flex: 1 1 auto;
   overflow-y: auto;
   min-height: 0;
@@ -25,7 +26,36 @@
   padding-left: 10px; /* small left gutter so content appears centered */
   /* Keep scrollbar gutter stable to avoid layout shift when it appears. */
   scrollbar-gutter: stable both-edges;
-  align-items: center;
+  align-items: stretch;
+}
+
+/* Inner wrapper to vertically center the mode panels group when there's spare space */
+.sidebar-scroll-inner {
+  margin: auto 0; /* centers vertically inside .sidebar-scroll */
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Mode panels: fade/slide when switching modes */
+.mode-panel {
+  width: 100%;
+  transition: opacity 180ms ease-in-out, transform 180ms ease-in-out, max-height 220ms ease-in-out;
+  opacity: 0;
+  transform: translateX(6px);
+  pointer-events: none;
+  max-height: 0; /* collapsed */
+  overflow: hidden;
+  flex: 0 0 auto; /* natural content height when open */
+  align-self: stretch;
+  min-height: 0; /* allow flex children to shrink properly */
+}
+.mode-panel.active {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+  max-height: 2000px; /* large enough to reveal content smoothly */
 }
 
 /* WebKit scrollbar styling for the inner scroll area */
@@ -265,7 +295,9 @@ button.save-btn:hover {
   padding: 12px;
   font-size: 11px;
   margin-bottom: 8px;
-  max-height: 260px;
+  /* allow the content area to expand when opened; we'll animate the
+     inner `.keyboard-shortcuts-content` for a smooth ease-in. */
+  max-height: 600px;
   display: flex;
   flex-direction: column;
   overflow: hidden; /* content scroll lives in .keyboard-shortcuts-content */
@@ -300,9 +332,38 @@ button.save-btn:hover {
 }
 .keyboard-shortcuts-content {
   flex: 1 1 auto;
-  overflow: auto;
+  /* start collapsed: zero height, transparent, slightly lifted */
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-6px);
+  overflow: hidden; /* will switch to auto when open */
   scrollbar-gutter: stable both-edges;
   padding-right: 6px; /* avoid content under the scrollbar */
+  transition: max-height 260ms cubic-bezier(.2,0,.1,1), opacity 200ms ease-in-out, transform 200ms ease-in-out;
+}
+
+/* Open state: allow scrolling and full opacity/position */
+.keyboard-shortcuts.expanded > .keyboard-shortcuts-content,
+.keyboard-shortcuts .keyboard-shortcuts-content.open {
+  max-height: 520px;
+  opacity: 1;
+  transform: translateY(0);
+  overflow: auto;
+}
+
+/* Touch-up brush radius slider: animate open/closed using max-height/opacity/transform */
+.touchup-slider {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-6px);
+  overflow: hidden;
+  transition: max-height 220ms cubic-bezier(.2,0,.1,1), opacity 180ms ease-in-out, transform 180ms ease-in-out;
+}
+.touchup-slider.open {
+  max-height: 120px; /* enough for the slider row */
+  opacity: 1;
+  transform: translateY(0);
+  overflow: visible;
 }
 
 /* Scrollbar styling for the inner content area */
