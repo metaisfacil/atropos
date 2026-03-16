@@ -801,8 +801,9 @@ export default function App() {
         </div>
 
         <div className="sidebar-scroll">
-        {/* Mode-specific panel */}
-        {mode === 'corner' && (
+          <div className="sidebar-scroll-inner">
+        {/* Mode-specific panels: always rendered, toggled via `.active` for smooth fades */}
+        <div className={`mode-panel ${mode === 'corner' ? 'active' : ''}`}>
           <CornerPanel
             state={cornerState}        setState={setCornerState}
             dotRadius={dotRadius}      setDotRadius={setDotRadius}
@@ -811,18 +812,21 @@ export default function App() {
             imageLoaded={imageLoaded}
             setPreview={setPreview}
           />
-        )}
-        {mode === 'disc' && (
+        </div>
+
+        <div className={`mode-panel ${mode === 'disc' ? 'active' : ''}`}>
           <DiscPanel
             discActive={discActive}
             featherSize={featherSize}  setFeatherSize={setFeatherSize}
             setPreview={setPreview}
           />
-        )}
-        {mode === 'line' && (
-          <LinePanel linesDone={linesDone} />
-        )}
+        </div>
 
+        <div className={`mode-panel ${mode === 'line' ? 'active' : ''}`}>
+          <LinePanel linesDone={linesDone} />
+        </div>
+
+          </div>{/* .sidebar-scroll-inner */}
         </div>{/* .sidebar-scroll */}
         {/* Bottom section: actions, adjustments, shortcuts, file ops */}
         <div className="sidebar-bottom">

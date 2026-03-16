@@ -17,8 +17,7 @@ export default function ShortcutsPanel({ shortcutsOpen, setShortcutsOpen, mode, 
         Shortcuts <span className="shortcut-toggle">{shortcutsOpen ? '▾' : '▸'}</span>
       </div>
 
-      {shortcutsOpen && (
-        <div className="keyboard-shortcuts-content">
+      <div className={`keyboard-shortcuts-content ${shortcutsOpen ? 'open' : 'closed'}`}>
           <div className="shortcut-item">
             <div className="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div>
             <div className="caption">Crop edges</div>
@@ -42,7 +41,6 @@ export default function ShortcutsPanel({ shortcutsOpen, setShortcutsOpen, mode, 
             </>
           )}
         </div>
-      )}
     </div>
   )
 }
