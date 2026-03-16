@@ -54,7 +54,7 @@ export default function AdjustmentsPanel({
   }
 
   return (
-    <div className="keyboard-shortcuts adj-panel">
+    <div className={`keyboard-shortcuts adj-panel ${adjPanelOpen ? 'expanded' : ''}`}>
       <div
         className="shortcut-title adj-panel-header"
         onClick={() => setAdjPanelOpen((o) => !o)}
@@ -64,7 +64,7 @@ export default function AdjustmentsPanel({
       </div>
 
       {adjPanelOpen && (
-        <>
+        <div className="keyboard-shortcuts-content">
           <div className="shortcut-item" style={{ marginBottom: 10, position: 'relative' }}>
             <DelayedHint hint="Clamps the image's luminance around the brightest and darkest points to enhance contrast.">
               <button
@@ -87,36 +87,36 @@ export default function AdjustmentsPanel({
             </label>
           </div>
 
-          <div className="shortcut-item" style={{ marginBottom: 10 }}>
-            <label style={{ fontWeight: 500 }}>Black Point</label>
-            <input
-              type="range"
-              min="0"
-              max={whitePoint - 1}
-              value={blackPoint}
-              onChange={(e) => setBlackPoint(Number(e.target.value))}
-              onMouseUp={(e) => applyLevels(Number(e.target.value), whitePoint)}
-              style={{ width: 120, marginLeft: 8 }}
-              disabled={!imageLoaded}
-            />
-            <span style={{ marginLeft: 8 }}>{blackPoint}</span>
+          <div className="shortcut-item level-row" style={{ marginBottom: 10 }}>
+            <label className="level-label">Black</label>
+              <input
+                className="level-range"
+                type="range"
+                min="0"
+                max={whitePoint - 1}
+                value={blackPoint}
+                onChange={(e) => setBlackPoint(Number(e.target.value))}
+                onMouseUp={(e) => applyLevels(Number(e.target.value), whitePoint)}
+                disabled={!imageLoaded}
+              />
+              <span className="level-value">{blackPoint}</span>
           </div>
 
-          <div className="shortcut-item" style={{ marginBottom: 10 }}>
-            <label style={{ fontWeight: 500 }}>White Point</label>
-            <input
-              type="range"
-              min={blackPoint + 1}
-              max="255"
-              value={whitePoint}
-              onChange={(e) => setWhitePoint(Number(e.target.value))}
-              onMouseUp={(e) => applyLevels(blackPoint, Number(e.target.value))}
-              style={{ width: 120, marginLeft: 8 }}
-              disabled={!imageLoaded}
-            />
-            <span style={{ marginLeft: 8 }}>{whitePoint}</span>
+          <div className="shortcut-item level-row" style={{ marginBottom: 10 }}>
+            <label className="level-label">White</label>
+              <input
+                className="level-range"
+                type="range"
+                min={blackPoint + 1}
+                max="255"
+                value={whitePoint}
+                onChange={(e) => setWhitePoint(Number(e.target.value))}
+                onMouseUp={(e) => applyLevels(blackPoint, Number(e.target.value))}
+                disabled={!imageLoaded}
+              />
+              <span className="level-value">{whitePoint}</span>
           </div>
-        </>
+        </div>
       )}
     </div>
   )
