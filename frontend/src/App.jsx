@@ -669,8 +669,7 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="sidebar-scroll">
-        {/* Mode selector */}
+        {/* Mode selector (always visible) */}
         <div className="mode-selector">
           {['corner', 'disc', 'line'].map(m => (
             <button
@@ -701,6 +700,7 @@ export default function App() {
           ))}
         </div>
 
+        <div className="sidebar-scroll">
         {/* Mode-specific panel */}
         {mode === 'corner' && (
           <CornerPanel
