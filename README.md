@@ -67,11 +67,11 @@ The user drags four lines on the image. After the fourth line is committed, pers
 
 The Adjustments panel (collapsible, at the bottom of the sidebar) provides tonal controls that operate independently of the three main modes.
 
-### Auto Contrast
+### Auto-contrast
 
 Scans all opaque pixels for the minimum and maximum luminance using ITU-R BT.601 integer weights `(19595R + 38470G + 7471B) >> 16`, then stretches all channels linearly so that the minimum maps to 0 and the maximum maps to 255. This matches the behaviour of Photoshop's Image > Auto Contrast.
 
-### Black Point / White Point sliders
+### Black point / white point sliders
 
 Apply an explicit linear stretch: each channel value `v` is mapped to `clamp((v - black) * 255 / (white - black), 0, 255)`. The preview updates on mouse release rather than on every tick to avoid flooding the backend.
 
@@ -80,6 +80,15 @@ Both operations are non-destructive in the sense that they operate against a sna
 In corner mode (before any warp), these adjustments write to `currentImage` and re-render the corner overlay so detected dots remain visible.
 
 ---
+
+## Touch-up brush
+
+A content-aware touch-up brush provides a Photoshop-like heal/patch operation powered by a PatchMatch-style approximate nearest-neighbour field (NNF). Draw strokes on the preview to paint a mask (white = fill); the frontend sends the full-resolution mask to the backend to generate an interactive preview. Committing the stroke records an undo snapshot and replaces the working image.
+
+Enable the touch-up brush in the Adjustments panel, set the brush radius, and draw directly on the preview. Previews are returned to give immediate visual feedback; committing a stroke applies the fill to the working image and pushes an undo entry so edits stack in the undo history.
+
+The implementation derives an internal patch size from the brush radius and runs a small number of PatchMatch iterations tuned for interactive performance; these parameters can be adjusted in the code to trade quality for speed. Touch-up commits may be reverted with the Undo command (Tab). The PatchMatch core is parallelised across CPU workers for responsiveness; previews aim to be fast, while full-resolution commits may take longer — a small header spinner indicates background work.
+
 
 ## Common operations
 
