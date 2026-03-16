@@ -135,7 +135,7 @@ export default function App() {
   const mousePosRef = useRef({ x: 0, y: 0 }) // display-space mouse pos
 
   // Collapsible shortcuts panel
-  const [shortcutsOpen, setShortcutsOpen] = useState(true)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
 
   // Zoom state
   const [zoom, setZoom] = useState(1)
