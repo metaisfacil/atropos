@@ -162,7 +162,12 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 		img = a.warpedImage
 	}
 
-	// saveUndo also clears levelsBaseImage — the baked result is now the base.
+	// Capture a snapshot of the image before we commit the AutoContrast so
+	// that slider sessions can still reference the pre-adjustment base. We
+	// call saveUndo() to push the previous state onto the undo stack (which
+	// clears levelsBaseImage), and then restore our captured snapshot into
+	// levelsBaseImage so the sliders can revert back to the original image.
+	preLevelsBase := cloneImage(img)
 	a.saveUndo()
 
 	bp, wp := computeAutoContrastPoints(img)
@@ -171,12 +176,17 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 
 	if preWarp {
 		a.currentImage = adjusted
+		// Restore the pre-adjustment base so SetLevels sessions operate
+		// against the original image (allowing sliders to revert the effect).
+		a.levelsBaseImage = preLevelsBase
 		if len(a.detectedCorners) > 0 {
 			result, err := a.drawCornerOverlay(a.cornerDotRadius)
 			if err != nil {
 				return nil, err
 			}
 			result.Message = fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp)
+			result.Black = bp
+			result.White = wp
 			return result, nil
 		}
 		preview, err := imageToBase64(adjusted)
@@ -194,6 +204,8 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 
 	// Post-warp path.
 	a.warpedImage = adjusted
+	// Restore the pre-adjustment base for slider sessions as above.
+	a.levelsBaseImage = preLevelsBase
 	preview, err := imageToBase64(adjusted)
 	if err != nil {
 		return nil, err
@@ -202,6 +214,8 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 	return &ProcessResult{
 		Preview: preview,
 		Message: fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp),
+		Black:   bp,
+		White:   wp,
 		Width:   b.Dx(),
 		Height:  b.Dy(),
 	}, nil
