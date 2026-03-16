@@ -178,6 +178,15 @@ button.primary {
   background: #007acc;
 }
 
+/* Subtle Auto-contrast tint (distinct but minimal) */
+button.auto-contrast-btn {
+  background: #0b87d1; /* slightly different blue */
+}
+
+button.auto-contrast-btn:hover {
+  background: #096fae;
+}
+
 /* Touch-up brush button: distinct color and depressed appearance when active */
 button.touchup-btn {
   background: #7f5371

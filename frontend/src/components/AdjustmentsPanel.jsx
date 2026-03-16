@@ -95,7 +95,7 @@ export default function AdjustmentsPanel({
           <div className="shortcut-item" style={{ position: 'relative' }}>
             <DelayedHint hint="Clamps the image's luminance around the brightest and darkest points to enhance contrast.">
               <button
-                className="primary"
+                className="primary auto-contrast-btn"
                 style={{ minWidth: 120 }}
                 onClick={applyAutoContrast}
                 disabled={autoContrastPending || !imageLoaded || loading}

@@ -871,10 +871,10 @@ export default function App() {
 
           <div className="file-ops">
             <button onClick={handleLoadImage} className="load-btn" disabled={loading}>
-              {loading ? 'Loading…' : 'Load Image'}
+              {loading ? 'Loading…' : 'Load image'}
             </button>
             <button onClick={handleSaveImage} className="save-btn" disabled={loading}>
-              Save Image
+              Save image
             </button>
           </div>
         </div>
