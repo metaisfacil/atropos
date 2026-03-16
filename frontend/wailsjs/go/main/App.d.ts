@@ -4,6 +4,8 @@ import {main} from '../models';
 
 export function AddLine(arg1:main.LineAddRequest):Promise<main.ProcessResult>;
 
+export function AutoContrast():Promise<main.ProcessResult>;
+
 export function ClearLines():Promise<main.ProcessResult>;
 
 export function ClickCorner(arg1:main.ClickCornerRequest):Promise<main.ClickCornerResult>;
@@ -45,6 +47,8 @@ export function SetBackgroundColor(arg1:number,arg2:number,arg3:number):Promise<
 export function SetCornerDotRadius(arg1:any):Promise<main.ProcessResult>;
 
 export function SetFeatherSize(arg1:main.FeatherSizeRequest):Promise<main.ProcessResult>;
+
+export function SetLevels(arg1:main.SetLevelsRequest):Promise<main.ProcessResult>;
 
 export function ShiftDisc(arg1:main.ShiftDiscRequest):Promise<main.ProcessResult>;
 

@@ -739,6 +739,92 @@ func (a *App) Undo() (*ProcessResult, error) {
 	return &ProcessResult{Preview: preview}, nil
 }
 
+// workingImage returns the image that adjustment operations should act on.
+// Once a warp/crop/disc operation has produced a warpedImage that is what
+// the user is editing; before any such operation it is currentImage.
+func (a *App) workingImage() *image.NRGBA {
+	if a.warpedImage != nil {
+		return a.warpedImage
+	}
+	return a.currentImage
+}
+
+// setWorkingImage stores the result of an adjustment. It always writes to
+// warpedImage so that SaveImage (which only reads warpedImage) always has
+// something to save, even when the user adjusts before cropping.
+func (a *App) setWorkingImage(img *image.NRGBA) {
+	a.warpedImage = img
+}
+
+// ============================================================
+// LEVELS / AUTO CONTRAST
+// ============================================================
+
+// AutoContrast computes the luminance min/max of the working image, stretches
+// all channels so that min->0 and max->255, and returns the updated preview.
+// Matches the behaviour of Photoshop Image > Auto Contrast.
+func (a *App) AutoContrast() (*ProcessResult, error) {
+	a.logf("AutoContrast")
+	img := a.workingImage()
+	if img == nil {
+		return nil, fmt.Errorf("no image loaded")
+	}
+	// Bootstrap warpedImage so saveUndo (which clones it) cannot panic.
+	if a.warpedImage == nil {
+		a.warpedImage = cloneImage(a.currentImage)
+		img = a.warpedImage
+	}
+	a.saveUndo()
+
+	bp, wp := computeAutoContrastPoints(img)
+	a.logf("AutoContrast: blackPt=%d whitePt=%d", bp, wp)
+	adjusted := applyLevels(img, bp, wp)
+	a.setWorkingImage(adjusted)
+
+	preview, err := imageToBase64(adjusted)
+	if err != nil {
+		return nil, err
+	}
+	b := adjusted.Bounds()
+	return &ProcessResult{
+		Preview: preview,
+		Message: fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp),
+		Width:   b.Dx(),
+		Height:  b.Dy(),
+	}, nil
+}
+
+// SetLevelsRequest carries explicit black- and white-point values.
+type SetLevelsRequest struct {
+	Black int `json:"black"`
+	White int `json:"white"`
+}
+
+// SetLevels applies an explicit levels stretch to the working image.
+// Called while the user drags the Black Point / White Point sliders.
+func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
+	a.logf("SetLevels: black=%d white=%d", req.Black, req.White)
+	img := a.workingImage()
+	if img == nil {
+		return nil, fmt.Errorf("no image loaded")
+	}
+	if a.warpedImage == nil {
+		a.warpedImage = cloneImage(a.currentImage)
+		img = a.warpedImage
+	}
+	a.saveUndo()
+
+	adjusted := applyLevels(img, req.Black, req.White)
+	a.setWorkingImage(adjusted)
+
+	preview, err := imageToBase64(adjusted)
+	if err != nil {
+		return nil, err
+	}
+	b := adjusted.Bounds()
+	return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy()}, nil
+}
+
 // ============================================================
 // DISC MODE
 // ============================================================

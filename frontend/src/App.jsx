@@ -25,7 +25,9 @@ import {
   OpenSaveDialog,
   GetLaunchArgs,
   GetCleanPreview,
-  LogFrontend
+  LogFrontend,
+  AutoContrast,
+  SetLevels
 } from '../wailsjs/go/main/App'
 
 // DelayedHint: shows a tooltip after hovering for a delay (default 1s), rendered in a portal to avoid clipping
@@ -147,27 +149,36 @@ export default function App() {
   const [blackPoint, setBlackPoint] = useState(0)
   const [whitePoint, setWhitePoint] = useState(255)
 
-  // --- Backend integration for preview updates ---
-  // These are stubbed; replace with real backend calls
-  const applyLevels = async (bp, wp) => {
-    // TODO: Replace with backend call
-    // Simulate preview update by overlaying a CSS filter (for demo only)
-    // In real use, call Go backend and setPreview(result.preview)
-    setBlackPoint(bp)
-    setWhitePoint(wp)
-    // Example: setLoading(true); const result = await SetLevels({ black: bp, white: wp }); setPreview(result.preview); setLoading(false);
-  }
   const applyAutoContrast = async () => {
-    setAutoContrastPending(true)
-    // TODO: Replace with backend call
-    // Simulate auto contrast
-    setTimeout(() => {
-      const bp = 12, wp = 243
+      setAutoContrastPending(true)
+      setLoading(true)
+      try {
+          const result = await AutoContrast()
+          setPreview(result.preview)
+          // backend returns the actual computed points
+          // (you can expose them in ProcessResult if you want to sync the sliders)
+          setBlackPoint(0)   // reset to "neutral" UI state after baking in
+          setWhitePoint(255)
+      } catch (err) {
+          console.error('AutoContrast error:', err)
+      } finally {
+          setAutoContrastPending(false)
+          setLoading(false)
+      }
+  }
+
+  const applyLevels = async (bp, wp) => {
       setBlackPoint(bp)
       setWhitePoint(wp)
-      // Example: setLoading(true); const result = await AutoContrast(); setPreview(result.preview); setLoading(false);
-      setAutoContrastPending(false)
-    }, 600)
+      setLoading(true)
+      try {
+          const result = await SetLevels({ black: bp, white: wp })
+          setPreview(result.preview)
+      } catch (err) {
+          console.error('SetLevels error:', err)
+      } finally {
+          setLoading(false)
+      }
   }
 
   // Loading overlay: opaque for image loads, semi-transparent for operations

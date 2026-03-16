@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"bytes"
@@ -223,6 +223,57 @@ func applyAccentAdjustment(src *image.NRGBA, accentValue int) *image.NRGBA {
 		dst.Pix[i+0] = clampByte(int(dst.Pix[i+0]) + accentValue)
 		dst.Pix[i+1] = clampByte(int(dst.Pix[i+1]) + accentValue)
 		dst.Pix[i+2] = clampByte(int(dst.Pix[i+2]) + accentValue)
+	}
+	return dst
+}
+
+// ---- Levels adjustment (Auto Contrast) ----
+
+// computeAutoContrastPoints scans all pixels for the minimum and maximum
+// luminance and returns them as black/white points, matching the behaviour
+// of Photoshop's Image > Auto Contrast. Fully-transparent pixels are
+// skipped. Falls back to (0, 255) for flat/empty images to avoid a
+// divide-by-zero in applyLevels.
+func computeAutoContrastPoints(src *image.NRGBA) (blackPt, whitePt int) {
+	minL, maxL := 255, 0
+	b := src.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			c := src.NRGBAAt(x, y)
+			if c.A == 0 {
+				continue
+			}
+			r, g, bl := int(c.R), int(c.G), int(c.B)
+			// ITU-R BT.601 luma (integer approximation)
+			lum := (19595*r + 38470*g + 7471*bl) >> 16
+			if lum < minL {
+				minL = lum
+			}
+			if lum > maxL {
+				maxL = lum
+			}
+		}
+	}
+	if minL >= maxL {
+		return 0, 255 // flat or empty image â€” no-op stretch
+	}
+	return minL, maxL
+}
+
+// applyLevels stretches each colour channel linearly so that blackPt maps
+// to 0 and whitePt maps to 255, clamping out-of-range values. Alpha is
+// preserved unchanged. Equivalent to Photoshop's Levels black/white points.
+func applyLevels(src *image.NRGBA, blackPt, whitePt int) *image.NRGBA {
+	if blackPt >= whitePt {
+		return cloneImage(src)
+	}
+	dst := cloneImage(src)
+	scale := 255.0 / float64(whitePt-blackPt)
+	for i := 0; i < len(dst.Pix); i += 4 {
+		dst.Pix[i+0] = clampByte(int(float64(int(dst.Pix[i+0])-blackPt) * scale))
+		dst.Pix[i+1] = clampByte(int(float64(int(dst.Pix[i+1])-blackPt) * scale))
+		dst.Pix[i+2] = clampByte(int(float64(int(dst.Pix[i+2])-blackPt) * scale))
+		// dst.Pix[i+3] â€” alpha untouched
 	}
 	return dst
 }

@@ -224,6 +224,20 @@ export namespace main {
 	        this.outputPath = source["outputPath"];
 	    }
 	}
+	export class SetLevelsRequest {
+	    black: number;
+	    white: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SetLevelsRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.black = source["black"];
+	        this.white = source["white"];
+	    }
+	}
 	export class ShiftDiscRequest {
 	    dx: number;
 	    dy: number;

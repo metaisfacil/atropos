@@ -6,6 +6,10 @@ export function AddLine(arg1) {
   return window['go']['main']['App']['AddLine'](arg1);
 }
 
+export function AutoContrast() {
+  return window['go']['main']['App']['AutoContrast']();
+}
+
 export function ClearLines() {
   return window['go']['main']['App']['ClearLines']();
 }
@@ -88,6 +92,10 @@ export function SetCornerDotRadius(arg1) {
 
 export function SetFeatherSize(arg1) {
   return window['go']['main']['App']['SetFeatherSize'](arg1);
+}
+
+export function SetLevels(arg1) {
+  return window['go']['main']['App']['SetLevels'](arg1);
 }
 
 export function ShiftDisc(arg1) {
