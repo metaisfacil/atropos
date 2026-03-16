@@ -81,6 +81,55 @@ export default function App() {
   const [whitePoint, setWhitePoint] = useState(255)
   // Toggle to enable percentile pre-stretch before corner detection
   const [useStretchPreprocess, setUseStretchPreprocess] = useState(true)
+  // Toggle to enable the touch-up brush tool (PatchMatch fill)
+  const [useTouchupTool, setUseTouchupTool] = useState(false)
+  const [touchupStrokes, setTouchupStrokes] = useState([]) // array of {x,y} in image coords
+  const [brushSize, setBrushSize] = useState(40)
+
+  const clearTouchup = () => setTouchupStrokes([])
+
+  const commitTouchup = async () => {
+    if (!imageLoaded || touchupStrokes.length === 0) return
+    setLoading(true)
+    setImageInfo('Running touch-up…')
+    try {
+      const cw = realImageDims.w
+      const ch = realImageDims.h
+      const c = document.createElement('canvas')
+      c.width = cw; c.height = ch
+      const ctx = c.getContext('2d')
+      if (!ctx) throw new Error('Canvas context unavailable')
+      ctx.clearRect(0, 0, cw, ch)
+      ctx.fillStyle = 'rgba(255,255,255,1)'
+      ctx.beginPath()
+      ctx.lineJoin = 'round'
+      ctx.lineCap = 'round'
+      ctx.lineWidth = brushSize
+      for (let i = 0; i < touchupStrokes.length; i++) {
+        const p = touchupStrokes[i]
+        if (i === 0) ctx.moveTo(p.x, p.y)
+        else ctx.lineTo(p.x, p.y)
+      }
+      ctx.stroke()
+      for (const p of touchupStrokes) {
+        ctx.beginPath(); ctx.arc(p.x, p.y, brushSize/2, 0, Math.PI*2); ctx.fill()
+      }
+      const data = c.toDataURL('image/png')
+      const b64 = data.split(',')[1]
+      let patchSize = Math.max(7, Math.floor(brushSize / 3))
+      if (patchSize % 2 === 0) patchSize++
+      const iterations = 5
+      const result = await window['go']['main']['App']['TouchUpApply'](b64, patchSize, iterations)
+      if (result?.preview) setPreview(result.preview)
+      if (result?.message) setImageInfo(result.message)
+      setTouchupStrokes([])
+    } catch (err) {
+      console.error('TouchUp commit error:', err)
+      setImageInfo(err?.message || String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
 
   // ── Zoom / scroll state ───────────────────────────────────────────────────
   const [zoom, setZoom]         = useState(1)
@@ -302,7 +351,15 @@ export default function App() {
     const pos = getRelPos(e)
     if (!pos) return
 
-    if (mode === 'corner') return // corner clicks handled in mouseUp
+    if (mode === 'corner' && !useTouchupTool) return // corner clicks handled in mouseUp
+
+    if (useTouchupTool) {
+      // Start a touch-up stroke; record image-space coordinates
+      const imgPt = displayToImage(pos.x, pos.y)
+      setTouchupStrokes([{ x: imgPt.x, y: imgPt.y }])
+      setDragging(true); setDragStart(pos); setDragCurrent(pos)
+      return
+    }
 
     if (mode === 'disc' && e.shiftKey && discActive) {
       ctrlDragRef.current = null
@@ -330,6 +387,18 @@ export default function App() {
     if (pos) mousePosRef.current = pos
     if (!dragging) return
     if (pos) setDragCurrent(pos)
+
+    if (useTouchupTool) {
+      if (pos) {
+        const imgPt = displayToImage(pos.x, pos.y)
+        setTouchupStrokes(s => {
+          const last = s[s.length - 1]
+          if (last && Math.hypot(last.x - imgPt.x, last.y - imgPt.y) < 3) return s
+          return [...s, { x: imgPt.x, y: imgPt.y }]
+        })
+      }
+      return
+    }
 
     if (pos && shiftDragRef.current && !shiftDragBusy.current) {
       const dx = e.clientX - shiftDragRef.current.startX
@@ -369,7 +438,7 @@ export default function App() {
     if (!pos) return
 
     // Corner click
-    if (mode === 'corner') {
+    if (mode === 'corner' && !useTouchupTool) {
       if (!cornersDetected || cornerState.cornerCount >= 4) return
       const imgPt = displayToImage(pos.x, pos.y)
       try {
@@ -395,6 +464,19 @@ export default function App() {
 
     if (!dragging || !dragStart) { setDragging(false); return }
     setDragging(false)
+
+    // Auto-commit touch-up strokes on mouseup when the touchup tool is enabled.
+    if (useTouchupTool) {
+      try {
+        if (touchupStrokes && touchupStrokes.length > 0) {
+          await commitTouchup()
+        }
+      } catch (err) {
+        console.error('Auto-commit touchup error:', err)
+      }
+      setDragStart(null); setDragCurrent(null)
+      return
+    }
 
     // Shift+drag final residual rotation
     if (mode === 'disc' && shiftDragRef.current && discActive) {
@@ -480,13 +562,27 @@ export default function App() {
 
   // ── SVG overlay (disc draw circle / line preview) ─────────────────────────
   const renderOverlay = () => {
-    if ((mode !== 'disc' && mode !== 'line') || !imgRef.current) return null
     const el = imgRef.current
+    if (!el) return null
     const imgStyle = {
       position: 'absolute',
       left: el.offsetLeft + 'px', top: el.offsetTop + 'px',
       width: el.offsetWidth + 'px', height: el.offsetHeight + 'px',
-      pointerEvents: 'none', zIndex: 5, overflow: 'visible',
+      pointerEvents: 'none', zIndex: 6, overflow: 'visible',
+    }
+
+    // Touch-up stroke overlay (render regardless of mode)
+    if (useTouchupTool && touchupStrokes && touchupStrokes.length > 0) {
+      const scaleX = el.offsetWidth / realImageDims.w
+      const scaleY = el.offsetHeight / realImageDims.h
+      const r = (brushSize / 2) * ((scaleX + scaleY) / 2)
+      return (
+        <svg style={imgStyle}>
+          {touchupStrokes.map((pt, i) => (
+            <circle key={i} cx={pt.x * scaleX} cy={pt.y * scaleY} r={r} fill="rgba(255,0,0,0.35)" stroke="rgba(255,0,0,0.8)" />
+          ))}
+        </svg>
+      )
     }
 
     if (mode === 'disc') {
@@ -758,6 +854,13 @@ export default function App() {
             setPreview={setPreview}
             useStretchPreprocess={useStretchPreprocess}
             setUseStretchPreprocess={setUseStretchPreprocess}
+            useTouchupTool={useTouchupTool}
+            setUseTouchupTool={setUseTouchupTool}
+            touchupStrokes={touchupStrokes}
+            commitTouchup={commitTouchup}
+            clearTouchup={clearTouchup}
+            brushSize={brushSize}
+            setBrushSize={setBrushSize}
           />
 
           <ShortcutsPanel
