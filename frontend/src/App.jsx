@@ -305,8 +305,6 @@ export default function App() {
       e.preventDefault()
       e.stopPropagation()
       e.stopImmediatePropagation()
-      log(`[ZOOM-WHEEL] deltaY=${e.deltaY} ctrlKey=${e.ctrlKey} mode=${mode} discActive=${discActive}`)
-      log(`[ZOOM-WHEEL] BEFORE: scrollLeft=${el.scrollLeft} scrollTop=${el.scrollTop} scrollWidth=${el.scrollWidth} scrollHeight=${el.scrollHeight} clientWidth=${el.clientWidth} clientHeight=${el.clientHeight}`)
       // Ctrl+Scroll in disc mode = feather radius
       if (e.ctrlKey && mode === 'disc' && discActive) {
         const delta = e.deltaY < 0 ? 1 : -1
@@ -321,39 +319,25 @@ export default function App() {
       const factor = e.deltaY < 0 ? 1.1 : 0.9
       setZoom(z => {
         const newZ = Math.min(5, Math.max(0.1, z * factor))
-        log(`[ZOOM-SETZOOM] oldZ=${z.toFixed(4)} newZ=${newZ.toFixed(4)} factor=${factor.toFixed(2)} clamped=${newZ === z}`)
         if (newZ === z) {
           log('[ZOOM-SETZOOM] AT LIMIT — returning same z, no scroll change')
           return z
         }
         const rect = el.getBoundingClientRect()
-        log(`[ZOOM-SETZOOM] rect: left=${rect.left.toFixed(1)} top=${rect.top.toFixed(1)} width=${rect.width.toFixed(1)} height=${rect.height.toFixed(1)}`)
-        log(`[ZOOM-SETZOOM] el.scrollLeft=${el.scrollLeft} el.scrollTop=${el.scrollTop}`)
-        log(`[ZOOM-SETZOOM] cursor: clientX=${e.clientX} clientY=${e.clientY}`)
         const cursorX = e.clientX - rect.left + el.scrollLeft
         const cursorY = e.clientY - rect.top + el.scrollTop
         const ratio = newZ / z
         const targetLeft = cursorX * ratio - (e.clientX - rect.left)
         const targetTop = cursorY * ratio - (e.clientY - rect.top)
-        log(`[ZOOM-SETZOOM] cursorInContent: x=${cursorX.toFixed(1)} y=${cursorY.toFixed(1)} ratio=${ratio.toFixed(4)}`)
-        log(`[ZOOM-SETZOOM] pendingScroll: left=${targetLeft.toFixed(1)} top=${targetTop.toFixed(1)}`)
         pendingScrollRef.current = { left: targetLeft, top: targetTop }
         return newZ
       })
-      log(`[ZOOM-WHEEL] AFTER setZoom call: scrollLeft=${el.scrollLeft} scrollTop=${el.scrollTop}`)
     }
-
-    // Also monitor any scroll events on the container
-    const scrollSpy = () => {
-      log(`[SCROLL-SPY] scrollLeft=${el.scrollLeft} scrollTop=${el.scrollTop} scrollWidth=${el.scrollWidth} scrollHeight=${el.scrollHeight}`)
-    }
-    el.addEventListener('scroll', scrollSpy, { passive: true })
 
     // Capture phase ensures we intercept before the container's native scroll
     el.addEventListener('wheel', handler, { passive: false, capture: true })
     return () => {
       el.removeEventListener('wheel', handler, { capture: true })
-      el.removeEventListener('scroll', scrollSpy)
     }
   }, [mode, discActive, featherSize])
 
@@ -362,15 +346,11 @@ export default function App() {
     const el = canvasRef.current
     const log = (msg) => LogFrontend(msg).catch(() => {})
     if (pendingScrollRef.current) {
-      log(`[ZOOM-LAYOUT] zoom=${zoom.toFixed(4)} BEFORE apply: scrollLeft=${el?.scrollLeft} scrollTop=${el?.scrollTop} scrollWidth=${el?.scrollWidth} scrollHeight=${el?.scrollHeight}`)
       if (el) {
         el.scrollLeft = pendingScrollRef.current.left
         el.scrollTop = pendingScrollRef.current.top
-        log(`[ZOOM-LAYOUT] AFTER apply: scrollLeft=${el.scrollLeft} scrollTop=${el.scrollTop} (requested left=${pendingScrollRef.current.left.toFixed(1)} top=${pendingScrollRef.current.top.toFixed(1)})`)
       }
       pendingScrollRef.current = null
-    } else {
-      log(`[ZOOM-LAYOUT] zoom=${zoom.toFixed(4)} NO pending scroll. scrollLeft=${el?.scrollLeft} scrollTop=${el?.scrollTop}`)
     }
   }, [zoom])
 
