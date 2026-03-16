@@ -444,7 +444,10 @@ export default function App() {
   }
 
   const handleMouseUp = async (e) => {
+
     if (!imageLoaded || loading) return
+    // Only respond to mouseup events on the image itself (not scrollbars or container)
+    if (e.target !== imgRef.current) return
     const pos = getRelPos(e)
     if (!pos) return
 
@@ -786,7 +789,12 @@ export default function App() {
       if (!filePath) return
 
       const result = await SaveImage({ outputPath: filePath })
-      setImageInfo(`Saved to: ${result.message}`)
+      // Avoid double 'Saved to:' if backend already includes it
+      if (result.message && result.message.startsWith('Saved to:')) {
+        setImageInfo(result.message)
+      } else {
+        setImageInfo(`Saved to: ${result.message}`)
+      }
     } catch (err) {
       console.error('Save error:', err)
     }
