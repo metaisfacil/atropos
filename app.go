@@ -29,11 +29,12 @@ type App struct {
 	loadMu sync.Mutex
 
 	// Image state
-	originalImage *image.NRGBA
-	currentImage  *image.NRGBA
-	warpedImage   *image.NRGBA
-	imageLoaded   bool
-	undoStack     []*image.NRGBA
+	originalImage   *image.NRGBA
+	currentImage    *image.NRGBA
+	warpedImage     *image.NRGBA
+	levelsBaseImage *image.NRGBA // snapshot taken before slider dragging begins; always the source for SetLevels
+	imageLoaded     bool
+	undoStack       []*image.NRGBA
 
 	// Processing state
 	detectedCorners []image.Point
@@ -763,17 +764,29 @@ func (a *App) setWorkingImage(img *image.NRGBA) {
 // AutoContrast computes the luminance min/max of the working image, stretches
 // all channels so that min->0 and max->255, and returns the updated preview.
 // Matches the behaviour of Photoshop Image > Auto Contrast.
+//
+// If the user has a live levels adjustment in progress (levelsBaseImage != nil),
+// Auto Contrast runs against the pre-adjustment base, not the current preview,
+// so it does not stack on top of a partial slider drag.
 func (a *App) AutoContrast() (*ProcessResult, error) {
 	a.logf("AutoContrast")
-	img := a.workingImage()
+
+	// Prefer the pre-adjustment base when the sliders have been touched.
+	var img *image.NRGBA
+	if a.levelsBaseImage != nil {
+		img = a.levelsBaseImage
+	} else {
+		img = a.workingImage()
+	}
 	if img == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
+
 	// Bootstrap warpedImage so saveUndo (which clones it) cannot panic.
 	if a.warpedImage == nil {
 		a.warpedImage = cloneImage(a.currentImage)
-		img = a.warpedImage
 	}
+	// saveUndo also clears levelsBaseImage — the baked result is now the base.
 	a.saveUndo()
 
 	bp, wp := computeAutoContrastPoints(img)
@@ -802,20 +815,33 @@ type SetLevelsRequest struct {
 
 // SetLevels applies an explicit levels stretch to the working image.
 // Called while the user drags the Black Point / White Point sliders.
+//
+// Each call always applies against levelsBaseImage — a snapshot taken the
+// first time the sliders are touched after a committing operation. This
+// prevents the well-known stacking bug where each drag re-stretches the
+// already-stretched result.  saveUndo (called by Crop, Rotate, AutoContrast,
+// etc.) clears levelsBaseImage so the next slider session gets a fresh base.
 func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 	a.logf("SetLevels: black=%d white=%d", req.Black, req.White)
-	img := a.workingImage()
-	if img == nil {
-		return nil, fmt.Errorf("no image loaded")
-	}
-	if a.warpedImage == nil {
-		a.warpedImage = cloneImage(a.currentImage)
-		img = a.warpedImage
-	}
-	a.saveUndo()
 
-	adjusted := applyLevels(img, req.Black, req.White)
-	a.setWorkingImage(adjusted)
+	// Ensure warpedImage exists so setWorkingImage has somewhere to write.
+	if a.warpedImage == nil {
+		if a.currentImage == nil {
+			return nil, fmt.Errorf("no image loaded")
+		}
+		a.warpedImage = cloneImage(a.currentImage)
+	}
+
+	// Snapshot the current state on first touch; reuse on subsequent drags.
+	if a.levelsBaseImage == nil {
+		a.levelsBaseImage = cloneImage(a.warpedImage)
+		a.logf("SetLevels: captured levelsBaseImage")
+	}
+
+	adjusted := applyLevels(a.levelsBaseImage, req.Black, req.White)
+	// Write to warpedImage directly — do NOT call saveUndo here so that
+	// every slider tick doesn't flood the undo stack.
+	a.warpedImage = adjusted
 
 	preview, err := imageToBase64(adjusted)
 	if err != nil {
@@ -1150,4 +1176,7 @@ func (a *App) saveUndo() {
 		a.undoStack = a.undoStack[1:]
 	}
 	a.undoStack = append(a.undoStack, cloneImage(a.warpedImage))
+	// Any committing operation invalidates the levels baseline so that the
+	// next SetLevels call re-snapshots from the new working image.
+	a.levelsBaseImage = nil
 }
