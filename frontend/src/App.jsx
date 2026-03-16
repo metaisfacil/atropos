@@ -1056,19 +1056,19 @@ export default function App() {
             </div>
             {shortcutsOpen && (
               <>
-                <div className="shortcut-item"><kbd>W/A/S/D</kbd> Crop edges</div>
-                <div className="shortcut-item"><kbd>E/R</kbd> Rotate {mode === 'disc' ? '±15°' : '±90°'}</div>
+                <div className="shortcut-item"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Crop edges</div>
+                <div className="shortcut-item"><kbd>E</kbd><kbd>R</kbd> Rotate {mode === 'disc' ? '±15°' : '±90°'}</div>
                 <div className="shortcut-item"><kbd>Tab</kbd> Undo</div>
                 <div className="shortcut-item"><kbd>Q</kbd> Save</div>
                 {mode === 'disc' && discActive && (
                   <>
                     <div className="shortcut-divider" />
-                    <div className="shortcut-item"><kbd>Y</kbd> Eyedrop bg colour</div>
-                    <div className="shortcut-item"><kbd>←↑→↓</kbd> Shift disc</div>
-                  <div className="shortcut-item"><kbd>Ctrl+Drag</kbd> Move disc</div>
-                  <div className="shortcut-item"><kbd>Shift+Drag</kbd> Rotate disc</div>
+                    <div className="shortcut-item"><kbd>Y</kbd> Eyedrop background</div>
+                    <div className="shortcut-item"><kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd> Shift disc</div>
+                  <div className="shortcut-item"><kbd>Ctrl</kbd>+<kbd>Drag</kbd> Shift disc</div>
+                  <div className="shortcut-item"><kbd>Shift</kbd>+<kbd>Drag</kbd> Rotate disc</div>
                   <div className="shortcut-item"><kbd>+</kbd>/<kbd>-</kbd> Feather radius</div>
-                  <div className="shortcut-item"><kbd>Ctrl+Scroll</kbd> Feather radius</div>
+                  <div className="shortcut-item"><kbd>Ctrl</kbd>+<kbd>Scroll</kbd> Feather radius</div>
                   </>
                 )}
               </>

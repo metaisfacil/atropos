@@ -160,9 +160,9 @@ button.save-btn:hover {
 
 .sidebar-actions {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   gap: 10px;
-  padding-bottom: 20px;
+  padding-bottom: 40px;
 }
 
 .sidebar-actions button {
