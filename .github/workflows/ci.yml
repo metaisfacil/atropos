@@ -79,8 +79,13 @@ jobs:
         run: npm run build
         working-directory: frontend
 
+      - name: Compute version string
+        shell: bash
+        run: echo "APP_VERSION=$(git log -1 --format=%cd-%h --date=format:%Y%m%d --abbrev=6)" >> "$GITHUB_ENV"
+
       - name: Build application
-        run: wails build ${{ matrix.build-flags }}
+        shell: bash
+        run: wails build ${{ matrix.build-flags }} -ldflags "-X main.AppVersion=$APP_VERSION"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

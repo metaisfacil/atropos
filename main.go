@@ -72,7 +72,7 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:  "Atropos",
+		Title:  AppBaseTitle(),
 		Width:  1200,
 		Height: 900,
 		AssetServer: &assetserver.Options{

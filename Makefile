@@ -16,6 +16,11 @@ ifeq ($(strip $(EXE_NAME)),)
 EXE_NAME := atropos.exe
 endif
 
+# Version string: YYYYMMDD-<6-char hash> from the last commit.
+# Falls back to "dev" when git is unavailable or the repo has no commits.
+VERSION := $(shell git log -1 --format=%cd-%h --date=format:%Y%m%d --abbrev=6 2>/dev/null || echo dev)
+LDFLAGS := -X main.AppVersion=$(VERSION)
+
 # Default target
 help:
 	@echo Atropos Wails Build Targets
@@ -26,15 +31,17 @@ help:
 	@echo make frontend   - Build frontend only
 	@echo make test       - Run Go tests
 	@echo make clean      - Remove build artifacts
+	@echo ""
+	@echo "Current version: $(VERSION)"
 
 # Install dependencies
 setup:
 	go install github.com/wailsapp/wails/v2/cmd/wails@latest
 	cd frontend && npm install
 
-# Development mode (Wails handles frontend dev server)
+# Development mode — version string is baked in at dev-server startup too
 dev:
-	wails dev
+	wails dev -ldflags "$(LDFLAGS)"
 
 # Build frontend (React/Vite)
 frontend:
@@ -42,7 +49,7 @@ frontend:
 
 # Production build: frontend first, then Wails embeds dist/ into the binary
 build: frontend
-	wails build -o $(EXE_NAME)
+	wails build -o $(EXE_NAME) -ldflags "$(LDFLAGS)"
 
 # Run Go tests
 test:
