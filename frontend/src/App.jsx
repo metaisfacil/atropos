@@ -334,12 +334,16 @@ export default function App() {
     try {
       const filePath = await OpenSaveDialog()
       if (!filePath) return
+      setLoading(true)
+      setImageInfo('Saving…')
       const result = await SaveImage({ outputPath: filePath })
-      setImageInfo(result.message?.startsWith('Saved to:')
-        ? result.message
-        : `Saved to: ${result.message}`)
+      // Prefer a backend-provided message; fall back to a simple path note.
+      setImageInfo(result?.message || `Saved to ${filePath}`)
     } catch (err) {
       console.error('Save error:', err)
+      setImageInfo(err?.message || String(err))
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -882,6 +886,7 @@ export default function App() {
 
       <main className="main-content">
         <header className="toolbar">
+          {loading && <div className="header-spinner" />}
           <span>{imageInfo}</span>
         </header>
         <div
@@ -891,12 +896,6 @@ export default function App() {
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
         >
-          {loading && (
-            <div className={`loading-overlay${loadingFull ? ' opaque' : ''}`}>
-              <div className="spinner" />
-              <div className="loading-text">{imageInfo}</div>
-            </div>
-          )}
           {preview ? (
             <img
               ref={imgRef}
