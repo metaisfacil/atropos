@@ -150,7 +150,6 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	}
 
 	// If not using stretch, or after stretch we continue with CLAHE on workGray
-	enhanced := applyCLAHE(workGray, 2.0, 8)
 
 	quality := req.QualityLevel / 100.0
 	if quality <= 0 {
@@ -162,13 +161,73 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 		workMinDist = 1
 	}
 
-	a.logf("DetectCorners: running goodFeaturesToTrack on %dx%d", workW, workH)
-	corners := goodFeaturesToTrack(enhanced, req.MaxCorners, quality, workMinDist, 7)
-	a.logf("DetectCorners: got %d raw corners", len(corners))
+	a.logf("DetectCorners: running multi-scale goodFeaturesToTrack on %dx%d", workW, workH)
 
-	// Scale corner coordinates back to original image space
+	// Multi-scale detection: run detector at several integer scales and
+	// accumulate results, then remove duplicates.
+	scales := []int{1, 2, 4}
+	var allCorners []image.Point
+	perScale := req.MaxCorners / len(scales)
+	if perScale < 1 {
+		perScale = 1
+	}
+
+	for _, s := range scales {
+		var srcGray *image.Gray
+		if s > 1 {
+			sw := workW / s
+			sh := workH / s
+			if sw < 1 {
+				sw = 1
+			}
+			if sh < 1 {
+				sh = 1
+			}
+			srcGray = resizeGray(workGray, sw, sh)
+		} else {
+			srcGray = workGray
+		}
+
+		thisMinDist := workMinDist / s
+		if thisMinDist < 1 {
+			thisMinDist = 1
+		}
+
+		a.logf("DetectCorners: scale=%d src=%dx%d max=%d minDist=%d", s, srcGray.Bounds().Dx(), srcGray.Bounds().Dy(), perScale, thisMinDist)
+		pts := goodFeaturesToTrack(srcGray, perScale, quality, thisMinDist, 7)
+		a.logf("DetectCorners: scale=%d got %d pts", s, len(pts))
+
+		// Scale pts back to working resolution
+		for _, p := range pts {
+			allCorners = append(allCorners, image.Pt(p.X*s, p.Y*s))
+		}
+	}
+
+	a.logf("DetectCorners: %d raw corners from all scales", len(allCorners))
+
+	// Remove duplicates by enforcing a minimum squared distance
+	var uniq []image.Point
+	minDistSq := float64(workMinDist*workMinDist) / 4.0
+	for _, c := range allCorners {
+		dup := false
+		for _, u := range uniq {
+			dx := float64(c.X - u.X)
+			dy := float64(c.Y - u.Y)
+			if dx*dx+dy*dy < minDistSq {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			uniq = append(uniq, c)
+		}
+	}
+
+	a.logf("DetectCorners: %d unique corners after dedupe", len(uniq))
+
+	// Map working-space corners to full-resolution image coordinates
 	var fullCorners []image.Point
-	for _, c := range corners {
+	for _, c := range uniq {
 		fullCorners = append(fullCorners, image.Pt(
 			int(float64(c.X)/scaleFactor),
 			int(float64(c.Y)/scaleFactor),
