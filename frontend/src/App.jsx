@@ -706,14 +706,14 @@ export default function App() {
             case 'e':
             case 'E':
               setLoading(true); setImageInfo('Rotating disc…')
-              result = await RotateDisc({ angle: 15 })
+              result = await RotateDisc({ angle: -15 })
               if (result?.preview) setPreview(result.preview)
               setLoading(false)
               return
             case 'r':
             case 'R':
               setLoading(true); setImageInfo('Rotating disc…')
-              result = await RotateDisc({ angle: -15 })
+              result = await RotateDisc({ angle: 15 })
               if (result?.preview) setPreview(result.preview)
               setLoading(false)
               return
@@ -750,13 +750,13 @@ export default function App() {
             break
           case 'e':
             setLoading(true); setImageInfo('Rotating…')
-            result = await Rotate({ flipCode: 1 })
+            result = await Rotate({ flipCode: 0 })
             if (result?.preview) setPreview(result.preview)
             setLoading(false)
             break
           case 'r':
             setLoading(true); setImageInfo('Rotating…')
-            result = await Rotate({ flipCode: 0 })
+            result = await Rotate({ flipCode: 1 })
             if (result?.preview) setPreview(result.preview)
             setLoading(false)
             break
