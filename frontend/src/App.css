@@ -17,6 +17,7 @@
 /* Scrollable area inside the sidebar; keeps the bottom island outside
    the scrolling region so it remains reachable and doesn't overlay content. */
 .sidebar-scroll {
+  display: flex;
   flex: 1 1 auto;
   overflow-y: auto;
   min-height: 0;
@@ -54,7 +55,6 @@
   z-index: 6;
   background: linear-gradient(#252526, #252526); /* solid background to cover scrolling content under it */
   padding-bottom: 15px;
-  margin-top: -8px;
 }
 
 .mode-btn {
@@ -91,7 +91,7 @@
 
 .control-group label {
   display: block;
-  margin-bottom: 8px;
+  margin-bottom: 5px;
   font-size: 12px;
   text-transform: uppercase;
   color: #858585;
@@ -221,7 +221,7 @@ button.save-btn:hover {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-bottom: 40px;
+  padding-bottom: 20px;
 }
 
 .sidebar-actions button {
@@ -230,8 +230,8 @@ button.save-btn:hover {
 }
 
 .keyboard-shortcuts {
-  /* The island panel itself: rounded top, subtle shadow and its own
-     scroll if there are many controls. */
+  /* The island panel itself: rounded top and subtle shadow. The inner
+     content area scrolls separately so the header stays visible. */
   background: #2d2d30;
   border-top: 1px solid #3e3e42;
   border-top-left-radius: 10px;
@@ -240,7 +240,9 @@ button.save-btn:hover {
   font-size: 11px;
   margin-bottom: 8px;
   max-height: 260px;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* content scroll lives in .keyboard-shortcuts-content */
 }
 
 .file-ops {
@@ -254,6 +256,44 @@ button.save-btn:hover {
   border-bottom-right-radius: 10px;
 }
 
+/* Keep the section header visible while the section content scrolls */
+.keyboard-shortcuts > .shortcut-title {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: block;
+  background: #2d2d30;
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+}
+
+/* Only show header divider and extra bottom padding when the section is expanded */
+.keyboard-shortcuts.expanded > .shortcut-title {
+  border-bottom: 1px solid rgba(62,62,66,0.6);
+  padding-bottom: 6px;
+}
+.keyboard-shortcuts-content {
+  flex: 1 1 auto;
+  overflow: auto;
+  scrollbar-gutter: stable both-edges;
+  padding-right: 6px; /* avoid content under the scrollbar */
+}
+
+/* Scrollbar styling for the inner content area */
+.keyboard-shortcuts-content::-webkit-scrollbar {
+  width: 10px;
+}
+.keyboard-shortcuts-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+.keyboard-shortcuts-content::-webkit-scrollbar-thumb {
+  background: #3e3e42;
+  border-radius: 5px;
+}
+.keyboard-shortcuts-content::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
 .shortcut-title {
   font-weight: bold;
 }
@@ -263,6 +303,43 @@ button.save-btn:hover {
   display: flex;
   gap: 8px;
   align-items: center;
+  justify-content: space-between;
+}
+
+.shortcut-item .keys {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.shortcut-item .caption {
+  flex: 1 1 auto;
+  text-align: right;
+  color: #e0e0e0;
+}
+
+/* Level control layout */
+.level-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.level-label {
+  width: 35px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.level-range {
+  flex: 1 1 auto;
+  min-width: 120px;
+}
+.level-value {
+  width: 44px;
+  text-align: right;
+  background: #3e3e42;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  flex-shrink: 0;
 }
 
 .shortcut-divider {
