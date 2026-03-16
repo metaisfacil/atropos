@@ -45,6 +45,8 @@ export default function App() {
   const [dragStart, setDragStart] = useState(null)   // {x, y} in display coords
   const [dragCurrent, setDragCurrent] = useState(null)
   const [linesDone, setLinesDone] = useState(0)
+  // Store all drawn lines in Lines mode: [{x1, y1, x2, y2}, ...]
+  const [lines, setLines] = useState([])
 
   // Corner controls
   const [dotRadius, setDotRadius] = useState(20)
@@ -557,6 +559,8 @@ export default function App() {
       const dx = end.x - start.x, dy = end.y - start.y
       if (Math.sqrt(dx * dx + dy * dy) < 5) return
       try {
+        // Add to local state for overlay
+        setLines(prev => [...prev, { x1: dragStart.x, y1: dragStart.y, x2: dragCurrent.x, y2: dragCurrent.y }])
         const result = await AddLine({ x1: start.x, y1: start.y, x2: end.x, y2: end.y })
         const newCount = linesDone + 1
         setLinesDone(newCount)
@@ -569,6 +573,7 @@ export default function App() {
           setPreview(procResult.preview)
           setImageInfo('Perspective correction applied')
           setLinesDone(0)
+          setLines([])
           setLinesProcessed(true)
           setLoading(false)
         }
@@ -583,13 +588,9 @@ export default function App() {
 
   // --- SVG overlay for live disc/line preview ---
   const renderOverlay = () => {
-    if (!dragging || !dragStart || !dragCurrent || mode === 'corner') return null
-    // No overlay for Ctrl+drag disc shift
-    if (ctrlDragRef.current !== null || shiftDragRef.current !== null) return null
+    // Only overlay in disc/line mode
+    if ((mode !== 'disc' && mode !== 'line') || !imgRef.current) return null
     const el = imgRef.current
-    if (!el) return null
-    // Position the SVG exactly on top of the image element so that
-    // coordinates relative to the image (from getRelPos) map 1:1.
     const imgStyle = {
       position: 'absolute',
       left: el.offsetLeft + 'px',
@@ -602,6 +603,9 @@ export default function App() {
     }
 
     if (mode === 'disc') {
+      if (!dragging || !dragStart || !dragCurrent) return null
+      // No overlay for Ctrl+drag or Shift+drag disc shift/rotate
+      if (ctrlDragRef.current !== null || shiftDragRef.current !== null) return null
       const r = Math.sqrt((dragStart.x - dragCurrent.x) ** 2 + (dragStart.y - dragCurrent.y) ** 2)
       return (
         <svg style={imgStyle}>
@@ -610,13 +614,21 @@ export default function App() {
       )
     }
     if (mode === 'line') {
+      // Draw all completed lines, plus the live preview if dragging
+      const allLines = [...lines]
+      if (dragging && dragStart && dragCurrent) {
+        allLines.push({ x1: dragStart.x, y1: dragStart.y, x2: dragCurrent.x, y2: dragCurrent.y })
+      }
       return (
         <svg style={imgStyle}>
-          <line
-            x1={dragStart.x} y1={dragStart.y}
-            x2={dragCurrent.x} y2={dragCurrent.y}
-            stroke="#00ff00" strokeWidth="2"
-          />
+          {allLines.map((ln, i) => (
+            <line
+              key={i}
+              x1={ln.x1} y1={ln.y1}
+              x2={ln.x2} y2={ln.y2}
+              stroke="#00ff00" strokeWidth="2"
+            />
+          ))}
         </svg>
       )
     }
@@ -830,6 +842,7 @@ export default function App() {
     try {
       const result = await ClearLines()
       setLinesDone(0)
+      setLines([])
       setLinesProcessed(false)
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) {
