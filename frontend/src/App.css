@@ -494,6 +494,19 @@ kbd {
   font-size: 14px;
 }
 
+/* Small spinner shown in the header next to the status message */
+.header-spinner {
+  width: 18px;
+  height: 18px;
+  border: 3px solid #3e3e42;
+  border-top-color: #007acc;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: 10px;
+  display: inline-block;
+  vertical-align: middle;
+}
+
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
