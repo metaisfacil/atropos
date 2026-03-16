@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import './App.css'
-import { OnFileDrop, OnFileDropOff } from '../wailsjs/runtime/runtime'
+import { OnFileDrop, OnFileDropOff, EventsOn } from '../wailsjs/runtime/runtime'
 import {
   LoadImage,
   DetectCorners,
@@ -250,6 +250,63 @@ export default function App() {
       }
     })()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Native menu event listeners (Wails runtime) ───────────────────────────
+  useEffect(() => {
+    const offs = []
+    try {
+      offs.push(EventsOn('menu.toggle-adjustments', () => setAdjPanelOpen(v => !v)))
+      offs.push(EventsOn('menu.toggle-shortcuts', () => setShortcutsOpen(v => !v)))
+      offs.push(EventsOn('menu.toggle-touchup', () => setUseTouchupTool(v => !v)))
+      offs.push(EventsOn('menu.set-mode', (m) => { if (m) setMode(m) }))
+      offs.push(EventsOn('menu.opened', (preview, width, height) => {
+        if (preview) setPreview(preview)
+        if (width && height) setRealImageDims({ w: width, h: height })
+        setImageLoaded(true)
+      }))
+      offs.push(EventsOn('menu.saved', (msg) => { if (msg) setImageInfo(msg) }))
+      offs.push(EventsOn('menu.undone', (preview) => { if (preview) setPreview(preview) }))
+      offs.push(EventsOn('menu.about', () => { window.alert('Atropos — About') }))
+    } catch (err) {
+      console.warn('Failed to register menu event listeners:', err)
+    }
+    return () => {
+      for (const off of offs) {
+        try { off() } catch (_) {}
+      }
+    }
+  }, [])
+
+  // Sync local toggle state to native menu checked state
+  useEffect(() => {
+    try {
+      if (window?.go?.main?.App?.MenuSetChecked) {
+        window.go.main.App.MenuSetChecked('adjustments', adjPanelOpen).catch(() => {})
+      } else if (window?.go?.main?.App) {
+        window.go.main.App.MenuSetChecked('adjustments', adjPanelOpen)
+      }
+    } catch (_) {}
+  }, [adjPanelOpen])
+
+  useEffect(() => {
+    try {
+      if (window?.go?.main?.App?.MenuSetChecked) {
+        window.go.main.App.MenuSetChecked('shortcuts', shortcutsOpen).catch(() => {})
+      } else if (window?.go?.main?.App) {
+        window.go.main.App.MenuSetChecked('shortcuts', shortcutsOpen)
+      }
+    } catch (_) {}
+  }, [shortcutsOpen])
+
+  useEffect(() => {
+    try {
+      if (window?.go?.main?.App?.MenuSetChecked) {
+        window.go.main.App.MenuSetChecked('touchup', useTouchupTool).catch(() => {})
+      } else if (window?.go?.main?.App) {
+        window.go.main.App.MenuSetChecked('touchup', useTouchupTool)
+      }
+    } catch (_) {}
+  }, [useTouchupTool])
 
   // ── Corner detection ───────────────────────────────────────────────────────
   const handleDetectCorners = async () => {

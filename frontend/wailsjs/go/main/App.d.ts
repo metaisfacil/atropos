@@ -26,6 +26,8 @@ export function LoadImage(arg1:main.LoadImageRequest):Promise<main.ImageInfo>;
 
 export function LogFrontend(arg1:string):Promise<void>;
 
+export function MenuSetChecked(arg1:string,arg2:boolean):Promise<void>;
+
 export function OpenImageDialog():Promise<string>;
 
 export function OpenSaveDialog():Promise<string>;

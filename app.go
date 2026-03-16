@@ -8,6 +8,9 @@ import (
 	"image/color"
 	"log"
 	"sync"
+
+	"github.com/wailsapp/wails/v2/pkg/menu"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct holds all application state.
@@ -48,16 +51,52 @@ type App struct {
 	// Launch arguments (set before startup)
 	launchFilePath string
 	launchMode     string // "corner", "disc", or "line"
+
+	// Native menu items (populated at startup)
+	menuAdjustments *menu.MenuItem
+	menuShortcuts   *menu.MenuItem
+	menuTouchup     *menu.MenuItem
+
+	// Cached menu-checked state (mirrors frontend)
+	menuAdjChecked   bool
+	menuShortChecked bool
+	menuTouchChecked bool
 }
 
 // NewApp creates a new App application struct.
 func NewApp() *App {
 	return &App{
-		undoLimit:   10,
-		featherSize: 15,
-		cropAmount:  3,
-		undoStack:   []*image.NRGBA{},
-		bgColor:     color.NRGBA{R: 255, G: 255, B: 255, A: 255},
+		undoLimit:        10,
+		featherSize:      15,
+		cropAmount:       3,
+		undoStack:        []*image.NRGBA{},
+		bgColor:          color.NRGBA{R: 255, G: 255, B: 255, A: 255},
+		menuAdjChecked:   false,
+		menuShortChecked: false,
+		menuTouchChecked: false,
+	}
+}
+
+// MenuSetChecked allows the frontend to inform the backend which menu
+// items should be marked checked. `name` should be one of
+// "adjustments", "shortcuts", or "touchup".
+func (a *App) MenuSetChecked(name string, checked bool) {
+	switch name {
+	case "adjustments":
+		a.menuAdjChecked = checked
+		if a.menuAdjustments != nil {
+			a.menuAdjustments.SetChecked(checked)
+		}
+	case "shortcuts":
+		a.menuShortChecked = checked
+		if a.menuShortcuts != nil {
+			a.menuShortcuts.SetChecked(checked)
+		}
+	case "touchup":
+		a.menuTouchChecked = checked
+		if a.menuTouchup != nil {
+			a.menuTouchup.SetChecked(checked)
+		}
 	}
 }
 
@@ -77,6 +116,14 @@ func (a *App) LogFrontend(msg string) {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.logf("startup: context initialized")
+	// Ensure the native window theme follows the system preference
+	// (on Windows this will respect Dark Mode). Wails exposes helper
+	// functions to set the window theme; prefer system default so the
+	// app matches OS settings. This is best-effort and failures are ignored.
+	func() {
+		defer func() { recover() }()
+		runtime.WindowSetSystemDefaultTheme(a.ctx)
+	}()
 }
 
 // shutdown is called when the app is being destroyed.

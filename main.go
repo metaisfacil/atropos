@@ -9,8 +9,11 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/menu"
+	"github.com/wailsapp/wails/v2/pkg/menu/keys"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed all:frontend/dist/*
@@ -70,8 +73,12 @@ func main() {
 	app.launchFilePath = launchFile
 	app.launchMode = launchMode
 
+	// Build native application menu (accessible via menubar)
+	menuObj := buildMenu(app)
+
 	// Create application with options
 	err := wails.Run(&options.App{
+		Menu:      menuObj,
 		Title:     AppBaseTitle(),
 		Width:     1200,
 		Height:    900,
@@ -95,4 +102,97 @@ func main() {
 	if err != nil {
 		println("Error:", err.Error())
 	}
+}
+
+// Function to build the application menu
+func buildMenu(a *App) *menu.Menu {
+	m := menu.NewMenu()
+
+	// File
+	file := m.AddSubmenu("File")
+	file.AddText("Open…", keys.CmdOrCtrl("o"), func(cd *menu.CallbackData) {
+		go func() {
+			path, err := a.OpenImageDialog()
+			if err != nil || path == "" {
+				return
+			}
+			info, err := a.LoadImage(LoadImageRequest{FilePath: path})
+			if err == nil {
+				runtime.EventsEmit(a.ctx, "menu.opened", info.Preview, info.Width, info.Height)
+			}
+		}()
+	})
+	file.AddText("Save…", keys.CmdOrCtrl("s"), func(cd *menu.CallbackData) {
+		go func() {
+			path, err := a.OpenSaveDialog()
+			if err != nil || path == "" {
+				return
+			}
+			res, err := a.SaveImage(SaveRequest{OutputPath: path})
+			if err == nil && res != nil {
+				runtime.EventsEmit(a.ctx, "menu.saved", res.Message)
+			}
+		}()
+	})
+	file.AddSeparator()
+	file.AddText("Quit", keys.CmdOrCtrl("q"), func(cd *menu.CallbackData) {
+		go runtime.Quit(a.ctx)
+	})
+
+	// Edit
+	edit := m.AddSubmenu("Edit")
+	edit.AddText("Undo", keys.CmdOrCtrl("z"), func(cd *menu.CallbackData) {
+		go func() {
+			res, _ := a.Undo()
+			if res != nil {
+				runtime.EventsEmit(a.ctx, "menu.undone", res.Preview)
+			}
+		}()
+	})
+
+	// View (checkable items)
+	view := m.AddSubmenu("View")
+	adjItem := view.AddText("Adjustments", nil, func(cd *menu.CallbackData) {
+		// flip cached state and emit event
+		a.menuAdjChecked = !a.menuAdjChecked
+		if a.menuAdjustments != nil {
+			a.menuAdjustments.SetChecked(a.menuAdjChecked)
+		}
+		runtime.EventsEmit(a.ctx, "menu.toggle-adjustments")
+	})
+	// initialize pointer and checked state
+	a.menuAdjustments = adjItem
+	adjItem.SetChecked(a.menuAdjChecked)
+
+	shortItem := view.AddText("Shortcuts", nil, func(cd *menu.CallbackData) {
+		a.menuShortChecked = !a.menuShortChecked
+		if a.menuShortcuts != nil {
+			a.menuShortcuts.SetChecked(a.menuShortChecked)
+		}
+		runtime.EventsEmit(a.ctx, "menu.toggle-shortcuts")
+	})
+	a.menuShortcuts = shortItem
+	shortItem.SetChecked(a.menuShortChecked)
+
+	touchItem := view.AddText("Touch-up brush", nil, func(cd *menu.CallbackData) {
+		a.menuTouchChecked = !a.menuTouchChecked
+		if a.menuTouchup != nil {
+			a.menuTouchup.SetChecked(a.menuTouchChecked)
+		}
+		runtime.EventsEmit(a.ctx, "menu.toggle-touchup")
+	})
+	a.menuTouchup = touchItem
+	touchItem.SetChecked(a.menuTouchChecked)
+
+	// Mode
+	mode := m.AddSubmenu("Mode")
+	mode.AddRadio("Corner", true, nil, func(cd *menu.CallbackData) { runtime.EventsEmit(a.ctx, "menu.set-mode", "corner") })
+	mode.AddRadio("Disc", false, nil, func(cd *menu.CallbackData) { runtime.EventsEmit(a.ctx, "menu.set-mode", "disc") })
+	mode.AddRadio("Line", false, nil, func(cd *menu.CallbackData) { runtime.EventsEmit(a.ctx, "menu.set-mode", "line") })
+
+	// Help
+	help := m.AddSubmenu("Help")
+	help.AddText("About", nil, func(cd *menu.CallbackData) { runtime.EventsEmit(a.ctx, "menu.about") })
+
+	return m
 }
