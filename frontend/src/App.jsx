@@ -669,6 +669,7 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar">
+        <div className="sidebar-scroll">
         {/* Mode selector */}
         <div className="mode-selector">
           {['corner', 'disc', 'line'].map(m => (
@@ -722,6 +723,7 @@ export default function App() {
           <LinePanel linesDone={linesDone} />
         )}
 
+        </div>{/* .sidebar-scroll */}
         {/* Bottom section: actions, adjustments, shortcuts, file ops */}
         <div className="sidebar-bottom">
           <div className="sidebar-actions">
