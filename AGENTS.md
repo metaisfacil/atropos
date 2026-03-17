@@ -94,17 +94,17 @@ Wails runtime
 
 **NewApp() defaults:**
 
-| Field | Default |
-|---|---|
-| `undoLimit` | 10 |
-| `featherSize` | 15 |
-| `cropAmount` | 3 |
-| `bgColor` | white (255,255,255,255) |
-| `postDiscWhite` | 255 |
-| `touchupBackend` | `"patchmatch"` |
-| `iopaintURL` | `"http://127.0.0.1:8086/"` |
-| `warpFillMode` | `"clamp"` |
-| `warpFillColor` | white |
+| Field             | Default                          |
+|-------------------|----------------------------------|
+| `undoLimit`       | 10                               |
+| `featherSize`     | 15                               |
+| `cropAmount`      | 3                                |
+| `bgColor`         | white (255,255,255,255)          |
+| `postDiscWhite`   | 255                              |
+| `touchupBackend`  | `"patchmatch"`                   |
+| `iopaintURL`      | `"http://127.0.0.1:8086/"`       |
+| `warpFillMode`    | `"clamp"`                        |
+| `warpFillColor`   | white                            |
 
 **Settings persistence:** Go fields are in-memory only. The frontend persists settings to `localStorage` and re-hydrates the Go side on every startup via `SetTouchupSettings` / `SetWarpSettings`. The frontend is the source of truth.
 
@@ -171,10 +171,8 @@ DetectCorners(req)
     6. Deduplicate: enforce minDistSq/4 between all retained corners
     7. Map working-space corners → full-resolution coordinates (divide by scaleFactor)
     8. Store in detectedCorners
-    9. drawCornerOverlay(dotRadius) on currentImage clone:
-         detected  → red dots  (radius dr)
-         selected  → green dots (radius dr + dr/2, min dr+4)
-    10. Return preview + "Detected N corners"
+    9. Return clean (unmodified) currentImage preview + Corners array + "Detected N corners"
+         Dots are rendered by the frontend as an SVG overlay — never baked into the image
 ```
 
 ### Clicking Corners
@@ -187,8 +185,9 @@ ClickCorner(req)
            use raw click coordinate
     2. Append pt to selectedCorners
     3. If selectedCorners.length < 4:
-           drawCornerOverlay → return "Corner N of 4"
-    4. On 4th corner → warpFromCorners(selectedCorners[:4]):
+           return SnappedX/SnappedY/Count/Message only — NO preview
+           (frontend adds point to selectedCornerPts SVG overlay)
+    4. On 4th corner → saveUndo() → warpFromCorners(selectedCorners[:4]):
            sortVertices (→ TL, TR, BL, BR)
            compute outW = max(widthTop, widthBot)
            compute outH = max(heightLeft, heightRight)
@@ -200,7 +199,7 @@ ClickCorner(req)
            warpedImage = result
            cropTop/Bottom/Left/Right = 0
     5. selectedCorners = nil
-    6. Return preview + "Perspective corrected to W×H"
+    6. Return preview + Width + Height + "Perspective corrected to W×H"
 ```
 
 ### Reset / Restore
@@ -209,13 +208,12 @@ ClickCorner(req)
 ResetCorners()
     selectedCorners = nil
     warpedImage = nil          ← CRITICAL: so GetCleanPreview returns currentImage
-    drawCornerOverlay(dotRadius) on currentImage
-    return preview
+    return clean currentImage preview + Corners (detectedCorners preserved)
 
 RestoreCornerOverlay({dotRadius})
     if detectedCorners empty → error "no cached corners"
-    drawCornerOverlay(dotRadius) on currentImage
-    return preview + "Detected N corners — click 4 corners"
+    return clean currentImage preview + Corners + "Detected N corners — click 4 corners"
+    (dotRadius arg accepted but unused — dot size is handled entirely by the SVG overlay)
 ```
 
 **Key:** `detectedCorners` is NOT cleared on mode switch (only on `LoadImage`). This enables the cached-corners restore path.
@@ -411,6 +409,18 @@ Undo()
 
 ## Touch-Up (`app_touchup.go`, `app_iopaint.go`, `patchmatch.go`)
 
+### Availability
+
+The touch-up brush button is **disabled** until the initial crop has been committed in the current mode:
+
+| Mode   | Enabled when                                   |
+|--------|------------------------------------------------|
+| Corner | `cornerState.cornerCount === 4` (warp applied) |
+| Line   | `linesProcessed === true`                      |
+| Disc   | `discActive === true`                          |
+
+Switching modes always resets `useTouchupTool` to `false`. The rationale: both Disc and Line modes use mouse drag for their first-stage input (drawing the disc / drawing lines), which would conflict with the touch-up brush drag if it were accidentally left on.
+
 ### buildMask(maskB64)
 
 ```
@@ -592,9 +602,18 @@ displayToImage(dispX, dispY) {
 - `realImageDims` is the full-resolution image size as reported by Go
 - The ratio `realImageDims.w / rect.width` is the display-to-image scale factor
 
-`touchupStrokes` are stored in **image-space coordinates**. The touch-up SVG overlay uses a `viewBox="0 0 W H"` spanning the full image with `preserveAspectRatio="none"` and is rendered inside a `position: relative` wrapper around the `<img>`, so it always tracks the image at any zoom level without DOM measurements.
+All SVG overlays use a `viewBox="0 0 W H"` spanning the full image with `preserveAspectRatio="none"` inside a `position: relative` wrapper around the `<img>`, so they always track the image at any zoom level without DOM measurements:
 
-Other overlays (disc drag circle, line preview) use `el.offsetLeft/offsetTop/offsetWidth/offsetHeight` for positioning — acceptable for transient drag overlays.
+| Overlay                             | State                                           | Condition                                   |
+|-------------------------------------|-------------------------------------------------|---------------------------------------------|
+| Corner dots (detected)              | `detectedCornerPts` — `{X,Y}[]` image-space     | `mode === 'corner'`                         |
+| Corner dots (selected, clicks 1–3)  | `selectedCornerPts` — `{X,Y}[]` image-space     | `mode === 'corner'`                         |
+| Touch-up strokes                    | `touchupStrokes` — `{x,y}[]` image-space        | `useTouchupTool && strokes.length > 0`      |
+| Line preview                        | `lines` — `{x1,y1,x2,y2}[]` image-space         | `mode === 'line' && lines.length > 0`       |
+
+Corner dots: detected corners are red circles (radius `dotRadius`); selected clicks 1–3 are green circles (radius `max(dotRadius*1.5, dotRadius+4)`).
+
+Other overlays (disc drag circle) use display-space coordinates — acceptable for transient drag previews.
 
 ---
 
@@ -662,12 +681,12 @@ Complex argument/return types are defined in `frontend/wailsjs/go/models.ts`.
 
 ## Settings Storage
 
-| Setting | Go field | localStorage key | Valid values |
-|---|---|---|---|
-| Touch-up backend | `touchupBackend` | `touchupBackend` | `"patchmatch"`, `"iopaint"` |
-| IOPaint URL | `iopaintURL` | `iopaintURL` | Any URL string |
-| Warp fill mode | `warpFillMode` | `warpFillMode` | `"clamp"`, `"fill"`, `"outpaint"` |
-| Warp fill color | `warpFillColor` | `warpFillColor` | CSS hex `"#rrggbb"` |
+| Setting            | Go field           | localStorage key  | Valid values                               |
+|--------------------|--------------------|-------------------|--------------------------------------------|
+| Touch-up backend   | `touchupBackend`   | `touchupBackend`  | `"patchmatch"`, `"iopaint"`                |
+| IOPaint URL        | `iopaintURL`       | `iopaintURL`      | Any URL string                             |
+| Warp fill mode     | `warpFillMode`     | `warpFillMode`    | `"clamp"`, `"fill"`, `"outpaint"`          |
+| Warp fill color    | `warpFillColor`    | `warpFillColor`   | CSS hex `"#rrggbb"`                        |
 
 On every app start, the frontend reads localStorage and calls `SetTouchupSettings` + `SetWarpSettings` to synchronise the Go side.
 
