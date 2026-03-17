@@ -803,6 +803,10 @@ export default function App() {
           if (e.repeat) return
           const active = document.activeElement
           if (active && (['INPUT','TEXTAREA','SELECT'].includes(active.tagName) || active.isContentEditable)) return
+          // Don't undo mid-drag: Ctrl+drag (disc shift) and Shift+drag (disc
+          // rotate) leave disc state unsaved, so undoing partway through would
+          // desync warpedImage from discCenter/rotationAngle.
+          if (ctrlDragRef.current !== null || shiftDragRef.current !== null) return
           e.preventDefault()
           setLoading(true); showStatus('Undoing…')
           try {
