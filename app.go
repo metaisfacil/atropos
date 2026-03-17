@@ -37,6 +37,15 @@ type App struct {
 	// shift / rotate / feather operation.
 	discBaseImage *image.NRGBA
 
+	// discWorkingCrop is a pre-cropped sub-region of discBaseImage centred on
+	// the disc with a generous extra margin. redrawDisc crops from this small
+	// image instead of the full discBaseImage, avoiding the cache thrashing
+	// caused by large image strides. discWorkingCropRect records which rect of
+	// discBaseImage was captured (in discBaseImage coords) so we can detect
+	// when a shift has moved the disc outside the cached region and refresh.
+	discWorkingCrop     *image.NRGBA
+	discWorkingCropRect image.Rectangle
+
 	// postDiscBlack / postDiscWhite record any levels stretch applied after the
 	// disc was committed. redrawDisc re-applies them at the end of every render
 	// so that disc re-renders (shift, rotate, feather) never silently discard a
@@ -67,6 +76,10 @@ type App struct {
 	// Warp out-of-bounds fill settings
 	warpFillMode  string      // "clamp", "fill", or "outpaint"
 	warpFillColor color.NRGBA // used when warpFillMode == "fill"
+
+	// Disc mode settings
+	discCenterCutout  bool // if true, a centered hole is cut out to expose the bg colour
+	discCutoutPercent int  // diameter of the cutout as a percentage of the disc diameter (1–50)
 }
 
 // NewApp creates a new App application struct.
@@ -78,10 +91,12 @@ func NewApp() *App {
 		undoStack:      []*image.NRGBA{},
 		bgColor:        color.NRGBA{R: 255, G: 255, B: 255, A: 255},
 		postDiscWhite:  255,
-		touchupBackend: "patchmatch",
-		iopaintURL:     "http://127.0.0.1:8086/",
-		warpFillMode:   "clamp",
-		warpFillColor:  color.NRGBA{R: 255, G: 255, B: 255, A: 255},
+		touchupBackend:   "patchmatch",
+		iopaintURL:       "http://127.0.0.1:8086/",
+		warpFillMode:     "clamp",
+		warpFillColor:    color.NRGBA{R: 255, G: 255, B: 255, A: 255},
+		discCenterCutout:  true,
+		discCutoutPercent: 11,
 	}
 }
 

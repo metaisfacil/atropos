@@ -27,6 +27,7 @@ import {
   LogFrontend,
   SetTouchupSettings,
   SetWarpSettings,
+  SetDiscSettings,
 } from '../wailsjs/go/main/App'
 
 import CornerPanel      from './components/CornerPanel'
@@ -150,6 +151,28 @@ export default function App() {
     SetWarpSettings({ fillMode: warpFillMode, fillColor: v }).catch(() => {})
   }
 
+  const [discCenterCutout, setDiscCenterCutoutState] = useState(() => {
+    const stored = localStorage.getItem('discCenterCutout')
+    return stored === null ? true : stored === 'true'
+  })
+
+  const [discCutoutPercent, setDiscCutoutPercentState] = useState(() =>
+    parseInt(localStorage.getItem('discCutoutPercent') || '11', 10)
+  )
+
+  const setDiscCenterCutout = (v) => {
+    setDiscCenterCutoutState(v)
+    localStorage.setItem('discCenterCutout', String(v))
+    SetDiscSettings({ centerCutout: v, cutoutPercent: discCutoutPercent }).then((result) => {
+      if (result?.preview) setPreview(result.preview)
+    }).catch(() => {})
+  }
+
+  const setDiscCutoutPercent = (v) => {
+    setDiscCutoutPercentState(v)
+    localStorage.setItem('discCutoutPercent', String(v))
+  }
+
   // Push all persisted settings to backend on startup.
   useEffect(() => {
     SetTouchupSettings({
@@ -159,6 +182,12 @@ export default function App() {
     SetWarpSettings({
       fillMode:  localStorage.getItem('warpFillMode')  || 'clamp',
       fillColor: localStorage.getItem('warpFillColor') || '#ffffff',
+    }).catch(() => {})
+    const storedCutout = localStorage.getItem('discCenterCutout')
+    const storedPercent = parseInt(localStorage.getItem('discCutoutPercent') || '11', 10)
+    SetDiscSettings({
+      centerCutout: storedCutout === null ? true : storedCutout === 'true',
+      cutoutPercent: storedPercent,
     }).catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -947,6 +976,9 @@ export default function App() {
           <DiscPanel
             discActive={discActive}
             featherSize={featherSize}  setFeatherSize={setFeatherSize}
+            discCenterCutout={discCenterCutout}
+            discCutoutPercent={discCutoutPercent}
+            setDiscCutoutPercent={setDiscCutoutPercent}
             setPreview={setPreview}
           />
         </div>
@@ -1013,7 +1045,7 @@ export default function App() {
 
           <div className="file-ops">
             <button onClick={handleLoadImage} className="load-btn" disabled={loading}>
-              {loading ? 'Loading…' : 'Load image'}
+              Load image
             </button>
             <button onClick={handleSaveImage} className="save-btn" disabled={loading}>
               Save image
@@ -1038,6 +1070,8 @@ export default function App() {
         setWarpFillMode={setWarpFillMode}
         warpFillColor={warpFillColor}
         setWarpFillColor={setWarpFillColor}
+        discCenterCutout={discCenterCutout}
+        setDiscCenterCutout={setDiscCenterCutout}
       />
 
       <main className="main-content">
@@ -1082,15 +1116,25 @@ export default function App() {
                 </svg>
               )}
               {mode === 'disc' && dragging && dragStart && dragCurrent &&
-               ctrlDragRef.current === null && shiftDragRef.current === null && (
-                <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6, overflow: 'visible' }}>
-                  <circle
-                    cx={dragCurrent.x} cy={dragCurrent.y}
-                    r={Math.sqrt((dragStart.x - dragCurrent.x) ** 2 + (dragStart.y - dragCurrent.y) ** 2)}
-                    stroke="#00ff00" strokeWidth="2" fill="none"
-                  />
-                </svg>
-              )}
+               ctrlDragRef.current === null && shiftDragRef.current === null && (() => {
+                const guideR = Math.sqrt((dragStart.x - dragCurrent.x) ** 2 + (dragStart.y - dragCurrent.y) ** 2)
+                return (
+                  <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6, overflow: 'visible' }}>
+                    <circle
+                      cx={dragCurrent.x} cy={dragCurrent.y}
+                      r={guideR}
+                      stroke="#00ff00" strokeWidth="2" fill="none"
+                    />
+                    {discCenterCutout && discCutoutPercent > 0 && (
+                      <circle
+                        cx={dragCurrent.x} cy={dragCurrent.y}
+                        r={guideR * discCutoutPercent / 100}
+                        stroke="#00ff00" strokeWidth="2" fill="none" strokeDasharray="4 3"
+                      />
+                    )}
+                  </svg>
+                )
+               })()}
               {mode === 'corner' && (detectedCornerPts.length > 0 || selectedCornerPts.length > 0) && (
                 <svg
                   viewBox={`0 0 ${realImageDims.w} ${realImageDims.h}`}

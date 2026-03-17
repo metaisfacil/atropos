@@ -18,6 +18,8 @@ export function DrawDisc(arg1:main.DiscDrawRequest):Promise<main.ProcessResult>;
 
 export function GetCleanPreview():Promise<main.ProcessResult>;
 
+export function GetDiscSettings():Promise<main.DiscSettings>;
+
 export function GetLaunchArgs():Promise<main.LaunchArgs>;
 
 export function GetPixelColor(arg1:main.PixelColorRequest):Promise<main.ProcessResult>;
@@ -49,6 +51,8 @@ export function RotateDisc(arg1:main.DiscRotateRequest):Promise<main.ProcessResu
 export function SaveImage(arg1:main.SaveRequest):Promise<main.ProcessResult>;
 
 export function SetBackgroundColor(arg1:number,arg2:number,arg3:number):Promise<void>;
+
+export function SetDiscSettings(arg1:main.DiscSettings):Promise<main.ProcessResult>;
 
 export function SetFeatherSize(arg1:main.FeatherSizeRequest):Promise<main.ProcessResult>;
 
