@@ -5,6 +5,14 @@ import (
 	"image"
 )
 
+// undoEntry stores a single undo snapshot. rotationAngle is non-nil for
+// operations that also need to restore the accumulated disc rotation angle
+// (e.g. StraightEdgeRotate) so that subsequent disc re-renders stay correct.
+type undoEntry struct {
+	image         *image.NRGBA
+	rotationAngle *float64
+}
+
 // CropRequest specifies which edge to crop.
 type CropRequest struct {
 	Direction string `json:"direction"`
@@ -46,13 +54,32 @@ func (a *App) saveUndo() {
 	}
 	// warpedImage may be nil when a committing op runs before any warp
 	// (e.g. AutoContrast in corner mode). Store currentImage in that case.
+	var img *image.NRGBA
 	if a.warpedImage != nil {
-		a.undoStack = append(a.undoStack, cloneImage(a.warpedImage))
+		img = cloneImage(a.warpedImage)
 	} else if a.currentImage != nil {
-		a.undoStack = append(a.undoStack, cloneImage(a.currentImage))
+		img = cloneImage(a.currentImage)
 	}
+	a.undoStack = append(a.undoStack, undoEntry{image: img})
 	// Any committing operation invalidates the levels baseline so that the
 	// next SetLevels call re-snapshots from the new working image.
+	a.levelsBaseImage = nil
+}
+
+// saveDiscRotationUndo is like saveUndo but also snapshots the current
+// rotationAngle so that Undo() can restore disc re-renders to the correct angle.
+func (a *App) saveDiscRotationUndo() {
+	if len(a.undoStack) >= a.undoLimit {
+		a.undoStack = a.undoStack[1:]
+	}
+	var img *image.NRGBA
+	if a.warpedImage != nil {
+		img = cloneImage(a.warpedImage)
+	} else if a.currentImage != nil {
+		img = cloneImage(a.currentImage)
+	}
+	angle := a.rotationAngle
+	a.undoStack = append(a.undoStack, undoEntry{image: img, rotationAngle: &angle})
 	a.levelsBaseImage = nil
 }
 
@@ -63,8 +90,13 @@ func (a *App) Undo() (*ProcessResult, error) {
 		a.logf("Undo: nothing to undo")
 		return &ProcessResult{Message: "Nothing to undo"}, nil
 	}
-	a.warpedImage = a.undoStack[len(a.undoStack)-1]
+	entry := a.undoStack[len(a.undoStack)-1]
 	a.undoStack = a.undoStack[:len(a.undoStack)-1]
+	a.warpedImage = entry.image
+	if entry.rotationAngle != nil {
+		a.rotationAngle = *entry.rotationAngle
+		a.logf("Undo: restored rotationAngle=%.3f°", a.rotationAngle)
+	}
 
 	preview, err := imageToBase64(a.warpedImage)
 	if err != nil {

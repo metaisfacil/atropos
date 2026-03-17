@@ -190,6 +190,28 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 	return &ProcessResult{Preview: preview}, nil
 }
 
+// StraightEdgeRotateRequest carries the angle (in degrees) of the reference
+// line drawn by the user in display space. The backend subtracts it from
+// rotationAngle so the edge becomes perfectly horizontal.
+type StraightEdgeRotateRequest struct {
+	AngleDeg float64 `json:"angleDeg"`
+}
+
+// StraightEdgeRotate rotates the disc so that the reference edge drawn by the
+// user becomes perfectly horizontal. Unlike RotateDisc (used for Q/E keys and
+// Shift+drag), this operation pushes a full undo snapshot that includes the
+// current rotationAngle, so that Ctrl+Z restores both the image and the angle.
+func (a *App) StraightEdgeRotate(req StraightEdgeRotateRequest) (*ProcessResult, error) {
+	a.logf("StraightEdgeRotate: angleDeg=%.3f (cumulative before: %.3f)", req.AngleDeg, a.rotationAngle)
+	if a.discRadius <= 0 {
+		return nil, fmt.Errorf("no disc defined")
+	}
+	a.saveDiscRotationUndo()
+	a.rotationAngle -= req.AngleDeg
+	a.logf("StraightEdgeRotate: new rotationAngle=%.3f", a.rotationAngle)
+	return a.redrawDisc()
+}
+
 // RotateDisc rotates the disc image by the specified angle.
 func (a *App) RotateDisc(req DiscRotateRequest) (*ProcessResult, error) {
 	a.logf("RotateDisc: angle=%.2f (cumulative before: %.2f)", req.Angle, a.rotationAngle)

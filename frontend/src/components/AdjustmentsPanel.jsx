@@ -27,6 +27,10 @@ export default function AdjustmentsPanel({
   setUseTouchupTool,
   brushSize,
   setBrushSize,
+  mode,
+  discActive,
+  useStraightEdgeTool,
+  setUseStraightEdgeTool,
 }) {
   const applyAutoContrast = async () => {
     if (!imageLoaded) return
@@ -76,7 +80,10 @@ export default function AdjustmentsPanel({
             <DelayedHint hint="Toggles the touch-up brush which uses a PatchMatch-style content-aware fill. Draw strokes on the preview to build a mask, then commit to fill.">
               <button
                 className={`primary touchup-btn ${useTouchupTool ? 'active' : ''}`}
-                onClick={() => setUseTouchupTool(!useTouchupTool)}
+                onClick={() => {
+                  if (!useTouchupTool) setUseStraightEdgeTool(false)
+                  setUseTouchupTool(!useTouchupTool)
+                }}
                 disabled={!touchupAvailable}
                 aria-pressed={useTouchupTool}
               >
@@ -92,7 +99,25 @@ export default function AdjustmentsPanel({
               <span className="level-value">{brushSize}px</span>
             </div>
           </div>
-          
+
+          {mode === 'disc' && (
+            <div className="shortcut-item">
+              <DelayedHint hint="Draw a line along a known horizontal edge. The disc will be rotated so that edge becomes level. Available only after the disc has been cropped.">
+                <button
+                  className={`primary straight-edge-btn ${useStraightEdgeTool ? 'active' : ''}`}
+                  onClick={() => {
+                    if (!useStraightEdgeTool) setUseTouchupTool(false)
+                    setUseStraightEdgeTool(!useStraightEdgeTool)
+                  }}
+                  disabled={!discActive || useTouchupTool}
+                  aria-pressed={useStraightEdgeTool}
+                >
+                  Straight edge
+                </button>
+              </DelayedHint>
+            </div>
+          )}
+
           <div className="shortcut-item" style={{ position: 'relative' }}>
             <DelayedHint hint="Clamps the image's luminance around the brightest and darkest points to enhance contrast.">
               <button
