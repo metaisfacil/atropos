@@ -30,6 +30,10 @@ export function DrawDisc(arg1) {
   return window['go']['main']['App']['DrawDisc'](arg1);
 }
 
+export function GetCleanPreview() {
+  return window['go']['main']['App']['GetCleanPreview']();
+}
+
 export function GetLaunchArgs() {
   return window['go']['main']['App']['GetLaunchArgs']();
 }

@@ -16,6 +16,8 @@ export function DetectCorners(arg1:main.CornerDetectRequest):Promise<main.Proces
 
 export function DrawDisc(arg1:main.DiscDrawRequest):Promise<main.ProcessResult>;
 
+export function GetCleanPreview():Promise<main.ProcessResult>;
+
 export function GetLaunchArgs():Promise<main.LaunchArgs>;
 
 export function GetPixelColor(arg1:main.PixelColorRequest):Promise<main.ProcessResult>;
