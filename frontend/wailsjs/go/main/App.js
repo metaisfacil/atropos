@@ -126,6 +126,10 @@ export function ShiftDisc(arg1) {
   return window['go']['main']['App']['ShiftDisc'](arg1);
 }
 
+export function StraightEdgeRotate(arg1) {
+  return window['go']['main']['App']['StraightEdgeRotate'](arg1);
+}
+
 export function TouchUpApply(arg1, arg2, arg3) {
   return window['go']['main']['App']['TouchUpApply'](arg1, arg2, arg3);
 }
