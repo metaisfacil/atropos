@@ -200,4 +200,4 @@ atropos [--debug] [--corners | --disc | --lines] [image_path]
 
 `--corners`, `--disc`, and `--lines` set the initial mode. An image path as a positional argument loads the file on startup and, in corner mode, runs detection immediately. These are used by OS file associations and shell integration.
 
-Pass `--debug` on the command line to enable a timestamped debug log written to `debug/YYYYMMDD_HHMMSS.txt` in the working directory. The log file is held open for the lifetime of the process. The frontend can write into the same log via `LogFrontend(msg)`, which is used by the zoom/scroll subsystem to record detailed wheel and layout events.
+Pass `--debug` on the command line to enable a timestamped debug log written to `debug/YYYYMMDD_HHMMSS.txt` in the working directory. The log file is held open for the lifetime of the process. The frontend can write into the same log via `LogFrontend(msg)`.
