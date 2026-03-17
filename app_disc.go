@@ -36,31 +36,64 @@ type FeatherSizeRequest struct {
 }
 
 // DrawDisc extracts and applies a circular mask with feathering.
+//
+// A snapshot of currentImage is captured into discBaseImage so that any
+// pre-disc tonal adjustments (levels, auto-contrast) are carried through every
+// subsequent redrawDisc call. postDiscBlack/White are reset to their neutral
+// values because this is a fresh disc with no post-commit adjustments yet.
 func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 	a.logf("DrawDisc: center=(%d,%d) radius=%d", req.CenterX, req.CenterY, req.Radius)
-	if a.originalImage == nil {
+	if a.currentImage == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
 	a.discCenter = image.Pt(req.CenterX, req.CenterY)
 	a.discRadius = req.Radius
 	a.rotationAngle = 0
+
+	// Snapshot the adjusted working image as the immutable source for all
+	// disc renders. Using currentImage (not originalImage) means any levels
+	// or auto-contrast applied before the disc is drawn are preserved.
+	a.discBaseImage = cloneImage(a.currentImage)
+
+	// Reset post-disc levels to neutral — nothing has been applied on top yet.
+	a.postDiscBlack = 0
+	a.postDiscWhite = 255
+	a.levelsBaseImage = nil
+
 	return a.redrawDisc()
 }
 
 // redrawDisc re-renders the disc crop using the current discCenter, discRadius,
-// featherSize and bgColor. Called by DrawDisc, ShiftDisc, GetPixelColor, etc.
+// featherSize, bgColor, rotationAngle, and post-disc levels.
+//
+// Invariant: every disc re-render (shift, rotate, feather, eyedropper) must
+// produce a result that is identical to what the user saw immediately after the
+// last committing operation. To guarantee this, redrawDisc:
+//
+//  1. Crops from discBaseImage (the state of currentImage at DrawDisc time),
+//     so pre-disc adjustments are never lost.
+//  2. Re-applies accumulated rotationAngle, so rotating then shifting never
+//     discards the rotation.
+//  3. Re-applies postDiscBlack/White, so any levels the user set after the disc
+//     was committed survive every subsequent disc re-render.
 func (a *App) redrawDisc() (*ProcessResult, error) {
-	if a.originalImage == nil || a.discRadius <= 0 {
+	src := a.discBaseImage
+	if src == nil {
+		// Safety fallback for callers that pre-date discBaseImage.
+		src = a.originalImage
+	}
+	if src == nil || a.discRadius <= 0 {
 		return nil, fmt.Errorf("no disc defined")
 	}
+
 	margin := a.featherSize
-	ob := a.originalImage.Bounds()
+	ob := src.Bounds()
 	x1 := clamp(a.discCenter.X-a.discRadius-margin, ob.Min.X, ob.Max.X)
 	y1 := clamp(a.discCenter.Y-a.discRadius-margin, ob.Min.Y, ob.Max.Y)
 	x2 := clamp(a.discCenter.X+a.discRadius+margin, ob.Min.X, ob.Max.X)
 	y2 := clamp(a.discCenter.Y+a.discRadius+margin, ob.Min.Y, ob.Max.Y)
 
-	cropped := subImage(a.originalImage, image.Rect(x1, y1, x2, y2))
+	cropped := subImage(src, image.Rect(x1, y1, x2, y2))
 	localCenter := image.Pt(a.discCenter.X-x1, a.discCenter.Y-y1)
 
 	feathered := applyCircularMaskWithFeather(cropped, localCenter, a.discRadius, a.featherSize, a.bgColor)
@@ -70,7 +103,18 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 	if a.rotationAngle != 0 {
 		feathered = rotateArbitrary(feathered, a.rotationAngle, a.bgColor)
 	}
+
+	// Re-apply any post-disc levels so that shift / rotate / feather operations
+	// never silently strip a tonal adjustment the user already committed.
+	if a.postDiscBlack != 0 || a.postDiscWhite != 255 {
+		feathered = applyLevels(feathered, a.postDiscBlack, a.postDiscWhite)
+	}
+
 	a.warpedImage = feathered
+
+	// Invalidate the levels baseline so the next SetLevels drag re-snapshots
+	// from the freshly rendered disc image.
+	a.levelsBaseImage = nil
 
 	preview, err := imageToBase64(a.warpedImage)
 	if err != nil {
@@ -89,24 +133,35 @@ func (a *App) RotateDisc(req DiscRotateRequest) (*ProcessResult, error) {
 	return a.redrawDisc()
 }
 
-// GetPixelColor samples the original image at (x,y), sets bgColor, and
+// GetPixelColor samples the disc base image at (x,y), sets bgColor, and
 // re-renders the disc crop so the feathered edge matches the sampled colour.
+//
+// Sampling from discBaseImage (rather than originalImage) means the colour
+// reflects any pre-disc tonal adjustments the user applied.
 func (a *App) GetPixelColor(req PixelColorRequest) (*ProcessResult, error) {
 	a.logf("GetPixelColor: x=%d y=%d", req.X, req.Y)
-	if a.originalImage == nil {
+
+	// Prefer the disc base (which includes pre-disc adjustments); fall back to
+	// currentImage for the pre-disc eyedropper case.
+	src := a.discBaseImage
+	if src == nil {
+		src = a.currentImage
+	}
+	if src == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
-	b := a.originalImage.Bounds()
+
+	b := src.Bounds()
 	px := clamp(req.X, b.Min.X, b.Max.X-1)
 	py := clamp(req.Y, b.Min.Y, b.Max.Y-1)
-	c := a.originalImage.NRGBAAt(px, py)
+	c := src.NRGBAAt(px, py)
 	a.bgColor = color.NRGBA{R: c.R, G: c.G, B: c.B, A: 255}
 	a.logf("GetPixelColor: sampled (%d,%d,%d) at (%d,%d)", c.R, c.G, c.B, px, py)
 
 	if a.discRadius > 0 {
 		return a.redrawDisc()
 	}
-	// No disc yet — just acknowledge
+	// No disc yet — just acknowledge.
 	return &ProcessResult{
 		Message: fmt.Sprintf("Background colour set to (%d,%d,%d)", c.R, c.G, c.B),
 	}, nil
@@ -151,7 +206,11 @@ func (a *App) ResetDisc() (*ProcessResult, error) {
 	a.discCenter = image.Point{}
 	a.discRadius = 0
 	a.rotationAngle = 0
+	a.discBaseImage = nil
+	a.postDiscBlack = 0
+	a.postDiscWhite = 255
 	a.warpedImage = nil
+	a.levelsBaseImage = nil
 
 	if a.currentImage == nil {
 		return nil, fmt.Errorf("no image loaded")
