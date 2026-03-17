@@ -369,6 +369,7 @@ func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
 func (a *App) ResetCorners() (*ProcessResult, error) {
 	a.logf("ResetCorners")
 	a.selectedCorners = nil
+	a.warpedImage = nil
 
 	result, err := a.drawCornerOverlay(a.cornerDotRadius)
 	if err != nil {
