@@ -23,11 +23,11 @@ export default function ShortcutsPanel({ shortcutsOpen, setShortcutsOpen, mode, 
             <div className="caption">Crop edges</div>
           </div>
           <div className="shortcut-item">
-            <div className="keys"><kbd>E</kbd><kbd>R</kbd></div>
+            <div className="keys"><kbd>Q</kbd><kbd>E</kbd></div>
             <div className="caption">Rotate {mode === 'disc' ? '±15°' : '±90°'}</div>
           </div>
-          <div className="shortcut-item"><div className="keys"><kbd>Tab</kbd></div><div className="caption">Undo</div></div>
-          <div className="shortcut-item"><div className="keys"><kbd>Q</kbd></div><div className="caption">Save</div></div>
+          <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd></div><div className="caption">Undo</div></div>
+          <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>S</kbd></div><div className="caption">Save</div></div>
 
           {mode === 'disc' && discActive && (
             <>

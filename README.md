@@ -40,7 +40,7 @@ The user draws a circle by dragging on the image. The drag start defines the cen
 - **Arrow keys** — shift the disc centre by 5 px (20 px with Shift held)
 - **Ctrl+Drag** — live shift; the centre tracks the cursor delta in image space
 - **Shift+Drag** — live rotation; horizontal drag distance maps to angle at 0.3 degrees/pixel
-- **E / R keys** — rotate ±15 degrees
+- **Q / E keys** — rotate ±15 degrees
 - **+ / - keys or Ctrl+Scroll** — adjust feather radius (0–100 px)
 - **Y key** — eyedropper: samples the pixel under the cursor and sets it as the background fill colour for the feathered edge
 
@@ -87,7 +87,7 @@ A content-aware touch-up brush provides a Photoshop-like heal/patch operation po
 
 Enable the touch-up brush in the Adjustments panel, set the brush radius, and draw directly on the preview. Previews are returned to give immediate visual feedback; committing a stroke applies the fill to the working image and pushes an undo entry so edits stack in the undo history.
 
-The implementation derives an internal patch size from the brush radius and runs a small number of PatchMatch iterations tuned for interactive performance; these parameters can be adjusted in the code to trade quality for speed. Touch-up commits may be reverted with the Undo command (Tab). The PatchMatch core is parallelised across CPU workers for responsiveness; previews aim to be fast, while full-resolution commits may take longer — a small header spinner indicates background work.
+The implementation derives an internal patch size from the brush radius and runs a small number of PatchMatch iterations tuned for interactive performance; these parameters can be adjusted in the code to trade quality for speed. Touch-up commits may be reverted with the Undo command (Ctrl/⌘ + Z). The PatchMatch core is parallelised across CPU workers for responsiveness; previews aim to be fast, while full-resolution commits may take longer — a small header spinner indicates background work.
 
 
 ## Common operations
@@ -98,15 +98,15 @@ WASD keys crop 3 pixels from the top, left, bottom, and right edges respectively
 
 ### Rotate
 
-E and R rotate the working image 90 degrees counter-clockwise and clockwise respectively. In disc mode these instead rotate ±15 degrees via the arbitrary-angle rotator.
+Q and E rotate the working image 90 degrees counter-clockwise and clockwise respectively. In disc mode these instead rotate ±15 degrees via the arbitrary-angle rotator.
 
 ### Undo
 
-Tab reverts the last committing operation. The undo stack holds up to 10 snapshots. Level slider adjustments intentionally do not push undo entries to avoid flooding the stack during a drag session.
+Ctrl/⌘ + Z reverts the last committing operation. The undo stack holds up to 10 snapshots. Level slider adjustments intentionally do not push undo entries to avoid flooding the stack during a drag session.
 
 ### Save
 
-Q or the Save Image button opens a file picker. The output format is determined by extension: PNG (default), JPEG (95% quality), BMP, or TIFF. The working image (`warpedImage`) is written at full resolution. The preview shown in the UI is a JPEG-encoded downscale capped at 1600 px on the longest edge.
+Ctrl/⌘ + S or the Save Image button opens a file picker. The output format is determined by extension: PNG (default), JPEG (95% quality), BMP, or TIFF. The working image (`warpedImage`) is written at full resolution. The preview shown in the UI is a JPEG-encoded downscale capped at 1600 px on the longest edge.
 
 ---
 
@@ -129,10 +129,10 @@ All internal processing uses `*image.NRGBA` (non-premultiplied RGBA). The `toNRG
 | Key | Action |
 |---|---|
 | W A S D | Crop top / left / bottom / right |
-| E | Rotate CCW 90° (or disc -15°) |
-| R | Rotate CW 90° (or disc +15°) |
-| Tab | Undo |
-| Q | Save |
+| Q | Rotate CCW 90° (or disc -15°) |
+| E | Rotate CW 90° (or disc +15°) |
+| Ctrl/⌘ + Z | Undo |
+| Ctrl/⌘ + S | Save |
 | Y | Eyedropper (disc mode) |
 | Arrow keys | Shift disc 5 px (20 px with Shift) |
 | + / - | Feather radius +1 / -1 (disc mode) |
