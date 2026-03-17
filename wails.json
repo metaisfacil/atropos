@@ -14,7 +14,7 @@
   "info": {
     "productName": "Atropos",
     "productVersion": "1.0.0",
-    "companyName": "",
+    "companyName": "Atropos",
     "companyWebsite": "",
     "copyright": "Copyright (c) 2026"
   },
@@ -23,7 +23,7 @@
     "devServer": "http://localhost:34115",
     "frontend:dev:serverUrl": "http://localhost:5173",
     "nsis": {
-      "template": null,
+      "template": "build/windows/installer/custom.nsi",
       "licenseFile": "",
       "icon": "",
       "oneClick": false,
