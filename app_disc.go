@@ -36,6 +36,35 @@ type FeatherSizeRequest struct {
 	Size int `json:"size"`
 }
 
+// discWorkingCropShiftPadding is the extra margin (in pixels) added on each
+// side of the disc+feather bounding box when pre-cropping discBaseImage into
+// discWorkingCrop. It defines how far the user can shift the disc before a
+// re-crop from the full discBaseImage is needed.
+const discWorkingCropShiftPadding = 500
+
+// refreshDiscWorkingCrop pre-crops discBaseImage around the current disc
+// centre with a generous extra margin and stores the result in
+// discWorkingCrop. Call this whenever discBaseImage or discCenter changes
+// significantly (DrawDisc, large shift). After a successful refresh,
+// redrawDisc can work entirely from the small working crop instead of the
+// potentially huge discBaseImage.
+func (a *App) refreshDiscWorkingCrop() {
+	if a.discBaseImage == nil {
+		a.discWorkingCrop = nil
+		return
+	}
+	pad := a.discRadius + a.featherSize + discWorkingCropShiftPadding
+	ob := a.discBaseImage.Bounds()
+	r := image.Rect(
+		clamp(a.discCenter.X-pad, ob.Min.X, ob.Max.X),
+		clamp(a.discCenter.Y-pad, ob.Min.Y, ob.Max.Y),
+		clamp(a.discCenter.X+pad, ob.Min.X, ob.Max.X),
+		clamp(a.discCenter.Y+pad, ob.Min.Y, ob.Max.Y),
+	)
+	a.discWorkingCrop = subImage(a.discBaseImage, r)
+	a.discWorkingCropRect = r
+}
+
 // DrawDisc extracts and applies a circular mask with feathering.
 //
 // A snapshot of currentImage is captured into discBaseImage so that any
@@ -62,6 +91,10 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 	a.postDiscWhite = 255
 	a.levelsBaseImage = nil
 
+	// Pre-crop a compact working region so subsequent shifts and re-renders
+	// read from a small, cache-friendly image rather than the huge original.
+	a.refreshDiscWorkingCrop()
+
 	return a.redrawDisc()
 }
 
@@ -79,24 +112,51 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 //  3. Re-applies postDiscBlack/White, so any levels the user set after the disc
 //     was committed survive every subsequent disc re-render.
 func (a *App) redrawDisc() (*ProcessResult, error) {
-	src := a.discBaseImage
-	if src == nil {
+	base := a.discBaseImage
+	if base == nil {
 		// Safety fallback for callers that pre-date discBaseImage.
-		src = a.originalImage
+		base = a.originalImage
 	}
-	if src == nil || a.discRadius <= 0 {
+	if base == nil || a.discRadius <= 0 {
 		return nil, fmt.Errorf("no disc defined")
 	}
 
 	margin := a.featherSize
-	ob := src.Bounds()
-	x1 := clamp(a.discCenter.X-a.discRadius-margin, ob.Min.X, ob.Max.X)
-	y1 := clamp(a.discCenter.Y-a.discRadius-margin, ob.Min.Y, ob.Max.Y)
-	x2 := clamp(a.discCenter.X+a.discRadius+margin, ob.Min.X, ob.Max.X)
-	y2 := clamp(a.discCenter.Y+a.discRadius+margin, ob.Min.Y, ob.Max.Y)
 
-	cropped := subImage(src, image.Rect(x1, y1, x2, y2))
-	localCenter := image.Pt(a.discCenter.X-x1, a.discCenter.Y-y1)
+	// Determine the required crop rect in discBaseImage coords.
+	ob := base.Bounds()
+	reqX1 := clamp(a.discCenter.X-a.discRadius-margin, ob.Min.X, ob.Max.X)
+	reqY1 := clamp(a.discCenter.Y-a.discRadius-margin, ob.Min.Y, ob.Max.Y)
+	reqX2 := clamp(a.discCenter.X+a.discRadius+margin, ob.Min.X, ob.Max.X)
+	reqY2 := clamp(a.discCenter.Y+a.discRadius+margin, ob.Min.Y, ob.Max.Y)
+	reqRect := image.Rect(reqX1, reqY1, reqX2, reqY2)
+
+	// Use the pre-cropped working region when it covers the required rect.
+	// This avoids reading from the huge discBaseImage on every shift, which
+	// would cause cache thrashing due to large image strides.
+	// If the disc has shifted outside the working crop, refresh it first.
+	if a.discWorkingCrop != nil {
+		if !reqRect.In(a.discWorkingCropRect) {
+			a.refreshDiscWorkingCrop()
+		}
+	}
+
+	var cropped *image.NRGBA
+	var localCenter image.Point
+	if a.discWorkingCrop != nil && reqRect.In(a.discWorkingCropRect) {
+		// Translate required rect into working-crop coords (which are 0-based).
+		off := a.discWorkingCropRect.Min
+		wcX1 := reqX1 - off.X
+		wcY1 := reqY1 - off.Y
+		wcX2 := reqX2 - off.X
+		wcY2 := reqY2 - off.Y
+		cropped = subImage(a.discWorkingCrop, image.Rect(wcX1, wcY1, wcX2, wcY2))
+		localCenter = image.Pt(a.discCenter.X-reqX1, a.discCenter.Y-reqY1)
+	} else {
+		// Fall back to the full base image (e.g. discWorkingCrop not yet built).
+		cropped = subImage(base, reqRect)
+		localCenter = image.Pt(a.discCenter.X-reqX1, a.discCenter.Y-reqY1)
+	}
 
 	centerCutoutRadius := 0
 	if a.discCenterCutout && a.discCutoutPercent > 0 {
@@ -214,6 +274,8 @@ func (a *App) ResetDisc() (*ProcessResult, error) {
 	a.discRadius = 0
 	a.rotationAngle = 0
 	a.discBaseImage = nil
+	a.discWorkingCrop = nil
+	a.discWorkingCropRect = image.Rectangle{}
 	a.postDiscBlack = 0
 	a.postDiscWhite = 255
 	a.warpedImage = nil
