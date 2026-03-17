@@ -912,6 +912,7 @@ export default function App() {
                     if (mode === 'corner') {
                       setCornerState(s => ({ ...s, cornerCount: 0 }))
                       setCornersDetected(false)
+                      await ResetCorners() // clears warpedImage so GetCleanPreview returns currentImage
                     } else if (mode === 'disc' && discActive) {
                       await ResetDisc(); setDiscActive(false)
                     } else if (mode === 'line') {
@@ -935,6 +936,7 @@ export default function App() {
                           s.useStretch === useStretchPreprocess) {
                         try {
                           const res = await RestoreCornerOverlay({ dotRadius })
+                          setFitWidth(0)
                           setPreview(res.preview)
                           if (res.width && res.height) setRealImageDims({ w: res.width, h: res.height })
                           setCornersDetected(true)
@@ -946,7 +948,7 @@ export default function App() {
                     }
 
                     const res = await GetCleanPreview()
-                    if (res?.preview) setPreview(res.preview)
+                    if (res?.preview) { setFitWidth(0); setPreview(res.preview) }
                     if (res?.width && res?.height) setRealImageDims({ w: res.width, h: res.height })
                   } catch (_) {}
                 }
