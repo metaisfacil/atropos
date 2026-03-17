@@ -276,6 +276,20 @@ export namespace main {
 	        this.iopaintUrl = source["iopaintUrl"];
 	    }
 	}
+	export class WarpSettings {
+	    fillMode: string;
+	    fillColor: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WarpSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.fillMode = source["fillMode"];
+	        this.fillColor = source["fillColor"];
+	    }
+	}
 
 }
 

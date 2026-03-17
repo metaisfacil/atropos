@@ -118,7 +118,14 @@ func (a *App) ProcessLines() (*ProcessResult, error) {
 	}
 	src := [4]image.Point{tl, tr, br, bl}
 
-	warped := perspectiveTransform(a.originalImage, src, dst, outW, outH)
+	var warped *image.NRGBA
+	if a.warpFillMode == "clamp" {
+		warped = perspectiveTransform(a.originalImage, src, dst, outW, outH)
+	} else {
+		var oobMask *image.Alpha
+		warped, oobMask = perspectiveTransformWithMask(a.originalImage, src, dst, outW, outH)
+		warped = a.applyWarpFill(warped, oobMask)
+	}
 	a.warpedImage = warped
 	a.lines = nil
 

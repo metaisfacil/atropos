@@ -690,12 +690,14 @@ button.options-close:hover {
   max-height: 0;
   overflow: hidden;
   opacity: 0;
-  transition: max-height 200ms ease, opacity 180ms ease;
+  margin-top: -10px;
+  transition: max-height 200ms ease, opacity 180ms ease, margin-top 200ms ease;
 }
 
 .options-iopaint-url.visible {
   max-height: 80px;
   opacity: 1;
+  margin-top: 0;
 }
 
 .options-field-label {
@@ -720,6 +722,21 @@ button.options-close:hover {
 .options-text-input:focus {
   outline: none;
   border-color: #007acc;
+}
+
+.options-divider {
+  border-top: 1px solid #3e3e42;
+  margin: 4px 0;
+}
+
+.options-color-input {
+  width: 48px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid #3e3e42;
+  border-radius: 4px;
+  background: #1e1e1e;
+  cursor: pointer;
 }
 
 .options-footer {

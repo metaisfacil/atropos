@@ -63,6 +63,10 @@ type App struct {
 	// Touch-up backend settings
 	touchupBackend string // "patchmatch" or "iopaint"
 	iopaintURL     string
+
+	// Warp out-of-bounds fill settings
+	warpFillMode  string      // "clamp", "fill", or "outpaint"
+	warpFillColor color.NRGBA // used when warpFillMode == "fill"
 }
 
 // NewApp creates a new App application struct.
@@ -76,6 +80,8 @@ func NewApp() *App {
 		postDiscWhite:  255,
 		touchupBackend: "patchmatch",
 		iopaintURL:     "http://127.0.0.1:8086/",
+		warpFillMode:   "clamp",
+		warpFillColor:  color.NRGBA{R: 255, G: 255, B: 255, A: 255},
 	}
 }
 

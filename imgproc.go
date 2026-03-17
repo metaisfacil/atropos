@@ -621,6 +621,77 @@ func perspectiveTransform(src *image.NRGBA, srcPts, dstPts [4]image.Point, outW,
 	return dst
 }
 
+// perspectiveTransformWithMask is like perspectiveTransform but instead of
+// clamping out-of-bounds source coordinates it leaves those destination pixels
+// transparent and records them in the returned alpha mask (255 = OOB).
+// Callers can then decide how to fill the masked region.
+func perspectiveTransformWithMask(src *image.NRGBA, srcPts, dstPts [4]image.Point, outW, outH int) (*image.NRGBA, *image.Alpha) {
+	H := computeHomography(
+		[4][2]float64{
+			{float64(srcPts[0].X), float64(srcPts[0].Y)},
+			{float64(srcPts[1].X), float64(srcPts[1].Y)},
+			{float64(srcPts[2].X), float64(srcPts[2].Y)},
+			{float64(srcPts[3].X), float64(srcPts[3].Y)},
+		},
+		[4][2]float64{
+			{float64(dstPts[0].X), float64(dstPts[0].Y)},
+			{float64(dstPts[1].X), float64(dstPts[1].Y)},
+			{float64(dstPts[2].X), float64(dstPts[2].Y)},
+			{float64(dstPts[3].X), float64(dstPts[3].Y)},
+		},
+	)
+
+	Hinv := invert3x3(H)
+
+	dst := image.NewNRGBA(image.Rect(0, 0, outW, outH))
+	oob := image.NewAlpha(image.Rect(0, 0, outW, outH))
+	sb := src.Bounds()
+
+	for y := 0; y < outH; y++ {
+		for x := 0; x < outW; x++ {
+			dx, dy := float64(x)+0.5, float64(y)+0.5
+			w := Hinv[6]*dx + Hinv[7]*dy + Hinv[8]
+			if math.Abs(w) < 1e-12 {
+				oob.Pix[y*oob.Stride+x] = 255
+				continue
+			}
+			sx := (Hinv[0]*dx + Hinv[1]*dy + Hinv[2]) / w
+			sy := (Hinv[3]*dx + Hinv[4]*dy + Hinv[5]) / w
+
+			ix0 := int(math.Floor(sx))
+			iy0 := int(math.Floor(sy))
+
+			// Mark pixel as out-of-bounds if bilinear neighbourhood is outside src.
+			if ix0 < sb.Min.X || ix0 > sb.Max.X-2 || iy0 < sb.Min.Y || iy0 > sb.Max.Y-2 {
+				oob.Pix[y*oob.Stride+x] = 255
+				continue
+			}
+
+			ffx := sx - float64(ix0)
+			ffy := sy - float64(iy0)
+
+			c00 := src.NRGBAAt(ix0, iy0)
+			c10 := src.NRGBAAt(ix0+1, iy0)
+			c01 := src.NRGBAAt(ix0, iy0+1)
+			c11 := src.NRGBAAt(ix0+1, iy0+1)
+
+			r := bilinear(float64(c00.R), float64(c10.R), float64(c01.R), float64(c11.R), ffx, ffy)
+			g := bilinear(float64(c00.G), float64(c10.G), float64(c01.G), float64(c11.G), ffx, ffy)
+			bl := bilinear(float64(c00.B), float64(c10.B), float64(c01.B), float64(c11.B), ffx, ffy)
+			al := bilinear(float64(c00.A), float64(c10.A), float64(c01.A), float64(c11.A), ffx, ffy)
+
+			dst.SetNRGBA(x, y, color.NRGBA{
+				R: clampByte(int(r)),
+				G: clampByte(int(g)),
+				B: clampByte(int(bl)),
+				A: clampByte(int(al)),
+			})
+		}
+	}
+
+	return dst, oob
+}
+
 // ---- Rotation ----
 
 // rotate90 rotates an image 90 degrees. flipCode 0 = CCW, 1 = CW.

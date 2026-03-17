@@ -46,6 +46,10 @@ export function GetTouchupSettings() {
   return window['go']['main']['App']['GetTouchupSettings']();
 }
 
+export function GetWarpSettings() {
+  return window['go']['main']['App']['GetWarpSettings']();
+}
+
 export function LoadImage(arg1) {
   return window['go']['main']['App']['LoadImage'](arg1);
 }
@@ -104,6 +108,10 @@ export function SetLevels(arg1) {
 
 export function SetTouchupSettings(arg1) {
   return window['go']['main']['App']['SetTouchupSettings'](arg1);
+}
+
+export function SetWarpSettings(arg1) {
+  return window['go']['main']['App']['SetWarpSettings'](arg1);
 }
 
 export function ShiftDisc(arg1) {
