@@ -68,6 +68,10 @@ jobs:
           fi
 
       # ── Windows: NSIS installer ───────────────────────────────────────────
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        run: choco install nsis -y
+
       - name: Build Windows NSIS installer
         if: runner.os == 'Windows'
         shell: bash
