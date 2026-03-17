@@ -35,6 +35,8 @@ import ShortcutsPanel   from './components/ShortcutsPanel'
 export default function App() {
   // ── Shared state ──────────────────────────────────────────────────────────
   const [mode, setMode]             = useState('corner')
+  const modeRef = useRef(mode)
+  useEffect(() => { modeRef.current = mode }, [mode])
   const [preview, setPreview]       = useState(null)
   const [imageInfo, setImageInfo]   = useState('No image loaded')
   const [imageLoaded, setImageLoaded] = useState(false)
@@ -173,7 +175,7 @@ export default function App() {
   }
 
   // Shared logic for loading a file path (used by dialog + drag-drop + CLI args)
-  const loadFile = async (filePath) => {
+  const loadFile = async (filePath, autoDetect = true) => {
     setLoading(true)
     setLoadingFull(true)
     setZoom(1)
@@ -193,7 +195,7 @@ export default function App() {
     setCornersDetected(false)
     setLines([])
 
-    if (mode === 'corner') {
+    if (autoDetect && mode === 'corner') {
       setImageInfo('Detecting corners…')
       const dr = await DetectCorners({
         maxCorners: cornerState.maxCorners,
@@ -223,7 +225,7 @@ export default function App() {
       const ext = filePath.split('.').pop().toLowerCase()
       if (!['png','jpg','jpeg','tif','tiff','bmp','gif','webp'].includes(ext)) return
       try {
-        await loadFile(filePath)
+        await loadFile(filePath, modeRef.current === 'corner')
       } catch (err) {
         console.error('Drop load error:', err)
         setImageInfo('Load failed — see debug log')
@@ -241,7 +243,8 @@ export default function App() {
         const args = await GetLaunchArgs()
         if (args.mode) setMode(args.mode)
         if (args.filePath) {
-          await loadFile(args.filePath)
+          const shouldDetect = args.mode ? (args.mode === 'corner') : (mode === 'corner')
+          await loadFile(args.filePath, shouldDetect)
         }
       } catch (err) {
         console.error('Launch args error:', err)
