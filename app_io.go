@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"image"
@@ -194,7 +195,11 @@ func (a *App) SaveImage(req SaveRequest) (*ProcessResult, error) {
 	case ".tiff", ".tif":
 		err = tiff.Encode(f, a.warpedImage, nil)
 	default:
-		err = png.Encode(f, a.warpedImage)
+		bw := bufio.NewWriterSize(f, 1<<20) // 1 MiB write buffer
+		enc := png.Encoder{CompressionLevel: png.BestSpeed}
+		if err = enc.Encode(bw, a.warpedImage); err == nil {
+			err = bw.Flush()
+		}
 	}
 	if err != nil {
 		a.logf("SaveImage: encode error: %v", err)
