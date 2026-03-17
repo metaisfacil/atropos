@@ -40,6 +40,8 @@ export function ResetCorners():Promise<main.ProcessResult>;
 
 export function ResetDisc():Promise<main.ProcessResult>;
 
+export function RestoreCornerOverlay(arg1:any):Promise<main.ProcessResult>;
+
 export function Rotate(arg1:main.RotateRequest):Promise<main.ProcessResult>;
 
 export function RotateDisc(arg1:main.DiscRotateRequest):Promise<main.ProcessResult>;

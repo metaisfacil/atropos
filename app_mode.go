@@ -13,8 +13,8 @@ import "fmt"
 func (a *App) GetCleanPreview() (*ProcessResult, error) {
 	a.logf("GetCleanPreview")
 
-	// Wipe corner state so the overlay cannot be reconstructed from stale data.
-	a.detectedCorners = nil
+	// Clear in-progress selections; detected corners are preserved so the
+	// frontend can restore the overlay when the user returns to corner mode.
 	a.selectedCorners = nil
 
 	img := a.workingImage()

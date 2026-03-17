@@ -78,6 +78,10 @@ export function ResetDisc() {
   return window['go']['main']['App']['ResetDisc']();
 }
 
+export function RestoreCornerOverlay(arg1) {
+  return window['go']['main']['App']['RestoreCornerOverlay'](arg1);
+}
+
 export function Rotate(arg1) {
   return window['go']['main']['App']['Rotate'](arg1);
 }

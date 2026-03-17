@@ -398,3 +398,27 @@ func (a *App) SetCornerDotRadius(req struct {
 	result.Message = fmt.Sprintf("Dot size: %d", dr)
 	return result, nil
 }
+
+// RestoreCornerOverlay redraws the cached corner detection overlay without
+// re-running detection. Returns an error if no corners are cached.
+func (a *App) RestoreCornerOverlay(req struct {
+	DotRadius int `json:"dotRadius"`
+}) (*ProcessResult, error) {
+	if len(a.detectedCorners) == 0 {
+		return nil, fmt.Errorf("no cached corners")
+	}
+	dr := req.DotRadius
+	if dr < 2 {
+		dr = a.cornerDotRadius
+	}
+	if dr < 2 {
+		dr = 2
+	}
+	a.cornerDotRadius = dr
+	result, err := a.drawCornerOverlay(dr)
+	if err != nil {
+		return nil, err
+	}
+	result.Message = fmt.Sprintf("Detected %d corners — click 4 corners", len(a.detectedCorners))
+	return result, nil
+}
