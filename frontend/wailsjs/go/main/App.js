@@ -30,10 +30,6 @@ export function DrawDisc(arg1) {
   return window['go']['main']['App']['DrawDisc'](arg1);
 }
 
-export function GetCleanPreview() {
-  return window['go']['main']['App']['GetCleanPreview']();
-}
-
 export function GetLaunchArgs() {
   return window['go']['main']['App']['GetLaunchArgs']();
 }
@@ -100,14 +96,6 @@ export function SetLevels(arg1) {
 
 export function ShiftDisc(arg1) {
   return window['go']['main']['App']['ShiftDisc'](arg1);
-}
-
-export function TouchUpApply(arg1, arg2, arg3) {
-  return window['go']['main']['App']['TouchUpApply'](arg1, arg2, arg3);
-}
-
-export function TouchUpFill(arg1, arg2, arg3) {
-  return window['go']['main']['App']['TouchUpFill'](arg1, arg2, arg3);
 }
 
 export function Undo() {

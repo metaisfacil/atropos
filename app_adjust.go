@@ -143,6 +143,11 @@ func (a *App) Rotate(req RotateRequest) (*ProcessResult, error) {
 // dots remain visible.  Post-warp path: applies to warpedImage as normal.
 // If the sliders have been partially dragged (levelsBaseImage != nil), the
 // stretch runs against that base so it does not stack on a partial drag.
+//
+// Disc mode (post-warp with discRadius > 0): the computed black/white points
+// are stored in postDiscBlack/postDiscWhite and the disc is re-rendered via
+// redrawDisc so that subsequent shift/rotate/feather operations continue to
+// apply the same tonal adjustment and never silently revert it.
 func (a *App) AutoContrast() (*ProcessResult, error) {
 	a.logf("AutoContrast")
 
@@ -202,7 +207,25 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 		}, nil
 	}
 
-	// Post-warp path.
+	// Post-warp, disc mode: store the computed points as postDisc levels and
+	// re-render through redrawDisc so the adjustment survives future disc
+	// operations (shift, rotate, feather). The disc re-render applies
+	// postDiscBlack/White at the end of every render, so this is persistent.
+	if a.discRadius > 0 {
+		a.postDiscBlack = bp
+		a.postDiscWhite = wp
+		a.levelsBaseImage = preLevelsBase
+		result, err := a.redrawDisc()
+		if err != nil {
+			return nil, err
+		}
+		result.Message = fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp)
+		result.Black = bp
+		result.White = wp
+		return result, nil
+	}
+
+	// Post-warp, non-disc path (corner / line mode after warp).
 	a.warpedImage = adjusted
 	// Restore the pre-adjustment base for slider sessions as above.
 	a.levelsBaseImage = preLevelsBase
@@ -227,11 +250,17 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 // Each call always applies against levelsBaseImage — a snapshot taken the
 // first time the sliders are touched after a committing operation. This
 // prevents the stacking bug where each drag re-stretches the already-stretched
-// result.  saveUndo (called by Crop, Rotate, AutoContrast, etc.) clears
+// result. saveUndo (called by Crop, Rotate, AutoContrast, etc.) clears
 // levelsBaseImage so the next slider session gets a fresh base.
 //
 // Pre-warp path: writes to currentImage so drawCornerOverlay keeps rendering
 // dots on top of the adjusted pixels.
+//
+// Disc mode (post-warp with discRadius > 0): the requested black/white values
+// are stored in postDiscBlack/postDiscWhite and the disc is re-rendered via
+// redrawDisc. This guarantees the stretch survives any subsequent disc
+// operation (shift, rotate, feather) because redrawDisc always re-applies
+// postDiscBlack/White at the end of its pipeline.
 func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 	a.logf("SetLevels: black=%d white=%d", req.Black, req.White)
 
@@ -251,10 +280,10 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 		a.logf("SetLevels: captured levelsBaseImage (preWarp=%v)", preWarp)
 	}
 
-	adjusted := applyLevels(a.levelsBaseImage, req.Black, req.White)
 	// Do NOT call saveUndo — slider ticks must not flood the undo stack.
 
 	if preWarp {
+		adjusted := applyLevels(a.levelsBaseImage, req.Black, req.White)
 		// Write back to currentImage so drawCornerOverlay stays in sync.
 		a.currentImage = adjusted
 		// Re-render corner overlay if dots have been placed.
@@ -270,7 +299,17 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 		return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy()}, nil
 	}
 
-	// Post-warp path: write to warpedImage as before.
+	// Post-warp, disc mode: record the new levels and re-render the full disc
+	// pipeline. redrawDisc will apply postDiscBlack/White at the end, keeping
+	// the stretch alive across shift / rotate / feather operations.
+	if a.discRadius > 0 {
+		a.postDiscBlack = req.Black
+		a.postDiscWhite = req.White
+		return a.redrawDisc()
+	}
+
+	// Post-warp, non-disc path (corner / line mode after warp).
+	adjusted := applyLevels(a.levelsBaseImage, req.Black, req.White)
 	a.warpedImage = adjusted
 	preview, err := imageToBase64(adjusted)
 	if err != nil {
