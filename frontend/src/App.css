@@ -477,6 +477,15 @@ kbd {
   overflow: hidden;
 }
 
+.toolbar-message {
+  opacity: 1;
+}
+
+.toolbar-message--fading {
+  opacity: 0;
+  transition: opacity 1s ease;
+}
+
 .toolbar {
   background: #2d2d30;
   border-bottom: 1px solid #3e3e42;
