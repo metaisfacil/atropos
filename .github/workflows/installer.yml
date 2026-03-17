@@ -139,9 +139,11 @@ jobs:
           MimeType=image/png;image/jpeg;image/tiff;image/bmp;
           DESKTOP
 
+          DEB_VERSION="${APP_VERSION#v}"
+
           cat > deb/DEBIAN/control << CONTROL
           Package: atropos
-          Version: ${APP_VERSION}
+          Version: ${DEB_VERSION}
           Architecture: amd64
           Maintainer: Atropos Team
           Description: Image perspective correction and circular cropping tool
