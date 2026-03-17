@@ -40,14 +40,18 @@ originalImage  ──  immutable after LoadImage; never modified
 
 ### Fields (defined in `app.go` App struct)
 
-| Field             | Type             | Meaning                                                                                                                                                                                |
-|-------------------|------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `originalImage`   | `*image.NRGBA`   | Full-resolution decoded source. Never modified after `LoadImage`.                                                                                                                      |
-| `currentImage`    | `*image.NRGBA`   | Working image before any warp/disc operation. Pre-warp levels adjustments write here.                                                                                                  |
-| `warpedImage`     | `*image.NRGBA`   | The current "committed" result. `SaveImage` reads **only** this field. If nil, `workingImage()` falls back to `currentImage`.                                                          |
-| `levelsBaseImage` | `*image.NRGBA`   | Snapshot taken on the **first** slider drag after any committing operation. All subsequent slider ticks apply levels to this base, preventing value stacking. Cleared by `saveUndo()`. |
-| `discBaseImage`   | `*image.NRGBA`   | Snapshot of `currentImage` captured at `DrawDisc` time. `redrawDisc()` **always** sources from this image, not `warpedImage`, so every re-render of the disc is deterministic.         |
-| `undoStack`       | `[]*image.NRGBA` | LIFO stack capped at `undoLimit` (10). Each entry is a clone of `workingImage()` at commit time.                                                                                       |
+| Field                 | Type             | Meaning                                                                                                                                                                                                                                                                                                                                                                |
+|-----------------------|------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `originalImage`       | `*image.NRGBA`   | Full-resolution decoded source. Never modified after `LoadImage`.                                                                                                                                                                                                                                                                                                      |
+| `currentImage`        | `*image.NRGBA`   | Working image before any warp/disc operation. Pre-warp levels adjustments write here.                                                                                                                                                                                                                                                                                  |
+| `warpedImage`         | `*image.NRGBA`   | The current "committed" result. `SaveImage` reads **only** this field. If nil, `workingImage()` falls back to `currentImage`.                                                                                                                                                                                                                                          |
+| `levelsBaseImage`     | `*image.NRGBA`   | Snapshot taken on the **first** slider drag after any committing operation. All subsequent slider ticks apply levels to this base, preventing value stacking. Cleared by `saveUndo()`.                                                                                                                                                                                 |
+| `discBaseImage`       | `*image.NRGBA`   | Snapshot of `currentImage` captured at `DrawDisc` time. `redrawDisc()` **always** sources from this image, not `warpedImage`, so every re-render of the disc is deterministic.                                                                                                                                                                                         |
+| `undoStack`           | `[]undoEntry`    | LIFO stack capped at `undoLimit` (10). Each entry is an `undoEntry{image, rotationAngle}`. `rotationAngle` is non-nil only for `saveDiscRotationUndo()` snapshots (e.g. `StraightEdgeRotate`).                                                                                                                                                                         |
+| `discWorkingCrop`     | `*image.NRGBA`   | Pre-cropped sub-region of `discBaseImage` centred on the disc with a generous extra margin (`discWorkingCropShiftPadding = 500 px`). `redrawDisc` reads from this small image instead of the full `discBaseImage` to avoid cache thrashing on large images. Refreshed on `DrawDisc` and when a shift moves the disc outside the cached region. Cleared by `ResetDisc`. |
+| `discWorkingCropRect` | `image.Rectangle`| Records the rect of `discBaseImage` that `discWorkingCrop` covers (in `discBaseImage` coordinates). Used to detect when a shift has moved the disc outside the working crop.                                                                                                                                                                                           |
+| `discCenterCutout`    | `bool`           | When true, `redrawDisc` punches a circular hole at the disc centre to expose `bgColor`. Default: `true`.                                                                                                                                                                                                                                                               |
+| `discCutoutPercent`   | `int`            | Diameter of the centre cutout as a percentage of the disc diameter (1–50). Cutout radius = `discRadius * discCutoutPercent / 100`. Default: `11`.                                                                                                                                                                                                                      |
 
 ### `workingImage()` (in `app_adjust.go`)
 
@@ -69,10 +73,14 @@ Always writes to `warpedImage`. This ensures `SaveImage` always has a result, ev
 ### `saveUndo()` (in `app_adjust.go`)
 
 1. If `undoStack` is full, shift out the oldest entry.
-2. Push a clone of `workingImage()`.
+2. Push an `undoEntry{image: clone of workingImage(), rotationAngle: nil}`.
 3. **Clears `levelsBaseImage`** — next `SetLevels` call gets a fresh snapshot.
 
-**Rule:** Every operation that commits a permanent change must call `saveUndo()` first — except `SetLevels`, which deliberately does not (slider ticks must not flood the undo stack). This includes the warp-entry operations: `ClickCorner` (4th click), `ProcessLines`, and `DrawDisc`.
+### `saveDiscRotationUndo()` (in `app_adjust.go`)
+
+Same as `saveUndo()` but also snapshots the current `rotationAngle` into the entry (`rotationAngle: &angle`). Used by `StraightEdgeRotate` so that Undo restores both the image pixels and the accumulated rotation angle, keeping disc re-renders consistent.
+
+**Rule:** Every operation that commits a permanent change must call `saveUndo()` first — except `SetLevels`, which deliberately does not (slider ticks must not flood the undo stack). This includes the warp-entry operations: `ClickCorner` (4th click), `ProcessLines`, and `DrawDisc`. `StraightEdgeRotate` uses `saveDiscRotationUndo()` instead.
 
 ---
 
@@ -94,17 +102,19 @@ Wails runtime
 
 **NewApp() defaults:**
 
-| Field             | Default                          |
-|-------------------|----------------------------------|
-| `undoLimit`       | 10                               |
-| `featherSize`     | 15                               |
-| `cropAmount`      | 3                                |
-| `bgColor`         | white (255,255,255,255)          |
-| `postDiscWhite`   | 255                              |
-| `touchupBackend`  | `"patchmatch"`                   |
-| `iopaintURL`      | `"http://127.0.0.1:8086/"`       |
-| `warpFillMode`    | `"clamp"`                        |
-| `warpFillColor`   | white                            |
+| Field              | Default                          |
+|--------------------|----------------------------------|
+| `undoLimit`        | 10                               |
+| `featherSize`      | 15                               |
+| `cropAmount`       | 3                                |
+| `bgColor`          | white (255,255,255,255)          |
+| `postDiscWhite`    | 255                              |
+| `touchupBackend`   | `"patchmatch"`                   |
+| `iopaintURL`       | `"http://127.0.0.1:8086/"`       |
+| `warpFillMode`     | `"clamp"`                        |
+| `warpFillColor`    | white                            |
+| `discCenterCutout` | `true`                           |
+| `discCutoutPercent`| 11                              |
 
 **Settings persistence:** Go fields are in-memory only. The frontend persists settings to `localStorage` and re-hydrates the Go side on every startup via `SetTouchupSettings` / `SetWarpSettings`. The frontend is the source of truth.
 
@@ -401,9 +411,14 @@ AutoContrast()
 ```
 Undo()
     if undoStack empty → "Nothing to undo"
-    warpedImage = pop from undoStack
+    entry = pop from undoStack
+    warpedImage = entry.image
+    if entry.rotationAngle != nil:
+        rotationAngle = *entry.rotationAngle   <- restores disc angle for StraightEdgeRotate undo
     return preview
 ```
+
+**Frontend note:** Undo is blocked while any drag operation is active (disc shift drag, rotation drag, etc.) to prevent undo from firing mid-drag and corrupting disc state.
 
 ---
 
