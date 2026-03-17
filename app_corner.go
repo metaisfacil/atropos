@@ -325,14 +325,13 @@ func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
 	}, nil
 }
 
-// RestoreCornerOverlay returns the current image and the cached detectedCorners
-// so the frontend can re-render the SVG dot overlay when switching back to
-// corner mode without re-running detection.
 // RestoreCornerOverlayRequest is the argument for RestoreCornerOverlay.
+// It contains the dot radius for rendering the SVG overlay when switching back to corner mode.
 type RestoreCornerOverlayRequest struct {
 	DotRadius int `json:"dotRadius"`
 }
 
+// RestoreCornerOverlay returns the clean preview and cached detected corners for SVG overlay restoration when switching back to corner mode.
 func (a *App) RestoreCornerOverlay(req RestoreCornerOverlayRequest) (*ProcessResult, error) {
 	a.logf("RestoreCornerOverlay: %d cached corners", len(a.detectedCorners))
 	if len(a.detectedCorners) == 0 {
