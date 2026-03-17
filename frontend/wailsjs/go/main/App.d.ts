@@ -64,6 +64,8 @@ export function SetWarpSettings(arg1:main.WarpSettings):Promise<void>;
 
 export function ShiftDisc(arg1:main.ShiftDiscRequest):Promise<main.ProcessResult>;
 
+export function StraightEdgeRotate(arg1:main.StraightEdgeRotateRequest):Promise<main.ProcessResult>;
+
 export function TouchUpApply(arg1:string,arg2:number,arg3:number):Promise<main.ProcessResult>;
 
 export function Undo():Promise<main.ProcessResult>;
