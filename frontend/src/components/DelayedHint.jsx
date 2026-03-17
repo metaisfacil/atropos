@@ -3,21 +3,24 @@ import ReactDOM from 'react-dom'
 
 // DelayedHint: shows a tooltip after hovering for a delay (default 1s),
 // rendered in a portal to avoid clipping by overflow:hidden parents.
-export default function DelayedHint({ children, hint, delay = 1000, offset = 10 }) {
+export default function DelayedHint({ children, hint, delay = 1000, offset = 12 }) {
   const [showHint, setShowHint] = React.useState(false)
   const [hintPos, setHintPos] = React.useState({ top: 0, left: 0 })
   const hintTimeout = React.useRef()
   const childRef = React.useRef()
+  const cursorPos = React.useRef({ x: 0, y: 0 })
 
-  const handleShow = () => {
+  const handleMove = (e) => {
+    cursorPos.current = { x: e.clientX, y: e.clientY }
+  }
+
+  const handleShow = (e) => {
+    cursorPos.current = { x: e.clientX, y: e.clientY }
     hintTimeout.current = setTimeout(() => {
-      if (childRef.current) {
-        const rect = childRef.current.getBoundingClientRect()
-        setHintPos({
-          top: rect.top + rect.height / 2,
-          left: rect.right + offset,
-        })
-      }
+      setHintPos({
+        top: cursorPos.current.y,
+        left: cursorPos.current.x + offset,
+      })
       setShowHint(true)
     }, delay)
   }
@@ -40,9 +43,12 @@ export default function DelayedHint({ children, hint, delay = 1000, offset = 10 
             fontSize: 13,
             borderRadius: 4,
             padding: '4px 10px',
-            whiteSpace: 'nowrap',
+            maxWidth: 280,
+            whiteSpace: 'normal',
+            wordBreak: 'break-word',
             zIndex: 9999,
             boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            lineHeight: 1.4,
           }}
         >
           {hint}
@@ -56,6 +62,7 @@ export default function DelayedHint({ children, hint, delay = 1000, offset = 10 
     ref: childRef,
     onMouseEnter: handleShow,
     onMouseLeave: handleHide,
+    onMouseMove: handleMove,
     onBlur: handleHide,
     tabIndex: child.props.tabIndex || 0,
   })

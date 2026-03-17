@@ -42,6 +42,10 @@ export function GetPixelColor(arg1) {
   return window['go']['main']['App']['GetPixelColor'](arg1);
 }
 
+export function GetTouchupSettings() {
+  return window['go']['main']['App']['GetTouchupSettings']();
+}
+
 export function LoadImage(arg1) {
   return window['go']['main']['App']['LoadImage'](arg1);
 }
@@ -96,6 +100,10 @@ export function SetFeatherSize(arg1) {
 
 export function SetLevels(arg1) {
   return window['go']['main']['App']['SetLevels'](arg1);
+}
+
+export function SetTouchupSettings(arg1) {
+  return window['go']['main']['App']['SetTouchupSettings'](arg1);
 }
 
 export function ShiftDisc(arg1) {
