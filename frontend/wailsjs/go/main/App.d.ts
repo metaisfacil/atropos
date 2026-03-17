@@ -22,6 +22,8 @@ export function GetLaunchArgs():Promise<main.LaunchArgs>;
 
 export function GetPixelColor(arg1:main.PixelColorRequest):Promise<main.ProcessResult>;
 
+export function GetTouchupSettings():Promise<main.TouchupSettings>;
+
 export function LoadImage(arg1:main.LoadImageRequest):Promise<main.ImageInfo>;
 
 export function LogFrontend(arg1:string):Promise<void>;
@@ -49,6 +51,8 @@ export function SetCornerDotRadius(arg1:any):Promise<main.ProcessResult>;
 export function SetFeatherSize(arg1:main.FeatherSizeRequest):Promise<main.ProcessResult>;
 
 export function SetLevels(arg1:main.SetLevelsRequest):Promise<main.ProcessResult>;
+
+export function SetTouchupSettings(arg1:main.TouchupSettings):Promise<void>;
 
 export function ShiftDisc(arg1:main.ShiftDiscRequest):Promise<main.ProcessResult>;
 

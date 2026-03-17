@@ -59,17 +59,23 @@ type App struct {
 	// Launch arguments (set before startup)
 	launchFilePath string
 	launchMode     string // "corner", "disc", or "line"
+
+	// Touch-up backend settings
+	touchupBackend string // "patchmatch" or "iopaint"
+	iopaintURL     string
 }
 
 // NewApp creates a new App application struct.
 func NewApp() *App {
 	return &App{
-		undoLimit:     10,
-		featherSize:   15,
-		cropAmount:    3,
-		undoStack:     []*image.NRGBA{},
-		bgColor:       color.NRGBA{R: 255, G: 255, B: 255, A: 255},
-		postDiscWhite: 255,
+		undoLimit:      10,
+		featherSize:    15,
+		cropAmount:     3,
+		undoStack:      []*image.NRGBA{},
+		bgColor:        color.NRGBA{R: 255, G: 255, B: 255, A: 255},
+		postDiscWhite:  255,
+		touchupBackend: "patchmatch",
+		iopaintURL:     "http://127.0.0.1:8086/",
 	}
 }
 

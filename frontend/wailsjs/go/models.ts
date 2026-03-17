@@ -262,6 +262,20 @@ export namespace main {
 	        this.dy = source["dy"];
 	    }
 	}
+	export class TouchupSettings {
+	    backend: string;
+	    iopaintUrl: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TouchupSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.backend = source["backend"];
+	        this.iopaintUrl = source["iopaintUrl"];
+	    }
+	}
 
 }
 
