@@ -668,20 +668,6 @@ export default function App() {
       pointerEvents: 'none', zIndex: 6, overflow: 'visible',
     }
 
-    // Touch-up stroke overlay (render regardless of mode)
-    if (useTouchupTool && touchupStrokes && touchupStrokes.length > 0) {
-      const scaleX = el.offsetWidth / realImageDims.w
-      const scaleY = el.offsetHeight / realImageDims.h
-      const r = (brushSize / 2) * ((scaleX + scaleY) / 2)
-      return (
-        <svg style={imgStyle}>
-          {touchupStrokes.map((pt, i) => (
-            <circle key={i} cx={pt.x * scaleX} cy={pt.y * scaleY} r={r} fill="rgba(255,0,0,0.35)" stroke="rgba(255,0,0,0.8)" />
-          ))}
-        </svg>
-      )
-    }
-
     if (mode === 'disc') {
       if (!dragging || !dragStart || !dragCurrent) return null
       if (ctrlDragRef.current !== null || shiftDragRef.current !== null) return null
@@ -1079,19 +1065,35 @@ export default function App() {
           onMouseUp={handleMouseUp}
         >
           {preview ? (
-            <img
-              ref={imgRef}
-              src={preview}
-              alt="preview"
-              draggable={false}
-              onLoad={handleImgLoad}
-              style={{
-                cursor: 'crosshair',
-                ...(fitWidth > 0
-                  ? { width: `${fitWidth * zoom}px`, height: 'auto', maxWidth: 'none', maxHeight: 'none' }
-                  : { maxWidth: `${zoom * 100}%`, maxHeight: `${zoom * 100}%` }),
-              }}
-            />
+            <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0, margin: 'auto' }}>
+              <img
+                ref={imgRef}
+                src={preview}
+                alt="preview"
+                draggable={false}
+                onLoad={handleImgLoad}
+                style={{
+                  cursor: 'crosshair',
+                  display: 'block',
+                  ...(fitWidth > 0
+                    ? { width: `${fitWidth * zoom}px`, height: 'auto', maxWidth: 'none', maxHeight: 'none' }
+                    : { maxWidth: `${zoom * 100}%`, maxHeight: `${zoom * 100}%` }),
+                }}
+              />
+              {useTouchupTool && touchupStrokes.length > 0 && (
+                <svg
+                  viewBox={`0 0 ${realImageDims.w} ${realImageDims.h}`}
+                  preserveAspectRatio="none"
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6 }}
+                >
+                  {touchupStrokes.map((pt, i) => (
+                    <circle key={i} cx={pt.x} cy={pt.y} r={brushSize / 2}
+                      fill="rgba(255,0,0,0.35)" stroke="rgba(255,0,0,0.8)"
+                      vectorEffect="non-scaling-stroke" />
+                  ))}
+                </svg>
+              )}
+            </div>
           ) : !loading ? (
             <div className="placeholder">Load or drop an image to begin</div>
           ) : null}
