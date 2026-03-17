@@ -183,14 +183,15 @@ export default function App() {
       const result = await window['go']['main']['App']['TouchUpApply'](b64, patchSize, iterations)
       if (result?.preview) setPreview(result.preview)
       setImageInfo(result?.message || '')
-      setTouchupStrokes([])
     } catch (err) {
       console.error('TouchUp commit error:', err)
+      setImageInfo('')
       const hint = touchupBackend === 'iopaint'
         ? '\n\nPlease make sure IOPaint is running and that you have the server address configured correctly. Alternatively, try switching to the PatchMatch backend in Options.'
         : ''
       setErrorMessage('Failed to inpaint.' + hint + '\n\n' + (err?.message || String(err)))
     } finally {
+      setTouchupStrokes([])
       setLoading(false)
     }
   }
