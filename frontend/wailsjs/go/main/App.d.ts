@@ -24,6 +24,8 @@ export function GetPixelColor(arg1:main.PixelColorRequest):Promise<main.ProcessR
 
 export function GetTouchupSettings():Promise<main.TouchupSettings>;
 
+export function GetWarpSettings():Promise<main.WarpSettings>;
+
 export function LoadImage(arg1:main.LoadImageRequest):Promise<main.ImageInfo>;
 
 export function LogFrontend(arg1:string):Promise<void>;
@@ -53,6 +55,8 @@ export function SetFeatherSize(arg1:main.FeatherSizeRequest):Promise<main.Proces
 export function SetLevels(arg1:main.SetLevelsRequest):Promise<main.ProcessResult>;
 
 export function SetTouchupSettings(arg1:main.TouchupSettings):Promise<void>;
+
+export function SetWarpSettings(arg1:main.WarpSettings):Promise<void>;
 
 export function ShiftDisc(arg1:main.ShiftDiscRequest):Promise<main.ProcessResult>;
 

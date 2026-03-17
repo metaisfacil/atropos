@@ -84,13 +84,54 @@ func (a *App) warpFromCorners(corners []image.Point) (*image.NRGBA, int, int, er
 	dst := [4]image.Point{
 		{0, 0}, {width, 0}, {0, height}, {width, height},
 	}
-	warped := perspectiveTransform(a.currentImage,
-		[4]image.Point{sorted[0], sorted[1], sorted[2], sorted[3]},
-		dst, width, height)
+	srcPts := [4]image.Point{sorted[0], sorted[1], sorted[2], sorted[3]}
+
+	var warped *image.NRGBA
+	if a.warpFillMode == "clamp" {
+		warped = perspectiveTransform(a.currentImage, srcPts, dst, width, height)
+	} else {
+		var oobMask *image.Alpha
+		warped, oobMask = perspectiveTransformWithMask(a.currentImage, srcPts, dst, width, height)
+		warped = a.applyWarpFill(warped, oobMask)
+	}
 
 	a.warpedImage = warped
 	a.cropTop, a.cropBottom, a.cropLeft, a.cropRight = 0, 0, 0, 0
 	return warped, width, height, nil
+}
+
+// applyWarpFill fills out-of-bounds pixels (marked in oobMask) according to
+// the configured warpFillMode.
+func (a *App) applyWarpFill(img *image.NRGBA, oobMask *image.Alpha) *image.NRGBA {
+	// Fast path: nothing is OOB.
+	hasOOB := false
+	for _, v := range oobMask.Pix {
+		if v > 0 {
+			hasOOB = true
+			break
+		}
+	}
+	if !hasOOB {
+		return img
+	}
+
+	if a.warpFillMode == "outpaint" {
+		out := PatchMatchFill(img, oobMask, 9, 5)
+		a.logf("applyWarpFill: outpaint OK")
+		return out
+	}
+
+	// Solid fill: paint OOB pixels with warpFillColor.
+	b := img.Bounds()
+	fc := a.warpFillColor
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if oobMask.AlphaAt(x, y).A > 0 {
+				img.SetNRGBA(x, y, fc)
+			}
+		}
+	}
+	return img
 }
 
 // DetectCorners detects corners in the current image using Shi-Tomasi algorithm.

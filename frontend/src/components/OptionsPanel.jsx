@@ -4,11 +4,12 @@ import DelayedHint from './DelayedHint'
 const FADE_MS = 150
 
 // OptionsPanel renders a modal dialog for configuring application options.
-// Currently exposes touch-up backend selection (PatchMatch vs IOPaint).
 // Props:
 //   open / onClose
 //   touchupBackend / setTouchupBackend  ('patchmatch' | 'iopaint')
 //   iopaintURL / setIopaintURL
+//   warpFillMode / setWarpFillMode  ('clamp' | 'fill' | 'outpaint')
+//   warpFillColor / setWarpFillColor  (CSS hex string)
 export default function OptionsPanel({
   open,
   onClose,
@@ -16,6 +17,10 @@ export default function OptionsPanel({
   setTouchupBackend,
   iopaintURL,
   setIopaintURL,
+  warpFillMode,
+  setWarpFillMode,
+  warpFillColor,
+  setWarpFillColor,
 }) {
   const dialogRef = useRef(null)
   const [mounted, setMounted] = useState(false)
@@ -65,7 +70,7 @@ export default function OptionsPanel({
             <div className="options-section-title" tabIndex={0}>Touch-up backend</div>
           </DelayedHint>
 
-          <DelayedHint hint="PatchMatch is a built-in content-aware fill. It samples nearby patches to reconstruct the masked area entirely on your CPU, no server required.">
+          <DelayedHint hint="PatchMatch is a built-in content-aware fill. It samples nearby patches to reconstruct the masked area entirely on your CPU, no server or internet connection required.">
             <label className="options-radio-label">
               <input
                 type="radio"
@@ -74,7 +79,7 @@ export default function OptionsPanel({
                 checked={touchupBackend === 'patchmatch'}
                 onChange={() => setTouchupBackend('patchmatch')}
               />
-              PatchMatch <span className="options-hint">(built-in, works offline)</span>
+              PatchMatch <span className="options-hint">(default)</span>
             </label>
           </DelayedHint>
 
@@ -105,6 +110,64 @@ export default function OptionsPanel({
               />
             </DelayedHint>
           </div>
+
+          <div className="options-divider" />
+
+          <DelayedHint hint="When the perspective crop extends beyond the scan boundary, this setting controls how those regions are handled.">
+            <div className="options-section-title" tabIndex={0}>Out-of-bounds fill</div>
+          </DelayedHint>
+
+          <DelayedHint hint="Clamps source coordinates to the image boundary, repeating edge pixels into any out-of-bounds region. No region is ever left blank or transparent.">
+            <label className="options-radio-label">
+              <input
+                type="radio"
+                name="warp-fill-mode"
+                value="clamp"
+                checked={warpFillMode === 'clamp'}
+                onChange={() => setWarpFillMode('clamp')}
+              />
+              Clamp to boundary <span className="options-hint">(default)</span>
+            </label>
+          </DelayedHint>
+
+          <DelayedHint hint="Fills the out-of-bounds region with a solid colour. Use the colour picker to choose the fill colour (default: white).">
+            <label className="options-radio-label">
+              <input
+                type="radio"
+                name="warp-fill-mode"
+                value="fill"
+                checked={warpFillMode === 'fill'}
+                onChange={() => setWarpFillMode('fill')}
+              />
+              Solid fill
+            </label>
+          </DelayedHint>
+
+          <div className={`options-iopaint-url ${warpFillMode === 'fill' ? 'visible' : ''}`}>
+            <label className="options-field-label" htmlFor="warp-fill-color">Fill colour</label>
+            <DelayedHint hint="The colour used to fill regions outside the scan. White works well for most scanned documents.">
+              <input
+                id="warp-fill-color"
+                className="options-color-input"
+                type="color"
+                value={warpFillColor}
+                onChange={(e) => setWarpFillColor(e.target.value)}
+              />
+            </DelayedHint>
+          </div>
+
+          <DelayedHint hint="Outpaints using PatchMatch, synthesising plausible content from the surrounding scan rather than leaving a flat colour.">
+            <label className="options-radio-label">
+              <input
+                type="radio"
+                name="warp-fill-mode"
+                value="outpaint"
+                checked={warpFillMode === 'outpaint'}
+                onChange={() => setWarpFillMode('outpaint')}
+              />
+              Outpaint <span className="options-hint">(built-in PatchMatch)</span>
+            </label>
+          </DelayedHint>
         </div>
 
         <div className="options-footer">
