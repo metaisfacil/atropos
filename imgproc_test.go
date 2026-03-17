@@ -469,7 +469,7 @@ func TestApplyCircularMask_CenterPixel(t *testing.T) {
 	bg := color.NRGBA{R: 0, G: 0, B: 0, A: 255}
 	center := image.Pt(25, 25)
 
-	dst := applyCircularMaskWithFeather(src, center, 20, 5, bg)
+	dst := applyCircularMaskWithFeather(src, center, 20, 5, 0, bg)
 
 	// Center should be unchanged (inside inner radius)
 	c := dst.NRGBAAt(25, 25)
@@ -488,7 +488,7 @@ func TestApplyCircularMask_FarPixel(t *testing.T) {
 	bg := color.NRGBA{R: 0, G: 0, B: 0, A: 255}
 	center := image.Pt(25, 25)
 
-	dst := applyCircularMaskWithFeather(src, center, 10, 3, bg)
+	dst := applyCircularMaskWithFeather(src, center, 10, 3, 0, bg)
 
 	// Corner pixel (0,0) is far outside radius+feather → should be bg
 	c := dst.NRGBAAt(0, 0)
@@ -500,7 +500,7 @@ func TestApplyCircularMask_FarPixel(t *testing.T) {
 func TestApplyCircularMask_Dimensions(t *testing.T) {
 	src := image.NewNRGBA(image.Rect(0, 0, 30, 40))
 	bg := color.NRGBA{A: 255}
-	dst := applyCircularMaskWithFeather(src, image.Pt(15, 20), 10, 5, bg)
+	dst := applyCircularMaskWithFeather(src, image.Pt(15, 20), 10, 5, 0, bg)
 	if dst.Bounds().Dx() != 30 || dst.Bounds().Dy() != 40 {
 		t.Fatal("dimensions should match source")
 	}
