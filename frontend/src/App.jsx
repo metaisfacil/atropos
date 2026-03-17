@@ -99,7 +99,7 @@ export default function App() {
   const [linesProcessed, setLinesProcessed] = useState(false)
 
   // ── UI state ──────────────────────────────────────────────────────────────
-  const [shortcutsOpen, setShortcutsOpen] = useState(true)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [adjPanelOpen,  setAdjPanelOpen]  = useState(false)
   const [autoContrastPending, setAutoContrastPending] = useState(false)
   const [blackPoint, setBlackPoint] = useState(0)
