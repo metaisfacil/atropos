@@ -46,6 +46,7 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 	if a.currentImage == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
+	a.saveUndo()
 	a.discCenter = image.Pt(req.CenterX, req.CenterY)
 	a.discRadius = req.Radius
 	a.rotationAngle = 0

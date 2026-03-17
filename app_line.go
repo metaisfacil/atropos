@@ -118,6 +118,8 @@ func (a *App) ProcessLines() (*ProcessResult, error) {
 	}
 	src := [4]image.Point{tl, tr, br, bl}
 
+	a.saveUndo()
+
 	var warped *image.NRGBA
 	if a.warpFillMode == "clamp" {
 		warped = perspectiveTransform(a.originalImage, src, dst, outW, outH)
@@ -133,7 +135,8 @@ func (a *App) ProcessLines() (*ProcessResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ProcessResult{Preview: preview}, nil
+	b := a.warpedImage.Bounds()
+	return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy()}, nil
 }
 
 // ClearLines removes all drawn lines and restores the pre-line image.

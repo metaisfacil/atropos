@@ -40,7 +40,7 @@ export function ResetCorners():Promise<main.ProcessResult>;
 
 export function ResetDisc():Promise<main.ProcessResult>;
 
-export function RestoreCornerOverlay(arg1:any):Promise<main.ProcessResult>;
+export function RestoreCornerOverlay(arg1:main.RestoreCornerOverlayRequest):Promise<main.ProcessResult>;
 
 export function Rotate(arg1:main.RotateRequest):Promise<main.ProcessResult>;
 
@@ -49,8 +49,6 @@ export function RotateDisc(arg1:main.DiscRotateRequest):Promise<main.ProcessResu
 export function SaveImage(arg1:main.SaveRequest):Promise<main.ProcessResult>;
 
 export function SetBackgroundColor(arg1:number,arg2:number,arg3:number):Promise<void>;
-
-export function SetCornerDotRadius(arg1:any):Promise<main.ProcessResult>;
 
 export function SetFeatherSize(arg1:main.FeatherSizeRequest):Promise<main.ProcessResult>;
 
@@ -63,7 +61,5 @@ export function SetWarpSettings(arg1:main.WarpSettings):Promise<void>;
 export function ShiftDisc(arg1:main.ShiftDiscRequest):Promise<main.ProcessResult>;
 
 export function TouchUpApply(arg1:string,arg2:number,arg3:number):Promise<main.ProcessResult>;
-
-export function TouchUpFill(arg1:string,arg2:number,arg3:number):Promise<main.ProcessResult>;
 
 export function Undo():Promise<main.ProcessResult>;

@@ -64,42 +64,6 @@ func (a *App) buildMask(maskB64 string) (*image.Alpha, error) {
 	return newMask, nil
 }
 
-// TouchUpFill accepts a base64-encoded PNG mask (white where the user painted)
-// and returns a non-mutating preview produced by the configured touch-up backend.
-func (a *App) TouchUpFill(maskB64 string, patchSize int, iterations int) (*ProcessResult, error) {
-	a.logf("TouchUpFill: backend=%q patchSize=%d iterations=%d", a.touchupBackend, patchSize, iterations)
-	if a.currentImage == nil {
-		return &ProcessResult{Message: "No image loaded"}, nil
-	}
-
-	mask, err := a.buildMask(maskB64)
-	if err != nil {
-		return nil, err
-	}
-
-	srcImg := a.workingImage()
-	if srcImg == nil {
-		return &ProcessResult{Message: "No image loaded"}, nil
-	}
-
-	var out *image.NRGBA
-	if a.touchupBackend == "iopaint" {
-		out, err = a.iopaintFill(srcImg, mask)
-		if err != nil {
-			return nil, fmt.Errorf("IOPaint fill: %w", err)
-		}
-	} else {
-		out = PatchMatchFill(srcImg, mask, patchSize, iterations)
-	}
-
-	preview, err := imageToBase64(out)
-	if err != nil {
-		return nil, err
-	}
-	b := out.Bounds()
-	return &ProcessResult{Preview: preview, Message: "Touch-up preview", Width: b.Dx(), Height: b.Dy()}, nil
-}
-
 // TouchUpApply applies a touch-up fill to the working image using the configured
 // backend, saving an undo snapshot so the change can be reverted.
 func (a *App) TouchUpApply(maskB64 string, patchSize int, iterations int) (*ProcessResult, error) {

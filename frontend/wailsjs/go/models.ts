@@ -1,10 +1,28 @@
+export namespace image {
+	
+	export class Point {
+	    X: number;
+	    Y: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Point(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.X = source["X"];
+	        this.Y = source["Y"];
+	    }
+	}
+
+}
+
 export namespace main {
 	
 	export class ClickCornerRequest {
 	    x: number;
 	    y: number;
 	    custom: boolean;
-	    dotRadius: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ClickCornerRequest(source);
@@ -15,7 +33,6 @@ export namespace main {
 	        this.x = source["x"];
 	        this.y = source["y"];
 	        this.custom = source["custom"];
-	        this.dotRadius = source["dotRadius"];
 	    }
 	}
 	export class ClickCornerResult {
@@ -23,6 +40,10 @@ export namespace main {
 	    message: string;
 	    count: number;
 	    done: boolean;
+	    snappedX: number;
+	    snappedY: number;
+	    width: number;
+	    height: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ClickCornerResult(source);
@@ -34,6 +55,10 @@ export namespace main {
 	        this.message = source["message"];
 	        this.count = source["count"];
 	        this.done = source["done"];
+	        this.snappedX = source["snappedX"];
+	        this.snappedY = source["snappedY"];
+	        this.width = source["width"];
+	        this.height = source["height"];
 	    }
 	}
 	export class CornerDetectRequest {
@@ -41,7 +66,6 @@ export namespace main {
 	    qualityLevel: number;
 	    minDistance: number;
 	    accentValue: number;
-	    dotRadius: number;
 	    useStretch: boolean;
 	    stretchLow: number;
 	    stretchHigh: number;
@@ -56,7 +80,6 @@ export namespace main {
 	        this.qualityLevel = source["qualityLevel"];
 	        this.minDistance = source["minDistance"];
 	        this.accentValue = source["accentValue"];
-	        this.dotRadius = source["dotRadius"];
 	        this.useStretch = source["useStretch"];
 	        this.stretchLow = source["stretchLow"];
 	        this.stretchHigh = source["stretchHigh"];
@@ -195,6 +218,7 @@ export namespace main {
 	    height: number;
 	    black?: number;
 	    white?: number;
+	    corners?: image.Point[];
 	
 	    static createFrom(source: any = {}) {
 	        return new ProcessResult(source);
@@ -208,7 +232,26 @@ export namespace main {
 	        this.height = source["height"];
 	        this.black = source["black"];
 	        this.white = source["white"];
+	        this.corners = this.convertValues(source["corners"], image.Point);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class RotateRequest {
 	    flipCode: number;
@@ -291,17 +334,13 @@ export namespace main {
 	    }
 	}
 
-}
-
-export namespace struct { DotRadius int "json:\"dotRadius\"" } {
-	
-	export class  {
+	export class RestoreCornerOverlayRequest {
 	    dotRadius: number;
-	
+
 	    static createFrom(source: any = {}) {
-	        return new (source);
+	        return new RestoreCornerOverlayRequest(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.dotRadius = source["dotRadius"];

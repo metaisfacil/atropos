@@ -22,6 +22,7 @@ export default function AdjustmentsPanel({
   setPreview,
   useStretchPreprocess,
   setUseStretchPreprocess,
+  touchupAvailable,
   useTouchupTool,
   setUseTouchupTool,
   brushSize,
@@ -76,6 +77,7 @@ export default function AdjustmentsPanel({
               <button
                 className={`primary touchup-btn ${useTouchupTool ? 'active' : ''}`}
                 onClick={() => setUseTouchupTool(!useTouchupTool)}
+                disabled={!touchupAvailable}
                 aria-pressed={useTouchupTool}
               >
                 Touch-up brush
