@@ -679,31 +679,57 @@ export default function App() {
         }
 
         const key = e.key.toLowerCase()
+        // Ctrl/Cmd+Z -> Undo
+        if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') {
+          if (e.repeat) return
+          const active = document.activeElement
+          if (active && (['INPUT','TEXTAREA','SELECT'].includes(active.tagName) || active.isContentEditable)) return
+          e.preventDefault()
+          setLoading(true); setImageInfo('Undoing…')
+          try {
+            const res = await Undo()
+            if (res?.preview) setPreview(res.preview)
+            if (res?.message) setImageInfo(res.message)
+          } catch (err) {
+            console.error('Undo shortcut error:', err)
+            setImageInfo(err?.message || String(err))
+          } finally {
+            setLoading(false)
+          }
+          return
+        }
+
+        // Ctrl/Cmd+S -> Save
+        if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
+          if (e.repeat) return
+          e.preventDefault()
+          try {
+            await handleSaveImage()
+          } catch (err) {
+            console.error('Save shortcut error:', err)
+            setImageInfo(err?.message || String(err))
+          }
+          return
+        }
         switch (key) {
           case 'w': result = await Crop({ direction: 'top'    }); if (result?.preview) setPreview(result.preview); break
           case 's': result = await Crop({ direction: 'bottom' }); if (result?.preview) setPreview(result.preview); break
           case 'a': result = await Crop({ direction: 'left'   }); if (result?.preview) setPreview(result.preview); break
           case 'd': result = await Crop({ direction: 'right'  }); if (result?.preview) setPreview(result.preview); break
-          case 'e':
+          case 'q':
             setLoading(true); setImageInfo('Rotating…')
             result = mode === 'disc' && discActive
               ? await RotateDisc({ angle: -15 })
               : await Rotate({ flipCode: 2 })
             if (result?.preview) setPreview(result.preview); setLoading(false); break
-          case 'r':
+          case 'e':
             setLoading(true); setImageInfo('Rotating…')
             result = mode === 'disc' && discActive
               ? await RotateDisc({ angle: 15 })
               : await Rotate({ flipCode: 1 })
             if (result?.preview) setPreview(result.preview); setLoading(false); break
-          case 'q': handleSaveImage(); break
-          case 'tab':
-            e.preventDefault()
-            setLoading(true); setImageInfo('Undoing…')
-            result = await Undo()
-            if (result?.preview) setPreview(result.preview)
-            if (result?.message) setImageInfo(result.message)
-            setLoading(false)
+          
+          default:
             break
         }
       } catch (err) {
