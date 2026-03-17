@@ -23,6 +23,7 @@ import {
   OpenSaveDialog,
   GetLaunchArgs,
   GetCleanPreview,
+  RestoreCornerOverlay,
   LogFrontend,
   GetTouchupSettings,
   SetTouchupSettings,
@@ -83,6 +84,7 @@ export default function App() {
   const [dotRadius, setDotRadius]         = useState(20)
   const [customCorner, setCustomCorner]   = useState(false)
   const [cornersDetected, setCornersDetected] = useState(false)
+  const lastDetectSettings = useRef(null) // snapshot of params used for last successful detection
 
   // ── Disc mode ─────────────────────────────────────────────────────────────
   const [featherSize, setFeatherSize]   = useState(15)
@@ -269,6 +271,7 @@ export default function App() {
     setLinesProcessed(false)
     setDiscActive(false)
     setCornersDetected(false)
+    lastDetectSettings.current = null
     setLines([])
 
     if (autoDetect && mode === 'corner') {
@@ -354,6 +357,13 @@ export default function App() {
       if (result.width && result.height) setRealImageDims({ w: result.width, h: result.height })
       setCornerState(s => ({ ...s, cornerCount: 0 }))
       setCornersDetected(true)
+      lastDetectSettings.current = {
+        maxCorners: cornerState.maxCorners,
+        qualityLevel: cornerState.qualityLevel,
+        minDistance: cornerState.minDistance,
+        accent: cornerState.accent,
+        useStretch: useStretchPreprocess,
+      }
     } catch (err) {
       console.error('Detect error:', err)
     } finally {
@@ -902,7 +912,6 @@ export default function App() {
                     if (mode === 'corner') {
                       setCornerState(s => ({ ...s, cornerCount: 0 }))
                       setCornersDetected(false)
-                      // GetCleanPreview will clear detectedCorners/selectedCorners on the backend
                     } else if (mode === 'disc' && discActive) {
                       await ResetDisc(); setDiscActive(false)
                     } else if (mode === 'line') {
@@ -915,6 +924,27 @@ export default function App() {
                       setLines([])
                       setLinesProcessed(false)
                     }
+
+                    // Switching to corners: restore cached overlay if detection settings unchanged.
+                    if (m === 'corner' && lastDetectSettings.current) {
+                      const s = lastDetectSettings.current
+                      if (s.maxCorners === cornerState.maxCorners &&
+                          s.qualityLevel === cornerState.qualityLevel &&
+                          s.minDistance === cornerState.minDistance &&
+                          s.accent === cornerState.accent &&
+                          s.useStretch === useStretchPreprocess) {
+                        try {
+                          const res = await RestoreCornerOverlay({ dotRadius })
+                          setPreview(res.preview)
+                          if (res.width && res.height) setRealImageDims({ w: res.width, h: res.height })
+                          setCornersDetected(true)
+                          setCornerState(s => ({ ...s, cornerCount: 0 }))
+                          setMode(m)
+                          return
+                        } catch (_) {}
+                      }
+                    }
+
                     const res = await GetCleanPreview()
                     if (res?.preview) setPreview(res.preview)
                     if (res?.width && res?.height) setRealImageDims({ w: res.width, h: res.height })
