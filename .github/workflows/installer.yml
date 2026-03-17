@@ -95,6 +95,10 @@ jobs:
         shell: bash
         run: wails build -ldflags "-X main.AppVersion=$APP_VERSION"
 
+      - name: Ad-hoc sign macOS app
+        if: runner.os == 'macOS'
+        run: codesign --force --deep --sign - build/bin/atropos.app
+
       - name: Create macOS DMG
         if: runner.os == 'macOS'
         run: |
