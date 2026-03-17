@@ -243,7 +243,8 @@ export default function App() {
         const args = await GetLaunchArgs()
         if (args.mode) setMode(args.mode)
         if (args.filePath) {
-          const shouldDetect = args.mode ? (args.mode === 'corner') : (mode === 'corner')
+          const shouldDetect = args.mode ?
+            (args.mode === 'corner') : (mode === 'corner')
           await loadFile(args.filePath, shouldDetect)
         }
       } catch (err) {
@@ -655,32 +656,46 @@ export default function App() {
         if (mode === 'disc' && discActive) {
           const shiftStep = e.shiftKey ? 20 : 5
           switch (e.key) {
+            case 'ArrowUp':    e.preventDefault(); result = await ShiftDisc({ dx: 0, dy: -shiftStep }); if (result?.preview) setPreview(result.preview); return
+            case 'ArrowDown':  e.preventDefault(); result = await ShiftDisc({ dx: 0, dy:  shiftStep }); if (result?.preview) setPreview(result.preview); return
+            case 'ArrowLeft':  e.preventDefault(); result = await ShiftDisc({ dx: -shiftStep, dy: 0 }); if (result?.preview) setPreview(result.preview); return
+            case 'ArrowRight': e.preventDefault(); result = await ShiftDisc({ dx:  shiftStep, dy: 0 }); if (result?.preview) setPreview(result.preview); return
+            case '+': case '=': {
+              const newF = Math.min(100, featherSize + 1); setFeatherSize(newF)
+              result = await SetFeatherSize({ size: newF }); if (result?.preview) setPreview(result.preview); return
+            }
+            case '-': {
+              const newF = Math.max(0, featherSize - 1); setFeatherSize(newF)
+              result = await SetFeatherSize({ size: newF }); if (result?.preview) setPreview(result.preview); return
+            }
             case 'y': case 'Y': {
-              const imgPt = displayToImage(mousePosRef.current.x, mousePosRef.current.y)
+              const mp = mousePosRef.current
+              const imgPt = displayToImage(mp.x, mp.y)
               result = await GetPixelColor({ x: imgPt.x, y: imgPt.y })
               if (result?.preview) setPreview(result.preview)
-              if (result?.message) setImageInfo(result.message)
               return
             }
-            case 'ArrowUp':    e.preventDefault(); result = await ShiftDisc({ dx: 0, dy: -shiftStep }); if (result?.preview) setPreview(result.preview); return
-            case 'ArrowDown':  e.preventDefault(); result = await ShiftDisc({ dx: 0, dy: shiftStep });  if (result?.preview) setPreview(result.preview); return
-            case 'ArrowLeft':  e.preventDefault(); result = await ShiftDisc({ dx: -shiftStep, dy: 0 }); if (result?.preview) setPreview(result.preview); return
-            case 'ArrowRight': e.preventDefault(); result = await ShiftDisc({ dx: shiftStep, dy: 0 });  if (result?.preview) setPreview(result.preview); return
-            case '+': case '=': { const nF = featherSize + 1; setFeatherSize(nF); result = await SetFeatherSize({ size: nF }); if (result?.preview) setPreview(result.preview); return }
-            case '-': case '_': { const nF = Math.max(0, featherSize - 1); setFeatherSize(nF); result = await SetFeatherSize({ size: nF }); if (result?.preview) setPreview(result.preview); return }
-            case 'e': case 'E': setLoading(true); setImageInfo('Rotating disc…'); result = await RotateDisc({ angle: -15 }); if (result?.preview) setPreview(result.preview); setLoading(false); return
-            case 'r': case 'R': setLoading(true); setImageInfo('Rotating disc…'); result = await RotateDisc({ angle:  15 }); if (result?.preview) setPreview(result.preview); setLoading(false); return
-            default: break
           }
         }
 
-        switch (e.key.toLowerCase()) {
-          case 'w': setLoading(true); setImageInfo('Cropping…'); result = await Crop({ direction: 'top'    }); if (result?.preview) setPreview(result.preview); setZoom(1); setLoading(false); break
-          case 'a': setLoading(true); setImageInfo('Cropping…'); result = await Crop({ direction: 'left'   }); if (result?.preview) setPreview(result.preview); setZoom(1); setLoading(false); break
-          case 's': setLoading(true); setImageInfo('Cropping…'); result = await Crop({ direction: 'bottom' }); if (result?.preview) setPreview(result.preview); setZoom(1); setLoading(false); break
-          case 'd': setLoading(true); setImageInfo('Cropping…'); result = await Crop({ direction: 'right'  }); if (result?.preview) setPreview(result.preview); setZoom(1); setLoading(false); break
-          case 'e': setLoading(true); setImageInfo('Rotating…'); result = await Rotate({ flipCode: 0 }); if (result?.preview) setPreview(result.preview); setLoading(false); break
-          case 'r': setLoading(true); setImageInfo('Rotating…'); result = await Rotate({ flipCode: 1 }); if (result?.preview) setPreview(result.preview); setLoading(false); break
+        const key = e.key.toLowerCase()
+        switch (key) {
+          case 'w': result = await Crop({ direction: 'top'    }); if (result?.preview) setPreview(result.preview); break
+          case 's': result = await Crop({ direction: 'bottom' }); if (result?.preview) setPreview(result.preview); break
+          case 'a': result = await Crop({ direction: 'left'   }); if (result?.preview) setPreview(result.preview); break
+          case 'd': result = await Crop({ direction: 'right'  }); if (result?.preview) setPreview(result.preview); break
+          case 'e':
+            setLoading(true); setImageInfo('Rotating…')
+            result = mode === 'disc' && discActive
+              ? await RotateDisc({ angle: -15 })
+              : await Rotate({ flipCode: 2 })
+            if (result?.preview) setPreview(result.preview); setLoading(false); break
+          case 'r':
+            setLoading(true); setImageInfo('Rotating…')
+            result = mode === 'disc' && discActive
+              ? await RotateDisc({ angle: 15 })
+              : await Rotate({ flipCode: 1 })
+            if (result?.preview) setPreview(result.preview); setLoading(false); break
           case 'q': handleSaveImage(); break
           case 'tab':
             e.preventDefault()
@@ -761,6 +776,13 @@ export default function App() {
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="app">
+      {loadingFull && (
+        <div className="loading-overlay opaque">
+          <div className="spinner" />
+          <div className="loading-text">{imageInfo}</div>
+        </div>
+      )}
+
       <aside className="sidebar">
         {/* Mode selector (always visible) */}
         <div className="mode-selector">
@@ -775,10 +797,18 @@ export default function App() {
                     if (mode === 'corner') {
                       setCornerState(s => ({ ...s, cornerCount: 0 }))
                       setCornersDetected(false)
+                      // GetCleanPreview will clear detectedCorners/selectedCorners on the backend
                     } else if (mode === 'disc' && discActive) {
                       await ResetDisc(); setDiscActive(false)
-                    } else if (mode === 'line' && (linesDone > 0 || linesProcessed)) {
-                      await ClearLines(); setLinesDone(0); setLinesProcessed(false)
+                    } else if (mode === 'line') {
+                      // Always clear lines when leaving, regardless of how many were drawn.
+                      // setLines([]) must be called here so the SVG overlay is wiped
+                      // immediately — without it, drawn lines persist visually even though
+                      // linesDone is reset to 0.
+                      await ClearLines()
+                      setLinesDone(0)
+                      setLines([])
+                      setLinesProcessed(false)
                     }
                     const res = await GetCleanPreview()
                     if (res?.preview) setPreview(res.preview)
