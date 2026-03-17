@@ -253,6 +253,18 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class RestoreCornerOverlayRequest {
+	    dotRadius: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RestoreCornerOverlayRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.dotRadius = source["dotRadius"];
+	    }
+	}
 	export class RotateRequest {
 	    flipCode: number;
 	
@@ -331,19 +343,6 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.fillMode = source["fillMode"];
 	        this.fillColor = source["fillColor"];
-	    }
-	}
-
-	export class RestoreCornerOverlayRequest {
-	    dotRadius: number;
-
-	    static createFrom(source: any = {}) {
-	        return new RestoreCornerOverlayRequest(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.dotRadius = source["dotRadius"];
 	    }
 	}
 
