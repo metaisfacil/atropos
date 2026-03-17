@@ -70,7 +70,8 @@ func (a *App) Undo() (*ProcessResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ProcessResult{Preview: preview}, nil
+	b := a.warpedImage.Bounds()
+	return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy()}, nil
 }
 
 // Crop removes pixels from the specified edge of the warped image.
@@ -184,16 +185,6 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 		// Restore the pre-adjustment base so SetLevels sessions operate
 		// against the original image (allowing sliders to revert the effect).
 		a.levelsBaseImage = preLevelsBase
-		if len(a.detectedCorners) > 0 {
-			result, err := a.drawCornerOverlay(a.cornerDotRadius)
-			if err != nil {
-				return nil, err
-			}
-			result.Message = fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp)
-			result.Black = bp
-			result.White = wp
-			return result, nil
-		}
 		preview, err := imageToBase64(adjusted)
 		if err != nil {
 			return nil, err
@@ -202,6 +193,8 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 		return &ProcessResult{
 			Preview: preview,
 			Message: fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp),
+			Black:   bp,
+			White:   wp,
 			Width:   b.Dx(),
 			Height:  b.Dy(),
 		}, nil
@@ -284,13 +277,8 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 
 	if preWarp {
 		adjusted := applyLevels(a.levelsBaseImage, req.Black, req.White)
-		// Write back to currentImage so drawCornerOverlay stays in sync.
 		a.currentImage = adjusted
-		// Re-render corner overlay if dots have been placed.
-		if len(a.detectedCorners) > 0 {
-			return a.drawCornerOverlay(a.cornerDotRadius)
-		}
-		// No corners yet — return a plain preview.
+		// Frontend renders corner dots via SVG; return plain preview.
 		preview, err := imageToBase64(adjusted)
 		if err != nil {
 			return nil, err

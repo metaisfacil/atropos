@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"image"
-	"image/color"
 	"math"
 )
 
@@ -13,7 +12,6 @@ type CornerDetectRequest struct {
 	QualityLevel float64 `json:"qualityLevel"`
 	MinDistance  int     `json:"minDistance"`
 	AccentValue  int     `json:"accentValue"`
-	DotRadius    int     `json:"dotRadius"`
 	UseStretch   bool    `json:"useStretch"`
 	StretchLow   float64 `json:"stretchLow"`
 	StretchHigh  float64 `json:"stretchHigh"`
@@ -21,49 +19,24 @@ type CornerDetectRequest struct {
 
 // ClickCornerRequest holds the image-space coordinates of a user click.
 type ClickCornerRequest struct {
-	X         int  `json:"x"`
-	Y         int  `json:"y"`
-	Custom    bool `json:"custom"`
-	DotRadius int  `json:"dotRadius"`
+	X      int  `json:"x"`
+	Y      int  `json:"y"`
+	Custom bool `json:"custom"`
 }
 
 // ClickCornerResult is returned after each corner click.
+// For clicks 1–3 only SnappedX/SnappedY/Count/Message are set; Preview is empty.
+// On the 4th click Done is true, Preview contains the warped image, and
+// Width/Height reflect the new image dimensions.
 type ClickCornerResult struct {
-	Preview string `json:"preview"`
-	Message string `json:"message"`
-	Count   int    `json:"count"`
-	Done    bool   `json:"done"`
-}
-
-// drawCornerOverlay renders detected (red) and selected (green) corner dots
-// onto a clone of currentImage and returns the preview with dimensions.
-func (a *App) drawCornerOverlay(dr int) (*ProcessResult, error) {
-	if dr < 2 {
-		dr = 2
-	}
-	vis := cloneImage(a.currentImage)
-	for _, c := range a.detectedCorners {
-		drawFilledCircle(vis, c, dr+2, color.NRGBA{R: 255, G: 255, B: 255, A: 255})
-		drawFilledCircle(vis, c, dr, color.NRGBA{R: 255, G: 0, B: 0, A: 255})
-	}
-	selDR := dr + dr/2
-	if selDR < dr+4 {
-		selDR = dr + 4
-	}
-	for _, c := range a.selectedCorners {
-		drawFilledCircle(vis, c, selDR+2, color.NRGBA{R: 0, G: 200, B: 0, A: 255})
-		drawFilledCircle(vis, c, selDR, color.NRGBA{R: 0, G: 255, B: 0, A: 255})
-	}
-	preview, err := imageToBase64(vis)
-	if err != nil {
-		return nil, err
-	}
-	b := a.currentImage.Bounds()
-	return &ProcessResult{
-		Preview: preview,
-		Width:   b.Dx(),
-		Height:  b.Dy(),
-	}, nil
+	Preview  string `json:"preview"`
+	Message  string `json:"message"`
+	Count    int    `json:"count"`
+	Done     bool   `json:"done"`
+	SnappedX int    `json:"snappedX"`
+	SnappedY int    `json:"snappedY"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
 }
 
 // warpFromCorners sorts 4 corner points and applies a perspective transform,
@@ -135,6 +108,8 @@ func (a *App) applyWarpFill(img *image.NRGBA, oobMask *image.Alpha) *image.NRGBA
 }
 
 // DetectCorners detects corners in the current image using Shi-Tomasi algorithm.
+// It returns the clean (unmodified) preview together with the detected corner
+// coordinates so the frontend can render the overlay dots via SVG.
 func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	a.logf("DetectCorners: maxCorners=%d qualityLevel=%.2f minDistance=%d accentValue=%d",
 		req.MaxCorners, req.QualityLevel, req.MinDistance, req.AccentValue)
@@ -171,7 +146,8 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 		workGray = gray
 	}
 
-	// Optionally pre-stretch contrast using percentiles to handle non-white backgrounds
+	// Optionally pre-stretch contrast using percentiles to handle non-white backgrounds,
+	// then apply CLAHE to boost local contrast before detection.
 	if req.UseStretch {
 		low := req.StretchLow
 		high := req.StretchHigh
@@ -182,15 +158,8 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 			high = 0.99
 		}
 		stretched := stretchGrayPercentiles(workGray, low, high)
-		enhanced := applyCLAHE(stretched, 2.0, 8)
-
-		// replace enhanced variable in outer scope
-		_ = enhanced
-		// Now set enhanced variable that the rest of the function expects by shadowing
-		workGray = stretched
+		workGray = applyCLAHE(stretched, 2.0, 8)
 	}
-
-	// If not using stretch, or after stretch we continue with CLAHE on workGray
 
 	quality := req.QualityLevel / 100.0
 	if quality <= 0 {
@@ -277,36 +246,28 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	a.detectedCorners = fullCorners
 	a.logf("DetectCorners: %d corners mapped to full resolution", len(a.detectedCorners))
 
-	dr := req.DotRadius
-	if dr < 2 {
-		dr = 2
-	}
-	a.cornerDotRadius = dr
-
-	result, err := a.drawCornerOverlay(dr)
+	// Return the clean (unmodified) image; the frontend renders dots via SVG.
+	preview, err := imageToBase64(a.currentImage)
 	if err != nil {
 		return nil, err
 	}
-	result.Message = fmt.Sprintf("Detected %d corners", len(a.detectedCorners))
-	a.logf("DetectCorners: preview generated, dotRadius=%d", dr)
-	return result, nil
+	return &ProcessResult{
+		Preview: preview,
+		Width:   imgW,
+		Height:  imgH,
+		Message: fmt.Sprintf("Detected %d corners", len(a.detectedCorners)),
+		Corners: a.detectedCorners,
+	}, nil
 }
 
 // ClickCorner registers a corner selection click. If detected corners exist
 // the click is snapped to the nearest one; otherwise the raw coordinate is used.
 // After 4 corners the perspective warp is performed automatically.
+// For clicks 1–3 no preview is returned — the frontend renders dots via SVG.
 func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
-	a.logf("ClickCorner: x=%d y=%d custom=%v dotRadius=%d", req.X, req.Y, req.Custom, req.DotRadius)
+	a.logf("ClickCorner: x=%d y=%d custom=%v", req.X, req.Y, req.Custom)
 	if !a.imageLoaded {
 		return nil, fmt.Errorf("no image loaded")
-	}
-
-	dr := req.DotRadius
-	if dr < 2 {
-		dr = a.cornerDotRadius
-	}
-	if dr < 2 {
-		dr = 2
 	}
 
 	// Snap to nearest detected corner unless custom mode
@@ -331,19 +292,17 @@ func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
 	count := len(a.selectedCorners)
 
 	if count < 4 {
-		result, err := a.drawCornerOverlay(dr)
-		if err != nil {
-			return nil, err
-		}
 		return &ClickCornerResult{
-			Preview: result.Preview,
-			Message: fmt.Sprintf("Corner %d of 4 selected", count),
-			Count:   count,
-			Done:    false,
+			SnappedX: pt.X,
+			SnappedY: pt.Y,
+			Message:  fmt.Sprintf("Corner %d of 4 selected", count),
+			Count:    count,
+			Done:     false,
 		}, nil
 	}
 
 	// 4 corners selected → perform perspective warp
+	a.saveUndo()
 	_, width, height, warpErr := a.warpFromCorners(a.selectedCorners[:4])
 	if warpErr != nil {
 		return nil, warpErr
@@ -361,64 +320,55 @@ func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
 		Message: fmt.Sprintf("Perspective corrected to %d×%d", width, height),
 		Count:   4,
 		Done:    true,
+		Width:   width,
+		Height:  height,
 	}, nil
 }
 
-// ResetCorners clears any in-progress corner selection and redraws the
-// detection overlay.
+// RestoreCornerOverlay returns the current image and the cached detectedCorners
+// so the frontend can re-render the SVG dot overlay when switching back to
+// corner mode without re-running detection.
+// RestoreCornerOverlayRequest is the argument for RestoreCornerOverlay.
+type RestoreCornerOverlayRequest struct {
+	DotRadius int `json:"dotRadius"`
+}
+
+func (a *App) RestoreCornerOverlay(req RestoreCornerOverlayRequest) (*ProcessResult, error) {
+	a.logf("RestoreCornerOverlay: %d cached corners", len(a.detectedCorners))
+	if len(a.detectedCorners) == 0 {
+		return nil, fmt.Errorf("no cached corners")
+	}
+	preview, err := imageToBase64(a.currentImage)
+	if err != nil {
+		return nil, err
+	}
+	b := a.currentImage.Bounds()
+	return &ProcessResult{
+		Preview: preview,
+		Width:   b.Dx(),
+		Height:  b.Dy(),
+		Message: fmt.Sprintf("Detected %d corners — click 4 corners", len(a.detectedCorners)),
+		Corners: a.detectedCorners,
+	}, nil
+}
+
+// ResetCorners clears any in-progress corner selection. The detected corners
+// are preserved and returned so the frontend can restore its SVG overlay.
 func (a *App) ResetCorners() (*ProcessResult, error) {
 	a.logf("ResetCorners")
 	a.selectedCorners = nil
 	a.warpedImage = nil
 
-	result, err := a.drawCornerOverlay(a.cornerDotRadius)
+	preview, err := imageToBase64(a.currentImage)
 	if err != nil {
 		return nil, err
 	}
-	result.Message = fmt.Sprintf("Reset — %d corners detected, click to select", len(a.detectedCorners))
-	return result, nil
-}
-
-// SetCornerDotRadius updates the dot radius and redraws the corner overlay
-// without re-running detection.
-func (a *App) SetCornerDotRadius(req struct {
-	DotRadius int `json:"dotRadius"`
-}) (*ProcessResult, error) {
-	dr := req.DotRadius
-	if dr < 2 {
-		dr = 2
-	}
-	a.cornerDotRadius = dr
-	a.logf("SetCornerDotRadius: dr=%d, detectedCorners=%d, selectedCorners=%d", dr, len(a.detectedCorners), len(a.selectedCorners))
-
-	result, err := a.drawCornerOverlay(dr)
-	if err != nil {
-		return nil, err
-	}
-	result.Message = fmt.Sprintf("Dot size: %d", dr)
-	return result, nil
-}
-
-// RestoreCornerOverlay redraws the cached corner detection overlay without
-// re-running detection. Returns an error if no corners are cached.
-func (a *App) RestoreCornerOverlay(req struct {
-	DotRadius int `json:"dotRadius"`
-}) (*ProcessResult, error) {
-	if len(a.detectedCorners) == 0 {
-		return nil, fmt.Errorf("no cached corners")
-	}
-	dr := req.DotRadius
-	if dr < 2 {
-		dr = a.cornerDotRadius
-	}
-	if dr < 2 {
-		dr = 2
-	}
-	a.cornerDotRadius = dr
-	result, err := a.drawCornerOverlay(dr)
-	if err != nil {
-		return nil, err
-	}
-	result.Message = fmt.Sprintf("Detected %d corners — click 4 corners", len(a.detectedCorners))
-	return result, nil
+	b := a.currentImage.Bounds()
+	return &ProcessResult{
+		Preview: preview,
+		Width:   b.Dx(),
+		Height:  b.Dy(),
+		Message: fmt.Sprintf("Reset — %d corners detected, click to select", len(a.detectedCorners)),
+		Corners: a.detectedCorners,
+	}, nil
 }

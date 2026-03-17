@@ -25,9 +25,7 @@ import {
   GetCleanPreview,
   RestoreCornerOverlay,
   LogFrontend,
-  GetTouchupSettings,
   SetTouchupSettings,
-  GetWarpSettings,
   SetWarpSettings,
 } from '../wailsjs/go/main/App'
 
@@ -84,6 +82,8 @@ export default function App() {
   const [dotRadius, setDotRadius]         = useState(20)
   const [customCorner, setCustomCorner]   = useState(false)
   const [cornersDetected, setCornersDetected] = useState(false)
+  const [detectedCornerPts, setDetectedCornerPts] = useState([])   // full-res coords from Go
+  const [selectedCornerPts, setSelectedCornerPts] = useState([])   // snapped clicks 1-3
   const lastDetectSettings = useRef(null) // snapshot of params used for last successful detection
 
   // ── Disc mode ─────────────────────────────────────────────────────────────
@@ -262,6 +262,7 @@ export default function App() {
 
     const result = await LoadImage({ filePath })
     showStatus(`Loaded: ${result.width}x${result.height}`)
+    setFitWidth(0)
     setPreview(result.preview)
     setImageLoaded(true)
     setRealImageDims({ w: result.width, h: result.height })
@@ -273,6 +274,11 @@ export default function App() {
     setCornersDetected(false)
     lastDetectSettings.current = null
     setLines([])
+    setTouchupStrokes([])
+    setDetectedCornerPts([])
+    setSelectedCornerPts([])
+    setBlackPoint(0)
+    setWhitePoint(255)
 
     if (autoDetect && mode === 'corner') {
       showStatus('Detecting corners…')
@@ -289,6 +295,8 @@ export default function App() {
       setPreview(dr.preview)
       showStatus(dr.message + ' — click 4 corners')
       if (dr.width && dr.height) setRealImageDims({ w: dr.width, h: dr.height })
+      setDetectedCornerPts(dr.corners || [])
+      setSelectedCornerPts([])
       setCornersDetected(true)
     }
 
@@ -355,6 +363,8 @@ export default function App() {
       setPreview(result.preview)
       showStatus(result.message + ' — click 4 corners')
       if (result.width && result.height) setRealImageDims({ w: result.width, h: result.height })
+      setDetectedCornerPts(result.corners || [])
+      setSelectedCornerPts([])
       setCornerState(s => ({ ...s, cornerCount: 0 }))
       setCornersDetected(true)
       lastDetectSettings.current = {
@@ -380,7 +390,10 @@ export default function App() {
       setPreview(result.preview)
       showStatus(result.message)
       if (result.width && result.height) setRealImageDims({ w: result.width, h: result.height })
+      setDetectedCornerPts(result.corners || [])
+      setSelectedCornerPts([])
       setCornerState(s => ({ ...s, cornerCount: 0 }))
+      setUseTouchupTool(false)
     } catch (err) {
       console.error('ResetCorners error:', err)
     } finally {
@@ -396,6 +409,7 @@ export default function App() {
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
       setDiscActive(false)
+      setUseTouchupTool(false)
       showStatus(result?.message || 'Disc selection reset')
     } catch (err) {
       console.error('ResetDisc error:', err)
@@ -412,6 +426,7 @@ export default function App() {
       setLinesDone(0)
       setLines([])
       setLinesProcessed(false)
+      setUseTouchupTool(false)
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
       showStatus(result?.message || 'Lines cleared')
@@ -544,12 +559,15 @@ export default function App() {
           showStatus('Applying perspective warp…')
         }
         const result = await ClickCorner({ x: imgPt.x, y: imgPt.y, custom: customCorner, dotRadius })
-        setPreview(result.preview)
+        if (result.preview) setPreview(result.preview)
         showStatus(result.message)
         setCornerState(s => ({ ...s, cornerCount: result.count }))
         if (result.done) {
-          const m = result.message.match(/(\d+)×(\d+)/)
-          if (m) setRealImageDims({ w: parseInt(m[1]), h: parseInt(m[2]) })
+          setDetectedCornerPts([])
+          setSelectedCornerPts([])
+          if (result.width && result.height) setRealImageDims({ w: result.width, h: result.height })
+        } else {
+          setSelectedCornerPts(prev => [...prev, { X: result.snappedX, Y: result.snappedY }])
         }
       } catch (err) {
         console.error('ClickCorner error:', err)
@@ -635,7 +653,7 @@ export default function App() {
       const dx = end.x - start.x; const dy = end.y - start.y
       if (Math.sqrt(dx * dx + dy * dy) < 5) return
       try {
-        setLines(prev => [...prev, { x1: dragStart.x, y1: dragStart.y, x2: dragCurrent.x, y2: dragCurrent.y }])
+        setLines(prev => [...prev, { x1: start.x, y1: start.y, x2: end.x, y2: end.y }])
         const result   = await AddLine({ x1: start.x, y1: start.y, x2: end.x, y2: end.y })
         const newCount = linesDone + 1
         setLinesDone(newCount)
@@ -645,6 +663,7 @@ export default function App() {
           showStatus('Applying perspective correction…')
           const proc = await ProcessLines()
           setPreview(proc.preview)
+          if (proc.width && proc.height) setRealImageDims({ w: proc.width, h: proc.height })
           showStatus('Perspective correction applied')
           setLinesDone(0); setLines([]); setLinesProcessed(true)
           setLoading(false)
@@ -655,45 +674,6 @@ export default function App() {
     }
 
     setDragStart(null); setDragCurrent(null)
-  }
-
-  // ── SVG overlay (disc draw circle / line preview) ─────────────────────────
-  const renderOverlay = () => {
-    const el = imgRef.current
-    if (!el) return null
-    const imgStyle = {
-      position: 'absolute',
-      left: el.offsetLeft + 'px', top: el.offsetTop + 'px',
-      width: el.offsetWidth + 'px', height: el.offsetHeight + 'px',
-      pointerEvents: 'none', zIndex: 6, overflow: 'visible',
-    }
-
-    if (mode === 'disc') {
-      if (!dragging || !dragStart || !dragCurrent) return null
-      if (ctrlDragRef.current !== null || shiftDragRef.current !== null) return null
-      const r = Math.sqrt((dragStart.x - dragCurrent.x) ** 2 + (dragStart.y - dragCurrent.y) ** 2)
-      return (
-        <svg style={imgStyle}>
-          <circle cx={dragCurrent.x} cy={dragCurrent.y} r={r} stroke="#00ff00" strokeWidth="2" fill="none" />
-        </svg>
-      )
-    }
-
-    if (mode === 'line') {
-      const allLines = [...lines]
-      if (dragging && dragStart && dragCurrent)
-        allLines.push({ x1: dragStart.x, y1: dragStart.y, x2: dragCurrent.x, y2: dragCurrent.y })
-      return (
-        <svg style={imgStyle}>
-          {allLines.map((ln, i) => (
-            <line key={i} x1={ln.x1} y1={ln.y1} x2={ln.x2} y2={ln.y2}
-              stroke="#00ff00" strokeWidth="2" />
-          ))}
-        </svg>
-      )
-    }
-
-    return null
   }
 
   // ── Image load / fit width ────────────────────────────────────────────────
@@ -764,6 +744,7 @@ export default function App() {
           try {
             const res = await Undo()
             if (res?.preview) setPreview(res.preview)
+            if (res?.width && res?.height) setRealImageDims({ w: res.width, h: res.height })
             showStatus(res?.message || '')
           } catch (err) {
             console.error('Undo shortcut error:', err)
@@ -893,11 +874,14 @@ export default function App() {
               className={`mode-btn ${mode === m ? 'active' : ''}`}
               onClick={async () => {
                 if (m === mode) return
+                setUseTouchupTool(false)
                 if (imageLoaded) {
                   try {
                     if (mode === 'corner') {
                       setCornerState(s => ({ ...s, cornerCount: 0 }))
                       setCornersDetected(false)
+                      setDetectedCornerPts([])
+                      setSelectedCornerPts([])
                       await ResetCorners() // clears warpedImage so GetCleanPreview returns currentImage
                     } else if (mode === 'disc' && discActive) {
                       await ResetDisc(); setDiscActive(false)
@@ -925,6 +909,8 @@ export default function App() {
                           setFitWidth(0)
                           setPreview(res.preview)
                           if (res.width && res.height) setRealImageDims({ w: res.width, h: res.height })
+                          setDetectedCornerPts(res.corners || [])
+                          setSelectedCornerPts([])
                           setCornersDetected(true)
                           setCornerState(s => ({ ...s, cornerCount: 0 }))
                           setMode(m)
@@ -954,9 +940,6 @@ export default function App() {
             state={cornerState}        setState={setCornerState}
             dotRadius={dotRadius}      setDotRadius={setDotRadius}
             customCorner={customCorner} setCustomCorner={setCustomCorner}
-            cornersDetected={cornersDetected}
-            imageLoaded={imageLoaded}
-            setPreview={setPreview}
           />
         </div>
 
@@ -1008,6 +991,11 @@ export default function App() {
             setPreview={setPreview}
             useStretchPreprocess={useStretchPreprocess}
             setUseStretchPreprocess={setUseStretchPreprocess}
+            touchupAvailable={
+              (mode === 'corner' && cornerState.cornerCount === 4) ||
+              (mode === 'line'   && linesProcessed) ||
+              (mode === 'disc'   && discActive)
+            }
             useTouchupTool={useTouchupTool}
             setUseTouchupTool={setUseTouchupTool}
             touchupStrokes={touchupStrokes}
@@ -1093,11 +1081,58 @@ export default function App() {
                   ))}
                 </svg>
               )}
+              {mode === 'disc' && dragging && dragStart && dragCurrent &&
+               ctrlDragRef.current === null && shiftDragRef.current === null && (
+                <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6, overflow: 'visible' }}>
+                  <circle
+                    cx={dragCurrent.x} cy={dragCurrent.y}
+                    r={Math.sqrt((dragStart.x - dragCurrent.x) ** 2 + (dragStart.y - dragCurrent.y) ** 2)}
+                    stroke="#00ff00" strokeWidth="2" fill="none"
+                  />
+                </svg>
+              )}
+              {mode === 'corner' && (detectedCornerPts.length > 0 || selectedCornerPts.length > 0) && (
+                <svg
+                  viewBox={`0 0 ${realImageDims.w} ${realImageDims.h}`}
+                  preserveAspectRatio="none"
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6 }}
+                >
+                  {detectedCornerPts.map((pt, i) => (
+                    <circle key={`d${i}`} cx={pt.X} cy={pt.Y} r={dotRadius}
+                      fill="rgba(255,0,0,0.6)" stroke="red" strokeWidth="1"
+                      vectorEffect="non-scaling-stroke" />
+                  ))}
+                  {selectedCornerPts.map((pt, i) => (
+                    <circle key={`s${i}`} cx={pt.X} cy={pt.Y} r={Math.max(dotRadius * 1.5, dotRadius + 4)}
+                      fill="rgba(0,255,0,0.6)" stroke="lime" strokeWidth="2"
+                      vectorEffect="non-scaling-stroke" />
+                  ))}
+                </svg>
+              )}
+              {mode === 'line' && (() => {
+                const allLines = [...lines] // image-space coords
+                if (dragging && dragStart && dragCurrent) {
+                  const s = displayToImage(dragStart.x, dragStart.y)
+                  const e = displayToImage(dragCurrent.x, dragCurrent.y)
+                  allLines.push({ x1: s.x, y1: s.y, x2: e.x, y2: e.y })
+                }
+                return allLines.length > 0 ? (
+                  <svg
+                    viewBox={`0 0 ${realImageDims.w} ${realImageDims.h}`}
+                    preserveAspectRatio="none"
+                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6, overflow: 'visible' }}
+                  >
+                    {allLines.map((ln, i) => (
+                      <line key={i} x1={ln.x1} y1={ln.y1} x2={ln.x2} y2={ln.y2}
+                        stroke="#00ff00" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                    ))}
+                  </svg>
+                ) : null
+              })()}
             </div>
           ) : !loading ? (
             <div className="placeholder">Load or drop an image to begin</div>
           ) : null}
-          {renderOverlay()}
         </div>
       </main>
     </div>

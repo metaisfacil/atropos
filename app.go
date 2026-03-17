@@ -111,13 +111,16 @@ func (a *App) shutdown(ctx context.Context) {
 // ProcessResult is the standard response for image processing operations,
 // carrying an optional preview, status message, and image dimensions.
 type ProcessResult struct {
-	Preview string `json:"preview"`
-	Message string `json:"message"`
-	Width   int    `json:"width"`
-	Height  int    `json:"height"`
+	Preview string        `json:"preview"`
+	Message string        `json:"message"`
+	Width   int           `json:"width"`
+	Height  int           `json:"height"`
 	// Optional numeric results (e.g. from AutoContrast)
-	Black int `json:"black,omitempty"`
-	White int `json:"white,omitempty"`
+	Black   int           `json:"black,omitempty"`
+	White   int           `json:"white,omitempty"`
+	// Corners is populated by DetectCorners and ResetCorners so the frontend
+	// can render the overlay dots via SVG instead of baking them into the image.
+	Corners []image.Point `json:"corners,omitempty"`
 }
 
 // LaunchArgs contains the initial file path and mode from CLI arguments.

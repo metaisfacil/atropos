@@ -1,5 +1,4 @@
 import React from 'react'
-import { SetCornerDotRadius } from '../../wailsjs/go/main/App'
 
 // CornerPanel renders the corner-detection mode controls in the sidebar.
 // Props:
@@ -15,8 +14,6 @@ export default function CornerPanel({
   state, setState,
   dotRadius, setDotRadius,
   customCorner, setCustomCorner,
-  cornersDetected, imageLoaded,
-  setPreview,
 }) {
   return (
     <div className="control-section">
@@ -85,15 +82,6 @@ export default function CornerPanel({
             max="80"
             value={dotRadius}
             onChange={(e) => setDotRadius(parseInt(e.target.value))}
-            onMouseUp={async (e) => {
-              const newR = parseInt(e.target.value)
-              if (cornersDetected && imageLoaded) {
-                try {
-                  const result = await SetCornerDotRadius({ dotRadius: newR })
-                  if (result?.preview) setPreview(result.preview)
-                } catch (_) {}
-              }
-            }}
           />
           <span className="value-display">{dotRadius}</span>
         </div>

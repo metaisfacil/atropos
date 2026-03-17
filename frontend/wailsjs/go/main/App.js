@@ -98,10 +98,6 @@ export function SetBackgroundColor(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetBackgroundColor'](arg1, arg2, arg3);
 }
 
-export function SetCornerDotRadius(arg1) {
-  return window['go']['main']['App']['SetCornerDotRadius'](arg1);
-}
-
 export function SetFeatherSize(arg1) {
   return window['go']['main']['App']['SetFeatherSize'](arg1);
 }
@@ -124,10 +120,6 @@ export function ShiftDisc(arg1) {
 
 export function TouchUpApply(arg1, arg2, arg3) {
   return window['go']['main']['App']['TouchUpApply'](arg1, arg2, arg3);
-}
-
-export function TouchUpFill(arg1, arg2, arg3) {
-  return window['go']['main']['App']['TouchUpFill'](arg1, arg2, arg3);
 }
 
 export function Undo() {
