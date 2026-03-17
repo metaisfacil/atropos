@@ -125,6 +125,20 @@ export namespace main {
 	        this.angle = source["angle"];
 	    }
 	}
+	export class DiscSettings {
+	    centerCutout: boolean;
+	    cutoutPercent: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiscSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.centerCutout = source["centerCutout"];
+	        this.cutoutPercent = source["cutoutPercent"];
+	    }
+	}
 	export class FeatherSizeRequest {
 	    size: number;
 	

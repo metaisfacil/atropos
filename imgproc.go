@@ -765,13 +765,19 @@ func rotateArbitrary(src *image.NRGBA, angleDeg float64, bg color.NRGBA) *image.
 // ---- Circular mask with feathering ----
 
 // applyCircularMaskWithFeather masks the image to a disc with a smooth feathered edge.
-func applyCircularMaskWithFeather(src *image.NRGBA, center image.Point, radius, featherSize int, bg color.NRGBA) *image.NRGBA {
+// If centerCutoutRadius > 0, a feathered circular hole of that radius is punched out
+// at the centre and filled with bg, so the background eyedropper colour shows through.
+// The cutout feather width matches featherSize, transitioning from bg at the centre
+// outward to full image colour at cutoutRadius + featherSize.
+func applyCircularMaskWithFeather(src *image.NRGBA, center image.Point, radius, featherSize, centerCutoutRadius int, bg color.NRGBA) *image.NRGBA {
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
 	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
 
 	outerR := float64(radius + featherSize)
 	innerR := float64(radius)
+	cutoutR := float64(centerCutoutRadius)
+	cutoutFeatherR := cutoutR + float64(featherSize)
 
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
@@ -780,13 +786,23 @@ func applyCircularMaskWithFeather(src *image.NRGBA, center image.Point, radius, 
 			d := math.Sqrt(ddx*ddx + ddy*ddy)
 
 			var alpha float64
-			if d <= innerR {
-				alpha = 1.0
-			} else if d >= outerR {
+			if d >= outerR {
 				alpha = 0.0
-			} else {
+			} else if d > innerR {
+				// Outer feather: 1 → 0
 				t := (d - innerR) / float64(featherSize)
 				alpha = 0.5 * (1 + math.Cos(t*math.Pi))
+			} else if cutoutR <= 0 {
+				alpha = 1.0
+			} else if d <= cutoutR {
+				// Inside cutout hard core — bg.
+				alpha = 0.0
+			} else if d < cutoutFeatherR {
+				// Cutout feather: 0 → 1 as d goes from cutoutR to cutoutFeatherR.
+				t := (d - cutoutR) / float64(featherSize)
+				alpha = 0.5 * (1 - math.Cos(t*math.Pi))
+			} else {
+				alpha = 1.0
 			}
 
 			sc := src.NRGBAAt(b.Min.X+x, b.Min.Y+y)

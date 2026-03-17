@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 )
 
 // DiscDrawRequest specifies the centre point and radius for a circular disc crop.
@@ -97,7 +98,12 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 	cropped := subImage(src, image.Rect(x1, y1, x2, y2))
 	localCenter := image.Pt(a.discCenter.X-x1, a.discCenter.Y-y1)
 
-	feathered := applyCircularMaskWithFeather(cropped, localCenter, a.discRadius, a.featherSize, a.bgColor)
+	centerCutoutRadius := 0
+	if a.discCenterCutout && a.discCutoutPercent > 0 {
+		// Cutout radius = half the cutout diameter, which is discCutoutPercent% of the disc diameter.
+		centerCutoutRadius = int(math.Round(float64(a.discRadius) * float64(a.discCutoutPercent) / 100.0))
+	}
+	feathered := applyCircularMaskWithFeather(cropped, localCenter, a.discRadius, a.featherSize, centerCutoutRadius, a.bgColor)
 
 	// Re-apply accumulated rotation so that ShiftDisc / SetFeatherSize / etc.
 	// don't discard a rotation the user already applied.
