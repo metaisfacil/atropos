@@ -44,7 +44,20 @@ export default function App() {
   const modeRef = useRef(mode)
   useEffect(() => { modeRef.current = mode }, [mode])
   const [preview, setPreview]       = useState(null)
-  const [imageInfo, setImageInfo]   = useState('No image loaded')
+  const [imageInfo, setImageInfo]   = useState('')
+  const [imageInfoVisible, setImageInfoVisible] = useState(true)
+  const statusFadeTimer  = useRef(null)
+  const statusClearTimer = useRef(null)
+  const showStatus = (msg) => {
+    clearTimeout(statusFadeTimer.current)
+    clearTimeout(statusClearTimer.current)
+    setImageInfo(msg)
+    setImageInfoVisible(true)
+    if (msg) {
+      statusFadeTimer.current  = setTimeout(() => setImageInfoVisible(false), 4000)
+      statusClearTimer.current = setTimeout(() => setImageInfo(''), 5000)
+    }
+  }
   const [imageLoaded, setImageLoaded] = useState(false)
   const [loading, setLoading]       = useState(false)
   const [loadingFull, setLoadingFull] = useState(false)
@@ -152,7 +165,7 @@ export default function App() {
   const commitTouchup = async () => {
     if (!imageLoaded || touchupStrokes.length === 0) return
     setLoading(true)
-    setImageInfo('Running touch-up…')
+    showStatus('Running touch-up…')
     try {
       const cw = realImageDims.w
       const ch = realImageDims.h
@@ -182,10 +195,10 @@ export default function App() {
       const iterations = 5
       const result = await window['go']['main']['App']['TouchUpApply'](b64, patchSize, iterations)
       if (result?.preview) setPreview(result.preview)
-      setImageInfo(result?.message || '')
+      showStatus(result?.message || '')
     } catch (err) {
       console.error('TouchUp commit error:', err)
-      setImageInfo('')
+      showStatus('')
       const hint = touchupBackend === 'iopaint'
         ? '\n\nPlease make sure IOPaint is running and that you have the server address configured correctly. Alternatively, try switching to the PatchMatch backend in Options.'
         : ''
@@ -243,10 +256,10 @@ export default function App() {
     setLoadingFull(true)
     setZoom(1)
     const name = filePath.split(/[\\/]/).pop()
-    setImageInfo(`Loading ${name}…`)
+    showStatus(`Loading ${name}…`)
 
     const result = await LoadImage({ filePath })
-    setImageInfo(`Loaded: ${result.width}x${result.height}`)
+    showStatus(`Loaded: ${result.width}x${result.height}`)
     setPreview(result.preview)
     setImageLoaded(true)
     setRealImageDims({ w: result.width, h: result.height })
@@ -259,7 +272,7 @@ export default function App() {
     setLines([])
 
     if (autoDetect && mode === 'corner') {
-      setImageInfo('Detecting corners…')
+      showStatus('Detecting corners…')
       const dr = await DetectCorners({
         maxCorners: cornerState.maxCorners,
         qualityLevel: cornerState.qualityLevel,
@@ -271,7 +284,7 @@ export default function App() {
         stretchHigh: 0.99,
       })
       setPreview(dr.preview)
-      setImageInfo(dr.message + ' — click 4 corners')
+      showStatus(dr.message + ' — click 4 corners')
       if (dr.width && dr.height) setRealImageDims({ w: dr.width, h: dr.height })
       setCornersDetected(true)
     }
@@ -309,11 +322,14 @@ export default function App() {
           const shouldDetect = args.mode ?
             (args.mode === 'corner') : (mode === 'corner')
           await loadFile(args.filePath, shouldDetect)
+        } else {
+          showStatus('No image loaded')
         }
       } catch (err) {
         console.error('Launch args error:', err)
         setLoading(false)
         setLoadingFull(false)
+        showStatus('No image loaded')
       }
     })()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -321,7 +337,7 @@ export default function App() {
   // ── Corner detection ───────────────────────────────────────────────────────
   const handleDetectCorners = async () => {
     setLoading(true)
-    setImageInfo('Detecting corners…')
+    showStatus('Detecting corners…')
     try {
       const result = await DetectCorners({
         maxCorners:   cornerState.maxCorners,
@@ -334,7 +350,7 @@ export default function App() {
         stretchHigh: 0.99,
       })
       setPreview(result.preview)
-      setImageInfo(result.message + ' — click 4 corners')
+      showStatus(result.message + ' — click 4 corners')
       if (result.width && result.height) setRealImageDims({ w: result.width, h: result.height })
       setCornerState(s => ({ ...s, cornerCount: 0 }))
       setCornersDetected(true)
@@ -348,11 +364,11 @@ export default function App() {
   // ── Reset handlers ────────────────────────────────────────────────────────
   const handleResetCorners = async () => {
     setLoading(true)
-    setImageInfo('Resetting corners…')
+    showStatus('Resetting corners…')
     try {
       const result = await ResetCorners()
       setPreview(result.preview)
-      setImageInfo(result.message)
+      showStatus(result.message)
       if (result.width && result.height) setRealImageDims({ w: result.width, h: result.height })
       setCornerState(s => ({ ...s, cornerCount: 0 }))
     } catch (err) {
@@ -364,13 +380,13 @@ export default function App() {
 
   const handleResetDisc = async () => {
     setLoading(true)
-    setImageInfo('Resetting disc…')
+    showStatus('Resetting disc…')
     try {
       const result = await ResetDisc()
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
       setDiscActive(false)
-      setImageInfo(result?.message || 'Disc selection reset')
+      showStatus(result?.message || 'Disc selection reset')
     } catch (err) {
       console.error('ResetDisc error:', err)
     } finally {
@@ -380,7 +396,7 @@ export default function App() {
 
   const handleClearLines = async () => {
     setLoading(true)
-    setImageInfo('Resetting lines…')
+    showStatus('Resetting lines…')
     try {
       const result = await ClearLines()
       setLinesDone(0)
@@ -388,7 +404,7 @@ export default function App() {
       setLinesProcessed(false)
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
-      setImageInfo(result?.message || 'Lines cleared')
+      showStatus(result?.message || 'Lines cleared')
     } catch (err) {
       console.error('ClearLines error:', err)
     } finally {
@@ -402,10 +418,10 @@ export default function App() {
       const filePath = await OpenSaveDialog()
       if (!filePath) return
       setLoading(true)
-      setImageInfo('Saving…')
+      showStatus('Saving…')
       const result = await SaveImage({ outputPath: filePath })
       // Prefer a backend-provided message; fall back to a simple path note.
-      setImageInfo(result?.message || `Saved to ${filePath}`)
+      showStatus(result?.message || `Saved to ${filePath}`)
     } catch (err) {
       console.error('Save error:', err)
       showError(err)
@@ -515,11 +531,11 @@ export default function App() {
       try {
         if (cornerState.cornerCount === 3) {
           setLoading(true)
-          setImageInfo('Applying perspective warp…')
+          showStatus('Applying perspective warp…')
         }
         const result = await ClickCorner({ x: imgPt.x, y: imgPt.y, custom: customCorner, dotRadius })
         setPreview(result.preview)
-        setImageInfo(result.message)
+        showStatus(result.message)
         setCornerState(s => ({ ...s, cornerCount: result.count }))
         if (result.done) {
           const m = result.message.match(/(\d+)×(\d+)/)
@@ -589,11 +605,11 @@ export default function App() {
       if (radius < 5) return
       setZoom(1)
       setLoading(true)
-      setImageInfo('Applying disc crop…')
+      showStatus('Applying disc crop…')
       try {
         const result = await DrawDisc({ centerX: end.x, centerY: end.y, radius })
         setPreview(result.preview)
-        setImageInfo(`Disc: center=(${end.x},${end.y}) r=${radius} — Y=eyedrop, Arrows=shift, +/-=feather`)
+        showStatus(`Disc: center=(${end.x},${end.y}) r=${radius} — Y=eyedrop, Arrows=shift, +/-=feather`)
         setDiscActive(true)
       } catch (err) {
         console.error('DrawDisc error:', err)
@@ -613,13 +629,13 @@ export default function App() {
         const result   = await AddLine({ x1: start.x, y1: start.y, x2: end.x, y2: end.y })
         const newCount = linesDone + 1
         setLinesDone(newCount)
-        setImageInfo(result.message)
+        showStatus(result.message)
         if (newCount >= 4) {
           setLoading(true)
-          setImageInfo('Applying perspective correction…')
+          showStatus('Applying perspective correction…')
           const proc = await ProcessLines()
           setPreview(proc.preview)
-          setImageInfo('Perspective correction applied')
+          showStatus('Perspective correction applied')
           setLinesDone(0); setLines([]); setLinesProcessed(true)
           setLoading(false)
         }
@@ -748,11 +764,11 @@ export default function App() {
           const active = document.activeElement
           if (active && (['INPUT','TEXTAREA','SELECT'].includes(active.tagName) || active.isContentEditable)) return
           e.preventDefault()
-          setLoading(true); setImageInfo('Undoing…')
+          setLoading(true); showStatus('Undoing…')
           try {
             const res = await Undo()
             if (res?.preview) setPreview(res.preview)
-            setImageInfo(res?.message || '')
+            showStatus(res?.message || '')
           } catch (err) {
             console.error('Undo shortcut error:', err)
             showError(err)
@@ -780,17 +796,17 @@ export default function App() {
           case 'a': result = await Crop({ direction: 'left'   }); if (result?.preview) setPreview(result.preview); break
           case 'd': result = await Crop({ direction: 'right'  }); if (result?.preview) setPreview(result.preview); break
           case 'q':
-            setLoading(true); setImageInfo('Rotating…')
+            setLoading(true); showStatus('Rotating…')
             result = mode === 'disc' && discActive
               ? await RotateDisc({ angle: -15 })
               : await Rotate({ flipCode: 2 })
-            if (result?.preview) setPreview(result.preview); setImageInfo(''); setLoading(false); break
+            if (result?.preview) setPreview(result.preview); showStatus(''); setLoading(false); break
           case 'e':
-            setLoading(true); setImageInfo('Rotating…')
+            setLoading(true); showStatus('Rotating…')
             result = mode === 'disc' && discActive
               ? await RotateDisc({ angle: 15 })
               : await Rotate({ flipCode: 1 })
-            if (result?.preview) setPreview(result.preview); setImageInfo(''); setLoading(false); break
+            if (result?.preview) setPreview(result.preview); showStatus(''); setLoading(false); break
           
           default:
             break
@@ -1021,7 +1037,7 @@ export default function App() {
       <main className="main-content">
         <header className="toolbar">
           {loading && <div className="header-spinner" />}
-          <span>{imageInfo}</span>
+          <span className={imageInfoVisible ? 'toolbar-message' : 'toolbar-message toolbar-message--fading'}>{imageInfo}</span>
         </header>
         <div
           ref={canvasRef}
