@@ -73,13 +73,17 @@ jobs:
         shell: bash
         run: wails build -nsis -ldflags "-X main.AppVersion=$APP_VERSION"
 
+      - name: List Windows build output
+        if: runner.os == 'Windows'
+        shell: bash
+        run: ls -la build/bin/
+
       - name: Upload Windows installer
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: atropos-windows-installer
-          # Wails names the NSIS output: <outputfilename>-<arch>-installer.exe
-          path: build/bin/atropos-amd64-installer.exe
+          path: build/bin/*installer*.exe
           retention-days: 30
 
       # ── macOS: DMG ────────────────────────────────────────────────────────
