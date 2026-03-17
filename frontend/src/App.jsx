@@ -11,6 +11,7 @@ import {
   Undo,
   DrawDisc,
   RotateDisc,
+  StraightEdgeRotate,
   GetPixelColor,
   ShiftDisc,
   SetFeatherSize,
@@ -109,6 +110,8 @@ export default function App() {
   const [useStretchPreprocess, setUseStretchPreprocess] = useState(true)
   // Toggle to enable the touch-up brush tool (PatchMatch fill)
   const [useTouchupTool, setUseTouchupTool] = useState(false)
+  // Toggle to enable the straight edge rotation tool (disc mode only)
+  const [useStraightEdgeTool, setUseStraightEdgeTool] = useState(false)
   const [touchupStrokes, setTouchupStrokes] = useState([]) // array of {x,y} in image coords
   const [brushSize, setBrushSize] = useState(40)
 
@@ -439,6 +442,7 @@ export default function App() {
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
       setDiscActive(false)
       setUseTouchupTool(false)
+      setUseStraightEdgeTool(false)
       showStatus(result?.message || 'Disc selection reset')
     } catch (err) {
       console.error('ResetDisc error:', err)
@@ -502,6 +506,11 @@ export default function App() {
       return
     }
 
+    if (useStraightEdgeTool && mode === 'disc' && discActive) {
+      setDragging(true); setDragStart(pos); setDragCurrent(pos)
+      return
+    }
+
     if (mode === 'disc' && e.shiftKey && discActive) {
       ctrlDragRef.current = null
       shiftDragRef.current = { startX: e.clientX, appliedAngle: 0 }
@@ -540,6 +549,8 @@ export default function App() {
       }
       return
     }
+
+    if (useStraightEdgeTool) return
 
     if (pos && shiftDragRef.current && !shiftDragBusy.current) {
       const dx = e.clientX - shiftDragRef.current.startX
@@ -618,6 +629,30 @@ export default function App() {
       } catch (err) {
         console.error('Auto-commit touchup error:', err)
       }
+      setDragStart(null); setDragCurrent(null)
+      return
+    }
+
+    // Straight edge rotation: compute angle of drawn line and rotate disc to make it horizontal
+    if (useStraightEdgeTool && mode === 'disc' && discActive) {
+      const dx = pos.x - dragStart.x
+      const dy = pos.y - dragStart.y
+      if (Math.sqrt(dx * dx + dy * dy) >= 5) {
+        const angleDeg = Math.atan2(dy, dx) * 180 / Math.PI
+        setLoading(true)
+        showStatus('Applying straight edge rotation…')
+        try {
+          const result = await StraightEdgeRotate({ angleDeg })
+          if (result?.preview) setPreview(result.preview)
+          showStatus('Straight edge rotation applied')
+        } catch (err) {
+          console.error('StraightEdge error:', err)
+          showError(err)
+        } finally {
+          setLoading(false)
+        }
+      }
+      setUseStraightEdgeTool(false)
       setDragStart(null); setDragCurrent(null)
       return
     }
@@ -904,6 +939,7 @@ export default function App() {
               onClick={async () => {
                 if (m === mode) return
                 setUseTouchupTool(false)
+                setUseStraightEdgeTool(false)
                 if (imageLoaded) {
                   try {
                     if (mode === 'corner') {
@@ -1035,6 +1071,10 @@ export default function App() {
             clearTouchup={clearTouchup}
             brushSize={brushSize}
             setBrushSize={setBrushSize}
+            mode={mode}
+            discActive={discActive}
+            useStraightEdgeTool={useStraightEdgeTool}
+            setUseStraightEdgeTool={setUseStraightEdgeTool}
           />
 
           <ShortcutsPanel
@@ -1115,7 +1155,16 @@ export default function App() {
                   ))}
                 </svg>
               )}
-              {mode === 'disc' && dragging && dragStart && dragCurrent &&
+              {useStraightEdgeTool && dragging && dragStart && dragCurrent && (
+                <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6, overflow: 'visible' }}>
+                  <line
+                    x1={dragStart.x} y1={dragStart.y}
+                    x2={dragCurrent.x} y2={dragCurrent.y}
+                    stroke="#ffff00" strokeWidth="2"
+                  />
+                </svg>
+              )}
+              {mode === 'disc' && !useStraightEdgeTool && dragging && dragStart && dragCurrent &&
                ctrlDragRef.current === null && shiftDragRef.current === null && (() => {
                 const guideR = Math.sqrt((dragStart.x - dragCurrent.x) ** 2 + (dragStart.y - dragCurrent.y) ** 2)
                 return (

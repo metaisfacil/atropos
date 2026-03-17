@@ -331,6 +331,18 @@ export namespace main {
 	        this.dy = source["dy"];
 	    }
 	}
+	export class StraightEdgeRotateRequest {
+	    angleDeg: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new StraightEdgeRotateRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.angleDeg = source["angleDeg"];
+	    }
+	}
 	export class TouchupSettings {
 	    backend: string;
 	    iopaintUrl: string;

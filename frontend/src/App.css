@@ -233,6 +233,22 @@ button.touchup-btn:active {
     transform: translateY(1px);
 }
 
+/* Straight edge button: muted teal, distinct from mauve touch-up and blues */
+button.straight-edge-btn {
+  background: #4a6b72;
+}
+
+button.straight-edge-btn:hover {
+  background: #3a585f;
+}
+
+button.straight-edge-btn.active,
+button.straight-edge-btn:active {
+  background: #1e7a8a;
+  box-shadow: inset 0 3px 1px #0004;
+  transform: translateY(1px);
+}
+
 button.load-btn {
   background: #10793f;
 }

@@ -20,7 +20,7 @@ type App struct {
 	warpedImage     *image.NRGBA
 	levelsBaseImage *image.NRGBA // snapshot taken before slider dragging begins; always the source for SetLevels
 	imageLoaded     bool
-	undoStack       []*image.NRGBA
+	undoStack       []undoEntry
 
 	// Processing state
 	detectedCorners []image.Point
@@ -88,7 +88,7 @@ func NewApp() *App {
 		undoLimit:      10,
 		featherSize:    15,
 		cropAmount:     3,
-		undoStack:      []*image.NRGBA{},
+		undoStack:      []undoEntry{},
 		bgColor:        color.NRGBA{R: 255, G: 255, B: 255, A: 255},
 		postDiscWhite:  255,
 		touchupBackend:   "patchmatch",
