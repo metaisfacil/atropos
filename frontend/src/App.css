@@ -757,6 +757,24 @@ button.options-ok-btn:hover {
   background: #005a9e;
 }
 
+/* Error modal */
+.error-dialog {
+  max-width: 420px;
+}
+
+.error-title {
+  color: #e0e0e0;
+}
+
+.error-message {
+  margin: 0;
+  font-size: 13px;
+  color: #e0e0e0;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* Scrollbar styling */
 .sidebar::-webkit-scrollbar {
   width: 10px;
