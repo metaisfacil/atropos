@@ -26,6 +26,8 @@ import {
   LogFrontend,
   GetTouchupSettings,
   SetTouchupSettings,
+  GetWarpSettings,
+  SetWarpSettings,
 } from '../wailsjs/go/main/App'
 
 import CornerPanel      from './components/CornerPanel'
@@ -112,11 +114,33 @@ export default function App() {
     SetTouchupSettings({ backend: touchupBackend, iopaintUrl: v }).catch(() => {})
   }
 
-  // Push persisted settings to backend on startup.
+  const [warpFillMode, setWarpFillModeState] = useState(() =>
+    localStorage.getItem('warpFillMode') || 'clamp'
+  )
+  const [warpFillColor, setWarpFillColorState] = useState(() =>
+    localStorage.getItem('warpFillColor') || '#ffffff'
+  )
+
+  const setWarpFillMode = (v) => {
+    setWarpFillModeState(v)
+    localStorage.setItem('warpFillMode', v)
+    SetWarpSettings({ fillMode: v, fillColor: warpFillColor }).catch(() => {})
+  }
+  const setWarpFillColor = (v) => {
+    setWarpFillColorState(v)
+    localStorage.setItem('warpFillColor', v)
+    SetWarpSettings({ fillMode: warpFillMode, fillColor: v }).catch(() => {})
+  }
+
+  // Push all persisted settings to backend on startup.
   useEffect(() => {
     SetTouchupSettings({
       backend: localStorage.getItem('touchupBackend') || 'patchmatch',
       iopaintUrl: localStorage.getItem('iopaintURL') || 'http://127.0.0.1:8086/',
+    }).catch(() => {})
+    SetWarpSettings({
+      fillMode:  localStorage.getItem('warpFillMode')  || 'clamp',
+      fillColor: localStorage.getItem('warpFillColor') || '#ffffff',
     }).catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -979,6 +1003,10 @@ export default function App() {
         setTouchupBackend={setTouchupBackend}
         iopaintURL={iopaintURL}
         setIopaintURL={setIopaintURL}
+        warpFillMode={warpFillMode}
+        setWarpFillMode={setWarpFillMode}
+        warpFillColor={warpFillColor}
+        setWarpFillColor={setWarpFillColor}
       />
 
       <main className="main-content">
