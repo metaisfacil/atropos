@@ -484,6 +484,8 @@ kbd {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-height: 51px;
+  box-sizing: border-box;
 }
 
 .canvas-area {
