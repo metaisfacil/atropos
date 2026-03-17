@@ -24,6 +24,8 @@ import {
   GetLaunchArgs,
   GetCleanPreview,
   LogFrontend,
+  GetTouchupSettings,
+  SetTouchupSettings,
 } from '../wailsjs/go/main/App'
 
 import CornerPanel      from './components/CornerPanel'
@@ -31,6 +33,7 @@ import DiscPanel        from './components/DiscPanel'
 import LinePanel        from './components/LinePanel'
 import AdjustmentsPanel from './components/AdjustmentsPanel'
 import ShortcutsPanel   from './components/ShortcutsPanel'
+import OptionsPanel     from './components/OptionsPanel'
 
 export default function App() {
   // ── Shared state ──────────────────────────────────────────────────────────
@@ -87,6 +90,35 @@ export default function App() {
   const [useTouchupTool, setUseTouchupTool] = useState(false)
   const [touchupStrokes, setTouchupStrokes] = useState([]) // array of {x,y} in image coords
   const [brushSize, setBrushSize] = useState(40)
+
+  // ── Options state ─────────────────────────────────────────────────────────
+  const [optionsOpen, setOptionsOpen]         = useState(false)
+  const [touchupBackend, setTouchupBackendState] = useState(() =>
+    localStorage.getItem('touchupBackend') || 'patchmatch'
+  )
+  const [iopaintURL, setIopaintURLState] = useState(() =>
+    localStorage.getItem('iopaintURL') || 'http://127.0.0.1:8086/'
+  )
+
+  // Persist and push to backend whenever either setting changes.
+  const setTouchupBackend = (v) => {
+    setTouchupBackendState(v)
+    localStorage.setItem('touchupBackend', v)
+    SetTouchupSettings({ backend: v, iopaintUrl: iopaintURL }).catch(() => {})
+  }
+  const setIopaintURL = (v) => {
+    setIopaintURLState(v)
+    localStorage.setItem('iopaintURL', v)
+    SetTouchupSettings({ backend: touchupBackend, iopaintUrl: v }).catch(() => {})
+  }
+
+  // Push persisted settings to backend on startup.
+  useEffect(() => {
+    SetTouchupSettings({
+      backend: localStorage.getItem('touchupBackend') || 'patchmatch',
+      iopaintUrl: localStorage.getItem('iopaintURL') || 'http://127.0.0.1:8086/',
+    }).catch(() => {})
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearTouchup = () => setTouchupStrokes([])
 
@@ -933,9 +965,21 @@ export default function App() {
             <button onClick={handleSaveImage} className="save-btn" disabled={loading}>
               Save image
             </button>
+            <button className="options-btn" onClick={() => setOptionsOpen(true)}>
+              Options
+            </button>
           </div>
         </div>
       </aside>
+
+      <OptionsPanel
+        open={optionsOpen}
+        onClose={() => setOptionsOpen(false)}
+        touchupBackend={touchupBackend}
+        setTouchupBackend={setTouchupBackend}
+        iopaintURL={iopaintURL}
+        setIopaintURL={setIopaintURL}
+      />
 
       <main className="main-content">
         <header className="toolbar">
