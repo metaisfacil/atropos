@@ -1045,7 +1045,7 @@ export default function App() {
 
           <div className="file-ops">
             <button onClick={handleLoadImage} className="load-btn" disabled={loading}>
-              {loading ? 'Loading…' : 'Load image'}
+              Load image
             </button>
             <button onClick={handleSaveImage} className="save-btn" disabled={loading}>
               Save image
