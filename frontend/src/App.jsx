@@ -36,6 +36,7 @@ import LinePanel        from './components/LinePanel'
 import AdjustmentsPanel from './components/AdjustmentsPanel'
 import ShortcutsPanel   from './components/ShortcutsPanel'
 import OptionsPanel     from './components/OptionsPanel'
+import ErrorModal       from './components/ErrorModal'
 
 export default function App() {
   // ── Shared state ──────────────────────────────────────────────────────────
@@ -47,6 +48,8 @@ export default function App() {
   const [imageLoaded, setImageLoaded] = useState(false)
   const [loading, setLoading]       = useState(false)
   const [loadingFull, setLoadingFull] = useState(false)
+  const [errorMessage, setErrorMessage] = useState(null)
+  const showError = (err) => setErrorMessage(err?.message || String(err))
 
   // Real image dimensions in Go (full resolution)
   const [realImageDims, setRealImageDims] = useState({ w: 1, h: 1 })
@@ -179,11 +182,14 @@ export default function App() {
       const iterations = 5
       const result = await window['go']['main']['App']['TouchUpApply'](b64, patchSize, iterations)
       if (result?.preview) setPreview(result.preview)
-      if (result?.message) setImageInfo(result.message)
+      setImageInfo(result?.message || '')
       setTouchupStrokes([])
     } catch (err) {
       console.error('TouchUp commit error:', err)
-      setImageInfo(err?.message || String(err))
+      const hint = touchupBackend === 'iopaint'
+        ? '\n\nPlease make sure IOPaint is running and that you have the server address configured correctly. Alternatively, try switching to the PatchMatch backend in Options.'
+        : ''
+      setErrorMessage('Failed to inpaint.' + hint + '\n\n' + (err?.message || String(err)))
     } finally {
       setLoading(false)
     }
@@ -223,7 +229,7 @@ export default function App() {
       await loadFile(filePath)
     } catch (err) {
       console.error('Load error:', err)
-      setImageInfo('Load failed — see debug log')
+      showError(err)
     } finally {
       setLoading(false)
       setLoadingFull(false)
@@ -284,7 +290,7 @@ export default function App() {
         await loadFile(filePath, modeRef.current === 'corner')
       } catch (err) {
         console.error('Drop load error:', err)
-        setImageInfo('Load failed — see debug log')
+        showError(err)
         setLoading(false)
         setLoadingFull(false)
       }
@@ -401,7 +407,7 @@ export default function App() {
       setImageInfo(result?.message || `Saved to ${filePath}`)
     } catch (err) {
       console.error('Save error:', err)
-      setImageInfo(err?.message || String(err))
+      showError(err)
     } finally {
       setLoading(false)
     }
@@ -745,10 +751,10 @@ export default function App() {
           try {
             const res = await Undo()
             if (res?.preview) setPreview(res.preview)
-            if (res?.message) setImageInfo(res.message)
+            setImageInfo(res?.message || '')
           } catch (err) {
             console.error('Undo shortcut error:', err)
-            setImageInfo(err?.message || String(err))
+            showError(err)
           } finally {
             setLoading(false)
           }
@@ -763,7 +769,7 @@ export default function App() {
             await handleSaveImage()
           } catch (err) {
             console.error('Save shortcut error:', err)
-            setImageInfo(err?.message || String(err))
+            showError(err)
           }
           return
         }
@@ -777,20 +783,20 @@ export default function App() {
             result = mode === 'disc' && discActive
               ? await RotateDisc({ angle: -15 })
               : await Rotate({ flipCode: 2 })
-            if (result?.preview) setPreview(result.preview); setLoading(false); break
+            if (result?.preview) setPreview(result.preview); setImageInfo(''); setLoading(false); break
           case 'e':
             setLoading(true); setImageInfo('Rotating…')
             result = mode === 'disc' && discActive
               ? await RotateDisc({ angle: 15 })
               : await Rotate({ flipCode: 1 })
-            if (result?.preview) setPreview(result.preview); setLoading(false); break
+            if (result?.preview) setPreview(result.preview); setImageInfo(''); setLoading(false); break
           
           default:
             break
         }
       } catch (err) {
         console.error('Shortcut error:', err)
-        setImageInfo(err?.message || String(err))
+        showError(err)
         setLoading(false)
       }
     }
@@ -995,6 +1001,8 @@ export default function App() {
           </div>
         </div>
       </aside>
+
+      <ErrorModal message={errorMessage} onClose={() => setErrorMessage(null)} />
 
       <OptionsPanel
         open={optionsOpen}
