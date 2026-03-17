@@ -21,6 +21,8 @@ export default function OptionsPanel({
   setWarpFillMode,
   warpFillColor,
   setWarpFillColor,
+  discCenterCutout,
+  setDiscCenterCutout,
 }) {
   const dialogRef = useRef(null)
   const [mounted, setMounted] = useState(false)
@@ -166,6 +168,23 @@ export default function OptionsPanel({
                 onChange={() => setWarpFillMode('outpaint')}
               />
               Outpaint <span className="options-hint">(built-in PatchMatch)</span>
+            </label>
+          </DelayedHint>
+
+          <div className="options-divider" />
+
+          <DelayedHint hint="Settings that apply when cropping in Disc mode.">
+            <div className="options-section-title" tabIndex={0}>Disc mode</div>
+          </DelayedHint>
+
+          <DelayedHint hint="Punches a small centred hole (11% of the disc diameter) filled with the background colour, so the eyedropper can affect the spindle area in the middle of the disc.">
+            <label className="options-radio-label">
+              <input
+                type="checkbox"
+                checked={discCenterCutout}
+                onChange={(e) => setDiscCenterCutout(e.target.checked)}
+              />
+              Center cutout <span className="options-hint">(default: on)</span>
             </label>
           </DelayedHint>
         </div>

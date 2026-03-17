@@ -34,6 +34,10 @@ export function GetCleanPreview() {
   return window['go']['main']['App']['GetCleanPreview']();
 }
 
+export function GetDiscSettings() {
+  return window['go']['main']['App']['GetDiscSettings']();
+}
+
 export function GetLaunchArgs() {
   return window['go']['main']['App']['GetLaunchArgs']();
 }
@@ -96,6 +100,10 @@ export function SaveImage(arg1) {
 
 export function SetBackgroundColor(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetBackgroundColor'](arg1, arg2, arg3);
+}
+
+export function SetDiscSettings(arg1) {
+  return window['go']['main']['App']['SetDiscSettings'](arg1);
 }
 
 export function SetFeatherSize(arg1) {

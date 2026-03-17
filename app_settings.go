@@ -62,6 +62,38 @@ func (a *App) SetWarpSettings(settings WarpSettings) {
 	a.logf("SetWarpSettings: fillMode=%q fillColor=%q", a.warpFillMode, settings.FillColor)
 }
 
+// DiscSettings holds configuration for disc-mode rendering.
+type DiscSettings struct {
+	// CenterCutout controls whether a circular hole is punched out at the
+	// centre, filling it with the background colour so the eyedropper can
+	// affect that region too.
+	CenterCutout bool `json:"centerCutout"`
+	// CutoutPercent is the cutout diameter as a percentage of the disc
+	// diameter (1–50). Only used when CenterCutout is true.
+	CutoutPercent int `json:"cutoutPercent"`
+}
+
+// GetDiscSettings returns the current disc mode settings.
+func (a *App) GetDiscSettings() DiscSettings {
+	return DiscSettings{
+		CenterCutout:  a.discCenterCutout,
+		CutoutPercent: a.discCutoutPercent,
+	}
+}
+
+// SetDiscSettings updates the disc mode settings and re-renders any active disc.
+func (a *App) SetDiscSettings(settings DiscSettings) (*ProcessResult, error) {
+	a.discCenterCutout = settings.CenterCutout
+	if settings.CutoutPercent >= 0 && settings.CutoutPercent <= 50 {
+		a.discCutoutPercent = settings.CutoutPercent
+	}
+	a.logf("SetDiscSettings: centerCutout=%v cutoutPercent=%d", a.discCenterCutout, a.discCutoutPercent)
+	if a.discRadius > 0 {
+		return a.redrawDisc()
+	}
+	return &ProcessResult{}, nil
+}
+
 // parseHexColor parses a CSS hex colour string ("#rrggbb" or "#rgb") into color.NRGBA.
 func parseHexColor(s string) (color.NRGBA, error) {
 	s = strings.TrimPrefix(s, "#")
