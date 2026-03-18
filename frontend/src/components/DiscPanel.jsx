@@ -18,6 +18,7 @@ export default function DiscPanel({
   discCutoutPercent,
   setDiscCutoutPercent,
   setPreview,
+  disabled,
 }) {
   return (
     <div className="control-section">
@@ -34,6 +35,7 @@ export default function DiscPanel({
                 min="0"
                 max="100"
                 value={featherSize}
+                disabled={disabled}
                 onChange={(e) => setFeatherSize(parseInt(e.target.value))}
                 onMouseUp={async (e) => {
                   try {
@@ -56,6 +58,7 @@ export default function DiscPanel({
                   min="0"
                   max="50"
                   value={discCutoutPercent}
+                  disabled={disabled}
                   onChange={(e) => setDiscCutoutPercent(parseInt(e.target.value))}
                   onMouseUp={async (e) => {
                     try {

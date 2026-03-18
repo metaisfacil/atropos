@@ -20,6 +20,7 @@ import {
   ProcessLines,
   ClearLines,
   SaveImage,
+  SkipCrop,
   OpenImageDialog,
   OpenSaveDialog,
   GetLaunchArgs,
@@ -87,6 +88,7 @@ export default function App() {
   const [detectedCornerPts, setDetectedCornerPts] = useState([])   // full-res coords from Go
   const [selectedCornerPts, setSelectedCornerPts] = useState([])   // snapped clicks 1-3
   const lastDetectSettings = useRef(null) // snapshot of params used for last successful detection
+  const [cropSkipped, setCropSkipped]     = useState(false)
 
   // ── Disc mode ─────────────────────────────────────────────────────────────
   const [featherSize, setFeatherSize]   = useState(15)
@@ -303,6 +305,7 @@ export default function App() {
     setLinesDone(0)
     setLinesProcessed(false)
     setDiscActive(false)
+    setCropSkipped(false)
     setCornersDetected(false)
     lastDetectSettings.current = null
     setLines([])
@@ -414,6 +417,32 @@ export default function App() {
   }
 
   // ── Reset handlers ────────────────────────────────────────────────────────
+  const handleSkipCrop = async () => {
+    setLoading(true)
+    showStatus('Skipping crop…')
+    try {
+      const result = await SkipCrop()
+      if (result?.preview) setPreview(result.preview)
+      if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+      if (mode === 'corner') {
+        setCornerState(s => ({ ...s, cornerCount: 4 }))
+        setDetectedCornerPts([])
+        setSelectedCornerPts([])
+      } else if (mode === 'disc') {
+        setDiscActive(true)
+      } else if (mode === 'line') {
+        setLinesProcessed(true)
+      }
+      setCropSkipped(true)
+      showStatus(result?.message || 'Crop skipped')
+    } catch (err) {
+      console.error('SkipCrop error:', err)
+      showError(err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleResetCorners = async () => {
     setLoading(true)
     showStatus('Resetting corners…')
@@ -425,6 +454,7 @@ export default function App() {
       setDetectedCornerPts(result.corners || [])
       setSelectedCornerPts([])
       setCornerState(s => ({ ...s, cornerCount: 0 }))
+      setCropSkipped(false)
       setUseTouchupTool(false)
     } catch (err) {
       console.error('ResetCorners error:', err)
@@ -441,6 +471,7 @@ export default function App() {
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
       setDiscActive(false)
+      setCropSkipped(false)
       setUseTouchupTool(false)
       setUseStraightEdgeTool(false)
       showStatus(result?.message || 'Disc selection reset')
@@ -459,6 +490,7 @@ export default function App() {
       setLinesDone(0)
       setLines([])
       setLinesProcessed(false)
+      setCropSkipped(false)
       setUseTouchupTool(false)
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
@@ -527,6 +559,7 @@ export default function App() {
       return
     }
     if (mode === 'disc' && discActive) return // must Reset before drawing new disc
+    if (mode === 'line' && linesProcessed) return // crop was skipped; no new lines allowed
 
     ctrlDragRef.current = null
     shiftDragRef.current = null
@@ -712,7 +745,7 @@ export default function App() {
     }
 
     // Line draw
-    if (mode === 'line') {
+    if (mode === 'line' && !linesProcessed) {
       const start = displayToImage(dragStart.x, dragStart.y)
       const end   = displayToImage(pos.x, pos.y)
       const dx = end.x - start.x; const dy = end.y - start.y
@@ -952,9 +985,10 @@ export default function App() {
                       setCornersDetected(false)
                       setDetectedCornerPts([])
                       setSelectedCornerPts([])
+                      setCropSkipped(false)
                       await ResetCorners() // clears warpedImage so GetCleanPreview returns currentImage
                     } else if (mode === 'disc' && discActive) {
-                      await ResetDisc(); setDiscActive(false)
+                      await ResetDisc(); setDiscActive(false); setCropSkipped(false)
                     } else if (mode === 'line') {
                       // Always clear lines when leaving, regardless of how many were drawn.
                       // setLines([]) must be called here so the SVG overlay is wiped
@@ -964,6 +998,7 @@ export default function App() {
                       setLinesDone(0)
                       setLines([])
                       setLinesProcessed(false)
+                      setCropSkipped(false)
                     }
 
                     // Switching to corners: restore cached overlay if detection settings unchanged.
@@ -1010,6 +1045,7 @@ export default function App() {
             state={cornerState}        setState={setCornerState}
             dotRadius={dotRadius}      setDotRadius={setDotRadius}
             customCorner={customCorner} setCustomCorner={setCustomCorner}
+            disabled={cropSkipped}
           />
         </div>
 
@@ -1021,6 +1057,7 @@ export default function App() {
             discCutoutPercent={discCutoutPercent}
             setDiscCutoutPercent={setDiscCutoutPercent}
             setPreview={setPreview}
+            disabled={cropSkipped}
           />
         </div>
 
@@ -1034,8 +1071,15 @@ export default function App() {
         <div className="sidebar-bottom">
           <div className="sidebar-actions">
             {mode === 'corner' && (
-              <button className="primary" onClick={handleDetectCorners} disabled={!imageLoaded || loading}>
+              <button className="primary" onClick={handleDetectCorners} disabled={!imageLoaded || loading || cropSkipped}>
                 Detect
+              </button>
+            )}
+            {((mode === 'corner' && cornerState.cornerCount < 4) ||
+              (mode === 'disc'   && !discActive) ||
+              (mode === 'line'   && !linesProcessed)) && (
+              <button onClick={handleSkipCrop} disabled={!imageLoaded || loading}>
+                Skip crop
               </button>
             )}
             {((mode === 'corner' && cornerState.cornerCount > 0) ||

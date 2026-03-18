@@ -126,6 +126,10 @@ export function ShiftDisc(arg1) {
   return window['go']['main']['App']['ShiftDisc'](arg1);
 }
 
+export function SkipCrop() {
+  return window['go']['main']['App']['SkipCrop']();
+}
+
 export function StraightEdgeRotate(arg1) {
   return window['go']['main']['App']['StraightEdgeRotate'](arg1);
 }

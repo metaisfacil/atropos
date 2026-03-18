@@ -371,3 +371,26 @@ func (a *App) ResetCorners() (*ProcessResult, error) {
 		Corners: a.detectedCorners,
 	}, nil
 }
+
+// SkipCrop sets warpedImage to the current image so that adjustments can be
+// saved without performing a perspective crop.
+func (a *App) SkipCrop() (*ProcessResult, error) {
+	a.logf("SkipCrop")
+	if a.currentImage == nil {
+		return nil, fmt.Errorf("no image loaded")
+	}
+	a.warpedImage = cloneImage(a.currentImage)
+	a.selectedCorners = nil
+
+	preview, err := imageToBase64(a.warpedImage)
+	if err != nil {
+		return nil, err
+	}
+	b := a.warpedImage.Bounds()
+	return &ProcessResult{
+		Preview: preview,
+		Width:   b.Dx(),
+		Height:  b.Dy(),
+		Message: "Crop skipped — image ready to save",
+	}, nil
+}
