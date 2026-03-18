@@ -256,9 +256,12 @@ export default function App() {
   // ── Zoom / scroll state ───────────────────────────────────────────────────
   const [zoom, setZoom]         = useState(1)
   const [fitWidth, setFitWidth] = useState(0)
+  const [spacePanMode, setSpacePanMode] = useState(false)
   const canvasRef        = useRef(null)
   const pendingScrollRef = useRef(null)
   const mousePosRef      = useRef({ x: 0, y: 0 })
+  const spaceDownRef     = useRef(false)
+  const panDragRef       = useRef(null)  // {startX, startY, scrollLeft, scrollTop} while space+dragging
 
   // ── Coordinate helpers ────────────────────────────────────────────────────
   const displayToImage = useCallback((dispX, dispY) => {
@@ -533,6 +536,19 @@ export default function App() {
   // ── Canvas mouse handlers ────────────────────────────────────────────────
   const handleMouseDown = (e) => {
     if (!imageLoaded || loading) return
+    // Space+drag pan — works anywhere in the canvas area
+    if (spaceDownRef.current) {
+      const el = canvasRef.current
+      if (!el) return
+      e.preventDefault()
+      panDragRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        scrollLeft: el.scrollLeft,
+        scrollTop:  el.scrollTop,
+      }
+      return
+    }
     if (e.target !== imgRef.current) return
     e.preventDefault()
     const pos = getRelPos(e)
@@ -576,6 +592,15 @@ export default function App() {
   }
 
   const handleMouseMove = async (e) => {
+    // Space+drag pan
+    if (panDragRef.current) {
+      const el = canvasRef.current
+      if (el) {
+        el.scrollLeft = panDragRef.current.scrollLeft - (e.clientX - panDragRef.current.startX)
+        el.scrollTop  = panDragRef.current.scrollTop  - (e.clientY - panDragRef.current.startY)
+      }
+      return
+    }
     const pos = getRelPos(e)
     if (pos) mousePosRef.current = pos
     if (!dragging) return
@@ -627,6 +652,7 @@ export default function App() {
   }
 
   const handleMouseUp = async (e) => {
+    if (panDragRef.current) { panDragRef.current = null; return }
     if (!imageLoaded || loading) return
     if (e.target !== imgRef.current) return
     const pos = getRelPos(e)
@@ -954,6 +980,31 @@ export default function App() {
     }
   }, [mode, discActive, featherSize])
 
+  // ── Space-key pan mode ────────────────────────────────────────────────────
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.code !== 'Space') return
+      const active = document.activeElement
+      if (active && (['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable)) return
+      e.preventDefault()  // must preventDefault for every event, including repeats, to suppress native scroll
+      if (e.repeat) return
+      spaceDownRef.current = true
+      setSpacePanMode(true)
+    }
+    const onKeyUp = (e) => {
+      if (e.code !== 'Space') return
+      spaceDownRef.current = false
+      setSpacePanMode(false)
+      panDragRef.current = null
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+    }
+  }, [])
+
   useLayoutEffect(() => {
     const el  = canvasRef.current
     const log = (msg) => LogFrontend(msg).catch(() => {})
@@ -1185,6 +1236,7 @@ export default function App() {
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
+          style={spacePanMode ? { cursor: 'grab' } : undefined}
         >
           {preview ? (
             <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0, margin: 'auto' }}>
@@ -1195,7 +1247,7 @@ export default function App() {
                 draggable={false}
                 onLoad={handleImgLoad}
                 style={{
-                  cursor: 'crosshair',
+                  cursor: spacePanMode ? 'grab' : 'crosshair',
                   display: 'block',
                   ...(fitWidth > 0
                     ? { width: `${fitWidth * zoom}px`, height: 'auto', maxWidth: 'none', maxHeight: 'none' }
