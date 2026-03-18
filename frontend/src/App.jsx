@@ -273,8 +273,12 @@ export default function App() {
   const mousePosRef      = useRef({ x: 0, y: 0 })
   const spaceDownRef     = useRef(false)
   const panDragRef       = useRef(null)  // {startX, startY, scrollLeft, scrollTop} while space+dragging
-  const cornerMouseDownRef = useRef(false) // true when mousedown fired on the image in corner mode
-  const lastResizeRef      = useRef(0)     // timestamp of last window resize (to suppress post-maximize clicks)
+  const cornerMouseDownRef  = useRef(false) // true when mousedown fired on the image in corner mode
+  const lastResizeRef       = useRef(0)     // timestamp of last window resize (to suppress post-maximize clicks)
+  const touchupDraggingRef  = useRef(false) // true while a touch-up brush drag is in progress
+  // Holds the latest touch-up commit handler for the window-level mouseup listener.
+  // Updated every render so the closure always sees fresh state.
+  const windowTouchupMouseUpRef = useRef(null)
 
   // ── Coordinate helpers ────────────────────────────────────────────────────
   const displayToImage = useCallback((dispX, dispY) => {
@@ -400,6 +404,26 @@ export default function App() {
       document.removeEventListener('dragover', suppressDefault)
       document.removeEventListener('drop', suppressDefault)
     }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Touch-up: catch mouseup outside the canvas div ────────────────────────
+  // Updated every render so the closure always sees fresh state (touchupStrokes,
+  // commitTouchup, etc.) without a dependency array.
+  windowTouchupMouseUpRef.current = async () => {
+    if (!touchupDraggingRef.current) return // already handled by the canvas-level handler
+    touchupDraggingRef.current = false
+    setDragging(false)
+    setDragStart(null); setDragCurrent(null)
+    try {
+      if (touchupStrokes.length > 0) await commitTouchup()
+    } catch (err) {
+      console.error('Auto-commit touchup error:', err)
+    }
+  }
+  useEffect(() => {
+    const handler = () => windowTouchupMouseUpRef.current()
+    window.addEventListener('mouseup', handler)
+    return () => window.removeEventListener('mouseup', handler)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Launch arguments ───────────────────────────────────────────────────────
@@ -677,6 +701,7 @@ export default function App() {
     if (useTouchupTool) {
       // Start a touch-up stroke; record image-space coordinates
       const imgPt = displayToImage(pos.x, pos.y)
+      touchupDraggingRef.current = true
       setTouchupStrokes([{ x: imgPt.x, y: imgPt.y }])
       setDragging(true); setDragStart(pos); setDragCurrent(pos)
       return
@@ -772,6 +797,22 @@ export default function App() {
   const handleMouseUp = async (e) => {
     if (panDragRef.current) { panDragRef.current = null; return }
     if (!imageLoaded || loading) return
+
+    // Touch-up: commit wherever the mouse is released within the canvas area.
+    // The window-level listener (see useEffect below) covers releases outside the canvas entirely.
+    // touchupDraggingRef prevents double-commit between these two paths.
+    if (useTouchupTool && touchupDraggingRef.current) {
+      touchupDraggingRef.current = false
+      setDragging(false)
+      setDragStart(null); setDragCurrent(null)
+      try {
+        if (touchupStrokes.length > 0) await commitTouchup()
+      } catch (err) {
+        console.error('Auto-commit touchup error:', err)
+      }
+      return
+    }
+
     if (e.target !== imgRef.current) return
     const pos = getRelPos(e)
     if (!pos) return
@@ -810,19 +851,6 @@ export default function App() {
 
     if (!dragging || !dragStart) { setDragging(false); return }
     setDragging(false)
-
-    // Auto-commit touch-up strokes on mouseup when the touchup tool is enabled.
-    if (useTouchupTool) {
-      try {
-        if (touchupStrokes && touchupStrokes.length > 0) {
-          await commitTouchup()
-        }
-      } catch (err) {
-        console.error('Auto-commit touchup error:', err)
-      }
-      setDragStart(null); setDragCurrent(null)
-      return
-    }
 
     // Straight edge rotation: compute angle of drawn line and rotate disc to make it horizontal
     if (useStraightEdgeTool && mode === 'disc' && discActive) {
