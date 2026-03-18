@@ -14,6 +14,7 @@ export default function CornerPanel({
   state, setState,
   dotRadius, setDotRadius,
   customCorner, setCustomCorner,
+  disabled,
 }) {
   return (
     <div className="control-section">
@@ -25,6 +26,7 @@ export default function CornerPanel({
             min="1"
             max="1000"
             value={state.maxCorners}
+            disabled={disabled}
             onChange={(e) => setState({ ...state, maxCorners: parseInt(e.target.value) })}
           />
           <span className="value-display">{state.maxCorners}</span>
@@ -39,6 +41,7 @@ export default function CornerPanel({
             min="1"
             max="100"
             value={state.qualityLevel}
+            disabled={disabled}
             onChange={(e) => setState({ ...state, qualityLevel: parseFloat(e.target.value) })}
           />
           <span className="value-display">{state.qualityLevel}</span>
@@ -53,6 +56,7 @@ export default function CornerPanel({
             min="1"
             max="200"
             value={state.minDistance}
+            disabled={disabled}
             onChange={(e) => setState({ ...state, minDistance: parseInt(e.target.value) })}
           />
           <span className="value-display">{state.minDistance}</span>
@@ -67,6 +71,7 @@ export default function CornerPanel({
             min="0"
             max="30"
             value={state.accent}
+            disabled={disabled}
             onChange={(e) => setState({ ...state, accent: parseInt(e.target.value) })}
           />
           <span className="value-display">{state.accent}</span>
@@ -81,6 +86,7 @@ export default function CornerPanel({
             min="2"
             max="80"
             value={dotRadius}
+            disabled={disabled}
             onChange={(e) => setDotRadius(parseInt(e.target.value))}
           />
           <span className="value-display">{dotRadius}</span>
@@ -92,6 +98,7 @@ export default function CornerPanel({
           <input
             type="checkbox"
             checked={customCorner}
+            disabled={disabled}
             onChange={(e) => setCustomCorner(e.target.checked)}
           />
           Custom corner placement

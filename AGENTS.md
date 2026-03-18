@@ -224,7 +224,23 @@ RestoreCornerOverlay({dotRadius})
     if detectedCorners empty → error "no cached corners"
     return clean currentImage preview + Corners + "Detected N corners — click 4 corners"
     (dotRadius arg accepted but unused — dot size is handled entirely by the SVG overlay)
+
+SkipCrop()
+    require currentImage != nil
+    warpedImage     = cloneImage(currentImage)   ← makes SaveImage available immediately
+    selectedCorners = nil
+    return currentImage preview + dims + "Crop skipped — image ready to save"
 ```
+
+`SkipCrop` is available in all three modes. It is the backend half of the "Skip crop" button. The frontend sets mode-specific state to transition past the 1st phase without performing a warp:
+
+| Mode   | Frontend state change after SkipCrop              |
+|--------|---------------------------------------------------|
+| Corner | `cornerCount = 4`, clears `detectedCornerPts`     |
+| Disc   | `discActive = true`                               |
+| Line   | `linesProcessed = true`                           |
+
+The frontend also sets `cropSkipped = true`, which disables all 1st-phase sidebar controls (Corner detection sliders and Detect button; Disc feather/cutout sliders) until Reset is clicked. Line drawing on the canvas is also blocked when `linesProcessed` is true. `cropSkipped` is cleared by every reset path: `handleResetCorners`, `handleResetDisc`, `handleClearLines`, `loadFile`, and all mode-switch reset branches.
 
 **Key:** `detectedCorners` is NOT cleared on mode switch (only on `LoadImage`). This enables the cached-corners restore path.
 
@@ -426,11 +442,11 @@ Undo()
 
 ### Availability
 
-The touch-up brush button is **disabled** until the initial crop has been committed in the current mode:
+The touch-up brush button is **disabled** until the initial crop has been committed in the current mode (either by completing the normal 1st-phase operation or by clicking "Skip crop"):
 
 | Mode   | Enabled when                                   |
 |--------|------------------------------------------------|
-| Corner | `cornerState.cornerCount === 4` (warp applied) |
+| Corner | `cornerState.cornerCount === 4` (warp applied or Skip crop) |
 | Line   | `linesProcessed === true`                      |
 | Disc   | `discActive === true`                          |
 
@@ -506,14 +522,17 @@ onClick (mode button):
         ResetCorners()              ← clears selectedCorners + warpedImage
         setCornersDetected(false)
         setCornerState({...cornerCount: 0})
+        setCropSkipped(false)
 
     if leaving 'disc' && discActive:
         ResetDisc()                 ← clears all disc state + warpedImage
         setDiscActive(false)
+        setCropSkipped(false)
 
     if leaving 'line':
         ClearLines()                ← clears lines + warpedImage
         setLinesDone(0), setLines([]), setLinesProcessed(false)
+        setCropSkipped(false)
 
     if arriving at 'corner' && lastDetectSettings matches current settings:
         RestoreCornerOverlay({dotRadius})   ← re-render cached corners
