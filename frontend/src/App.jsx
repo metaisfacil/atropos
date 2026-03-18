@@ -355,6 +355,13 @@ export default function App() {
       setDetectedCornerPts(dr.corners || [])
       setSelectedCornerPts([])
       setCornersDetected(true)
+      lastDetectSettings.current = {
+        maxCorners: cornerState.maxCorners,
+        qualityLevel: cornerState.qualityLevel,
+        minDistance: cornerState.minDistance,
+        accent: cornerState.accent,
+        useStretch: useStretchPreprocess,
+      }
     }
 
     setLoading(false)
@@ -716,7 +723,7 @@ export default function App() {
       cornerMouseDownRef.current = false
       if (!hadMouseDown) return // no matching mousedown on canvas (e.g. stray mouseup from window maximize)
       if (Date.now() - lastResizeRef.current < 300) return // ignore clicks immediately after window resize/maximize
-      if (!cornersDetected || cornerState.cornerCount >= 4) return
+      if ((cornerState.cornerCount === 0 && !cornersDetected && !customCorner) || cornerState.cornerCount >= 4) return
       const imgPt = displayToImage(pos.x, pos.y)
       try {
         if (cornerState.cornerCount === 3) {
@@ -1152,7 +1159,12 @@ export default function App() {
                           s.useStretch === useStretchPreprocess) {
                         try {
                           const res = await RestoreCornerOverlay({ dotRadius })
-                          setFitWidth(0)
+                          const c = canvasRef.current
+                          if (c && res.width && res.height) {
+                            setFitWidth(Math.min(c.clientWidth, c.clientHeight * res.width / res.height))
+                          } else {
+                            setFitWidth(0)
+                          }
                           setPreview(res.preview)
                           if (res.width && res.height) setRealImageDims({ w: res.width, h: res.height })
                           setDetectedCornerPts(res.corners || [])
@@ -1166,7 +1178,15 @@ export default function App() {
                     }
 
                     const res = await GetCleanPreview()
-                    if (res?.preview) { setFitWidth(0); setPreview(res.preview) }
+                    if (res?.preview) {
+                      const c = canvasRef.current
+                      if (c && res.width && res.height) {
+                        setFitWidth(Math.min(c.clientWidth, c.clientHeight * res.width / res.height))
+                      } else {
+                        setFitWidth(0)
+                      }
+                      setPreview(res.preview)
+                    }
                     if (res?.width && res?.height) setRealImageDims({ w: res.width, h: res.height })
                   } catch (_) {}
                 }
