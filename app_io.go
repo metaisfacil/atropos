@@ -64,6 +64,14 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	a.detectedCorners = nil
 	a.lines = nil
 	a.undoStack = nil
+	a.discCenter = image.Point{}
+	a.discRadius = 0
+	a.rotationAngle = 0
+	a.discBaseImage = nil
+	a.discWorkingCrop = nil
+	a.discWorkingCropRect = image.Rectangle{}
+	a.postDiscBlack = 0
+	a.postDiscWhite = 255
 	a.logf("LoadImage: clone took %v", time.Since(t2))
 
 	t3 := time.Now()
@@ -230,6 +238,14 @@ func (a *App) RecropImage() (*ImageInfo, error) {
 	a.detectedCorners = nil
 	a.lines = nil
 	a.undoStack = nil
+	a.discCenter = image.Point{}
+	a.discRadius = 0
+	a.rotationAngle = 0
+	a.discBaseImage = nil
+	a.discWorkingCrop = nil
+	a.discWorkingCropRect = image.Rectangle{}
+	a.postDiscBlack = 0
+	a.postDiscWhite = 255
 
 	preview, err := imageToBase64(a.currentImage)
 	if err != nil {

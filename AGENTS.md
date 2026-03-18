@@ -138,6 +138,14 @@ LoadImage(req)
          detectedCorners = nil       ← caches invalidated on new image
          lines = nil
          undoStack = nil
+         discCenter = zero
+         discRadius = 0
+         rotationAngle = 0
+         discBaseImage = nil
+         discWorkingCrop = nil
+         discWorkingCropRect = zero
+         postDiscBlack = 0
+         postDiscWhite = 255
     6. imageToBase64(currentImage)   JPEG, downscaled if > 1600px longest side
     7. Update window title
     8. Return ImageInfo{Width, Height, Preview}
@@ -259,6 +267,14 @@ RecropImage()
     detectedCorners = nil
     lines           = nil
     undoStack       = nil
+    discCenter      = zero
+    discRadius      = 0
+    rotationAngle   = 0
+    discBaseImage   = nil
+    discWorkingCrop = nil
+    discWorkingCropRect = zero
+    postDiscBlack   = 0
+    postDiscWhite   = 255
     return ImageInfo{Width, Height, Preview}
 ```
 
@@ -817,3 +833,4 @@ On every app start, the frontend reads localStorage and calls `SetTouchupSetting
 8. **Using IOPaint for the warp out-of-bounds fill** — IOPaint is an inpainting model and produces black for outpainting; always use PatchMatch for `applyWarpFill`
 9. **Forgetting `e.preventDefault()` for repeated keydown events** — the browser fires repeated `keydown` events while a key is held; if you only prevent default on the first press (`!e.repeat`), native scroll or other browser behaviour fires on every subsequent tick. Guard the state update with `if (e.repeat) return`, but call `e.preventDefault()` unconditionally before that guard.
 10. **Not clearing purely-frontend selection state in `handleSkipCrop`** — Skip crop bypasses phase 1 without going through the normal commit path, so any pending frontend-only selection (e.g. `normalRect` in Normal mode) must be explicitly cleared there. If it isn't, the selection overlay remains visible even though the user is now past the crop phase.
+11. **Omitting disc state from `LoadImage` / `RecropImage` resets** — `discRadius`, `discBaseImage`, `rotationAngle`, and related fields are only cleared by `ResetDisc`. If a new image is loaded (or re-cropped) without resetting these, a stale `discRadius > 0` causes `AutoContrast` (and other post-warp paths) to enter the disc code path and call `redrawDisc()`, which renders from the old `discBaseImage` and shows a previously loaded image.
