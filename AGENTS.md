@@ -246,6 +246,24 @@ The frontend also sets `cropSkipped = true`, which disables all 1st-phase sideba
 
 **Key:** `detectedCorners` is NOT cleared on mode switch (only on `LoadImage`). This enables the cached-corners restore path.
 
+### RecropImage (`app_io.go`)
+
+```
+RecropImage()
+    require warpedImage != nil
+    originalImage   = warpedImage        ← promote output to new source
+    currentImage    = cloneImage(warpedImage)
+    warpedImage     = nil
+    levelsBaseImage = nil
+    selectedCorners = nil
+    detectedCorners = nil
+    lines           = nil
+    undoStack       = nil
+    return ImageInfo{Width, Height, Preview}
+```
+
+`RecropImage` is the backend half of the **Re-crop** button, which appears in all four modes once phase 1 is complete (i.e. when `warpedImage != nil`). It promotes the current output image to become the new source, allowing the user to apply a second crop mode without saving and reloading. The frontend resets all mode-specific state identically to `loadFile` (corner count, disc active, lines, undo history, levels sliders, touch-up strokes, etc.) and shows a `ConfirmationModal` before calling this method, because the operation is irreversible within the session.
+
 ---
 
 ## Line Mode (`app_line.go`)
@@ -768,6 +786,7 @@ Complex argument/return types are defined in `frontend/wailsjs/go/models.ts`.
 - **Recoverable errors** (invalid state, bad args): Go returns `(nil, error)` → Wails rejects the JS promise → `catch` block in `App.jsx`
 - **Touch-up failure**: displays an `ErrorModal` with a user-friendly message; if IOPaint backend, includes a hint to check the server. Clears the status bar message and touch-up strokes.
 - **Save failure / load failure / shortcut errors**: `ErrorModal`
+- **Destructive confirmation** (Re-crop): displays a `ConfirmationModal` (Cancel / Continue) before calling `RecropImage`. `ConfirmationModal` is a close variant of `ErrorModal` with two buttons; it is driven by `confirmDialog` state `{ message, onConfirm }` in `App.jsx`. Use this pattern for any future action that irreversibly discards session state.
 - **Warp outpaint failure**: propagates as a hard error; there is no automatic fallback
 - **IOPaint for warp**: NOT used. Only PatchMatch is used for out-of-bounds warp fill.
 
