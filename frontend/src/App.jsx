@@ -479,7 +479,8 @@ export default function App() {
       showStatus('Saving…')
       const result = await SaveImage({ outputPath: filePath })
       // Prefer a backend-provided message; fall back to a simple path note.
-      showStatus(result?.message || `Saved to ${filePath}`)
+      const savedName = filePath.split(/[\\/]/).pop()
+      showStatus(result?.message || `Saved to ${savedName}`)
     } catch (err) {
       console.error('Save error:', err)
       showError(err)
