@@ -1282,7 +1282,7 @@ export default function App() {
               (mode === 'disc'   && !discActive) ||
               (mode === 'line'   && !linesProcessed) ||
               (mode === 'normal' && !normalCropApplied)) && (
-              <button onClick={handleSkipCrop} disabled={!imageLoaded || loading}>
+              <button className="skip-crop-btn" onClick={handleSkipCrop} disabled={!imageLoaded || loading}>
                 Skip crop
               </button>
             )}
@@ -1295,7 +1295,7 @@ export default function App() {
                   (mode === 'disc'   && discActive) ||
                   (mode === 'line'   && linesProcessed) ||
                   (mode === 'normal' && normalCropApplied)) && (
-                  <button onClick={handleRecrop} disabled={!imageLoaded || loading}>
+                  <button className="recrop-btn" onClick={handleRecrop} disabled={!imageLoaded || loading}>
                     Re-crop
                   </button>
                 )}

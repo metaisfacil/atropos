@@ -450,6 +450,32 @@ button.save-btn:hover {
   margin: 8px 0;
 }
 
+/* Skip crop: muted amber/ochre — washed-out, distinct from green/orange/blue */
+button.skip-crop-btn {
+  background: #76457f;
+}
+
+button.skip-crop-btn:hover {
+  background: #63376aff;
+}
+
+button.skip-crop-btn:active {
+  background: #502d57ff;
+}
+
+/* Re-crop: muted slate-blue — washed-out, distinct from the vivid primary blue */
+button.recrop-btn {
+  background: #3d5778;
+}
+
+button.recrop-btn:hover {
+  background: #304562;
+}
+
+button.recrop-btn:active {
+  background: #25364d;
+}
+
 /* Red reset button */
 button.reset-btn-danger {
   background: #c42b1c;
