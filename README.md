@@ -2,13 +2,13 @@
 
 ![Atropos social preview](https://github.com/metaisfacil/atropos/blob/master/preview-2.png)
 
-Atropos is a desktop image processing tool for perspective correction and circular cropping. It is specifically intended for those digitizing musical materials such as CD, vinyl, and cassette inserts. The application is built with [Wails v2](https://wails.io), combining a Go backend for all pixel-level operations with a React frontend. All image processing is implemented in pure Go with no C dependencies; the only optional external dependency is ImageMagick, used as a decode fallback for TIFF files.
+Atropos is a desktop image processing tool for perspective correction, circular cropping, and freehand rectangular cropping. It is specifically intended for those digitizing musical materials such as CD, vinyl, and cassette inserts. The application is built with [Wails v2](https://wails.io), combining a Go backend for all pixel-level operations with a React frontend. All image processing is implemented in pure Go with no C dependencies; the only optional external dependency is ImageMagick, used as a decode fallback for TIFF files.
 
 ---
 
 ## Modes
 
-The application operates in three mutually exclusive modes, selectable from the sidebar. Switching modes resets the active selection for the departing mode and fetches a clean preview from the backend.
+The application operates in four mutually exclusive modes, selectable from the sidebar. Switching modes resets the active selection for the departing mode and fetches a clean preview from the backend.
 
 ### Corner mode
 
@@ -60,6 +60,12 @@ The user drags four lines on the image. After the fourth line is committed, pers
 4. Orders the four points as TL/TR/BR/BL using the sum/difference heuristic
 5. Derives output dimensions from the max of opposite edge lengths
 6. Applies the same DLT perspective transform used by corner mode
+
+### Normal mode
+
+Normal mode performs a straightforward rectangular crop — equivalent to the crop tool in a standard image editor.
+
+The user drags on the image to draw a selection rectangle. A dashed green overlay previews the selected region. Clicking **Crop** applies the crop and records an undo snapshot. After the first crop is applied, the touch-up brush and tonal adjustments become available. Additional crops can be drawn and applied sequentially; each push its own undo entry.
 
 ---
 
@@ -198,10 +204,10 @@ wails build -ldflags "..."
 ## CLI flags
 
 ```
-atropos [--debug] [--corners | --disc | --lines] [image_path]
+atropos [--debug] [--corners | --disc | --lines | --normal] [image_path]
 ```
 
-`--corners`, `--disc`, and `--lines` set the initial mode. An image path as a positional argument loads the file on startup and, in corner mode, runs detection immediately. These are used by OS file associations and shell integration.
+`--corners`, `--disc`, `--lines`, and `--normal` set the initial mode. An image path as a positional argument loads the file on startup and, in corner mode, runs detection immediately. These are used by OS file associations and shell integration.
 
 Pass `--debug` on the command line to enable a timestamped debug log written to `debug/YYYYMMDD_HHMMSS.txt` in the working directory. The log file is held open for the lifetime of the process. The frontend can write into the same log via `LogFrontend(msg)`.
 
