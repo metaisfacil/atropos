@@ -463,6 +463,9 @@ export default function App() {
         setSelectedCornerPts([])
       } else if (mode === 'disc') {
         setDiscActive(true)
+        setDragging(false)
+        setDragStart(null)
+        setDragCurrent(null)
       } else if (mode === 'line') {
         setLinesProcessed(true)
       } else if (mode === 'normal') {
@@ -548,6 +551,9 @@ export default function App() {
       setCropSkipped(false)
       setUseTouchupTool(false)
       setUseStraightEdgeTool(false)
+      setDragging(false)
+      setDragStart(null)
+      setDragCurrent(null)
       showStatus(result?.message || 'Disc selection reset')
     } catch (err) {
       console.error('ResetDisc error:', err)
