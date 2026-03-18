@@ -211,6 +211,24 @@ export namespace main {
 	        this.filePath = source["filePath"];
 	    }
 	}
+	export class NormalCropRequest {
+	    x1: number;
+	    y1: number;
+	    x2: number;
+	    y2: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new NormalCropRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.x1 = source["x1"];
+	        this.y1 = source["y1"];
+	        this.x2 = source["x2"];
+	        this.y2 = source["y2"];
+	    }
+	}
 	export class PixelColorRequest {
 	    x: number;
 	    y: number;

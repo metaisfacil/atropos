@@ -17,7 +17,7 @@ import (
 var assets embed.FS
 
 func main() {
-	// Parse flags: --debug, --corners, --disc, --lines, and positional image path
+	// Parse flags: --debug, --corners, --disc, --lines, --normal, and positional image path
 	debug := false
 	launchMode := ""
 	launchFile := ""
@@ -31,6 +31,8 @@ func main() {
 			launchMode = "disc"
 		case "--lines":
 			launchMode = "line"
+		case "--normal":
+			launchMode = "normal"
 		default:
 			// Treat non-flag args as file path
 			if len(arg) > 0 && arg[0] != '-' {

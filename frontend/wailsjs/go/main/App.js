@@ -62,6 +62,10 @@ export function LogFrontend(arg1) {
   return window['go']['main']['App']['LogFrontend'](arg1);
 }
 
+export function NormalCrop(arg1) {
+  return window['go']['main']['App']['NormalCrop'](arg1);
+}
+
 export function OpenImageDialog() {
   return window['go']['main']['App']['OpenImageDialog']();
 }
@@ -80,6 +84,10 @@ export function ResetCorners() {
 
 export function ResetDisc() {
   return window['go']['main']['App']['ResetDisc']();
+}
+
+export function ResetNormal() {
+  return window['go']['main']['App']['ResetNormal']();
 }
 
 export function RestoreCornerOverlay(arg1) {
