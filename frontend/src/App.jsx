@@ -374,6 +374,13 @@ export default function App() {
 
   // ── Drag-and-drop file loading ─────────────────────────────────────────────
   useEffect(() => {
+    // Prevent the browser/WebView2 from navigating to (opening) a dropped file.
+    // Without these handlers the default behaviour fires when the drag happens
+    // faster than Wails intercepts it, causing the image to open in the window.
+    const suppressDefault = (e) => e.preventDefault()
+    document.addEventListener('dragover', suppressDefault)
+    document.addEventListener('drop', suppressDefault)
+
     OnFileDrop(async (_x, _y, paths) => {
       if (!paths || paths.length === 0) return
       const filePath = paths[0]
@@ -388,7 +395,11 @@ export default function App() {
         setLoadingFull(false)
       }
     }, false)
-    return () => OnFileDropOff()
+    return () => {
+      OnFileDropOff()
+      document.removeEventListener('dragover', suppressDefault)
+      document.removeEventListener('drop', suppressDefault)
+    }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Launch arguments ───────────────────────────────────────────────────────
