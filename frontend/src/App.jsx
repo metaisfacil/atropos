@@ -340,6 +340,9 @@ export default function App() {
     lastDetectSettings.current = null
     setLines([])
     setTouchupStrokes([])
+    setUseTouchupTool(false)
+    setUseStraightEdgeTool(false)
+    touchupDraggingRef.current = false
     setDetectedCornerPts([])
     setSelectedCornerPts([])
     setBlackPoint(0)
