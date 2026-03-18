@@ -456,6 +456,7 @@ export default function App() {
         setLinesProcessed(true)
       } else if (mode === 'normal') {
         setNormalCropApplied(true)
+        setNormalRect(null)
       }
       setCropSkipped(true)
       showStatus(result?.message || 'Crop skipped')
