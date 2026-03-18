@@ -78,6 +78,10 @@ export function ProcessLines() {
   return window['go']['main']['App']['ProcessLines']();
 }
 
+export function RecropImage() {
+  return window['go']['main']['App']['RecropImage']();
+}
+
 export function ResetCorners() {
   return window['go']['main']['App']['ResetCorners']();
 }

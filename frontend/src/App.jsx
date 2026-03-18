@@ -32,6 +32,7 @@ import {
   SetTouchupSettings,
   SetWarpSettings,
   SetDiscSettings,
+  RecropImage,
 } from '../wailsjs/go/main/App'
 
 import NormalCropPanel  from './components/NormalCropPanel'
@@ -469,6 +470,38 @@ export default function App() {
       showStatus(result?.message || 'Crop skipped')
     } catch (err) {
       console.error('SkipCrop error:', err)
+      showError(err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleRecrop = async () => {
+    setLoading(true)
+    showStatus('Re-cropping…')
+    try {
+      const result = await RecropImage()
+      setFitWidth(0)
+      setPreview(result.preview)
+      setRealImageDims({ w: result.width, h: result.height })
+      setCornerState(s => ({ ...s, cornerCount: 0 }))
+      setLinesDone(0)
+      setLinesProcessed(false)
+      setDiscActive(false)
+      setNormalRect(null)
+      setNormalCropApplied(false)
+      setCropSkipped(false)
+      setCornersDetected(false)
+      lastDetectSettings.current = null
+      setLines([])
+      setTouchupStrokes([])
+      setDetectedCornerPts([])
+      setSelectedCornerPts([])
+      setBlackPoint(0)
+      setWhitePoint(255)
+      showStatus(`Re-cropping from ${result.width}×${result.height} image`)
+    } catch (err) {
+      console.error('RecropImage error:', err)
       showError(err)
     } finally {
       setLoading(false)
@@ -1257,17 +1290,27 @@ export default function App() {
               (mode === 'disc'   && discActive) ||
               (mode === 'line'   && (linesDone > 0 || linesProcessed)) ||
               (mode === 'normal' && (normalRect !== null || normalCropApplied))) && (
-              <button
-                className="reset-btn-danger"
-                onClick={
-                  mode === 'corner' ? handleResetCorners :
-                  mode === 'disc'   ? handleResetDisc    :
-                  mode === 'normal' ? handleResetNormal  :
-                                      handleClearLines
-                }
-              >
-                Reset{mode === 'corner' ? ` (${cornerState.cornerCount}/4)` : ''}
-              </button>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                {((mode === 'corner' && cornerState.cornerCount === 4) ||
+                  (mode === 'disc'   && discActive) ||
+                  (mode === 'line'   && linesProcessed) ||
+                  (mode === 'normal' && normalCropApplied)) && (
+                  <button onClick={handleRecrop} disabled={!imageLoaded || loading}>
+                    Re-crop
+                  </button>
+                )}
+                <button
+                  className="reset-btn-danger"
+                  onClick={
+                    mode === 'corner' ? handleResetCorners :
+                    mode === 'disc'   ? handleResetDisc    :
+                    mode === 'normal' ? handleResetNormal  :
+                                        handleClearLines
+                  }
+                >
+                  Reset{mode === 'corner' ? ` (${cornerState.cornerCount}/4)` : ''}
+                </button>
+              </div>
             )}
           </div>
 

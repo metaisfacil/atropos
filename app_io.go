@@ -212,6 +212,39 @@ func (a *App) SaveImage(req SaveRequest) (*ProcessResult, error) {
 	}, nil
 }
 
+// RecropImage promotes the current warpedImage to be the new source image,
+// resetting all processing state so the user can apply a second crop mode on
+// the result of the first one without having to save and reload the file.
+func (a *App) RecropImage() (*ImageInfo, error) {
+	a.logf("RecropImage: called")
+	if a.warpedImage == nil {
+		return nil, fmt.Errorf("no processed image to re-crop from")
+	}
+
+	src := a.warpedImage
+	a.originalImage = src
+	a.currentImage = cloneImage(src)
+	a.warpedImage = nil
+	a.levelsBaseImage = nil
+	a.selectedCorners = nil
+	a.detectedCorners = nil
+	a.lines = nil
+	a.undoStack = nil
+
+	preview, err := imageToBase64(a.currentImage)
+	if err != nil {
+		return nil, err
+	}
+
+	b := a.currentImage.Bounds()
+	a.logf("RecropImage: new source is %dx%d", b.Dx(), b.Dy())
+	return &ImageInfo{
+		Width:   b.Dx(),
+		Height:  b.Dy(),
+		Preview: preview,
+	}, nil
+}
+
 // OpenSaveDialog shows a file picker for saving images.
 func (a *App) OpenSaveDialog() (string, error) {
 	a.logf("OpenSaveDialog: showing dialog")
