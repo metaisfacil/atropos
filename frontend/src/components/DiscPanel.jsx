@@ -1,4 +1,5 @@
 import React from 'react'
+import DelayedHint from './DelayedHint'
 import { SetFeatherSize, SetDiscSettings } from '../../wailsjs/go/main/App'
 
 // DiscPanel renders the disc-mode controls in the sidebar.
@@ -29,51 +30,55 @@ export default function DiscPanel({
         <>
           <div className="control-group">
             <label>Feather Size</label>
-            <div className="slider-row">
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={featherSize}
-                disabled={disabled}
-                onChange={(e) => setFeatherSize(parseInt(e.target.value))}
-                onMouseUp={async (e) => {
-                  try {
-                    const result = await SetFeatherSize({ size: parseInt(e.target.value) })
-                    if (result?.preview) setPreview(result.preview)
-                  } catch (err) {
-                    console.error(err)
-                  }
-                }}
-              />
-              <span className="value-display">{featherSize}</span>
-            </div>
-          </div>
-          {discCenterCutout && (
-            <div className="control-group">
-              <label>Cutout %</label>
+            <DelayedHint hint="Feather width for the disc edge; larger values produce a softer transition to background.">
               <div className="slider-row">
                 <input
                   type="range"
                   min="0"
-                  max="50"
-                  value={discCutoutPercent}
+                  max="100"
+                  value={featherSize}
                   disabled={disabled}
-                  onChange={(e) => setDiscCutoutPercent(parseInt(e.target.value))}
+                  onChange={(e) => setFeatherSize(parseInt(e.target.value))}
                   onMouseUp={async (e) => {
                     try {
-                      const result = await SetDiscSettings({
-                        centerCutout: discCenterCutout,
-                        cutoutPercent: parseInt(e.target.value),
-                      })
+                      const result = await SetFeatherSize({ size: parseInt(e.target.value) })
                       if (result?.preview) setPreview(result.preview)
                     } catch (err) {
                       console.error(err)
                     }
                   }}
                 />
-                <span className="value-display">{discCutoutPercent}%</span>
+                <span className="value-display">{featherSize}</span>
               </div>
+            </DelayedHint>
+          </div>
+          {discCenterCutout && (
+            <div className="control-group">
+              <label>Cutout %</label>
+              <DelayedHint hint="Diameter of the centre cutout as a percentage of the disc diameter.">
+                <div className="slider-row">
+                  <input
+                    type="range"
+                    min="0"
+                    max="50"
+                    value={discCutoutPercent}
+                    disabled={disabled}
+                    onChange={(e) => setDiscCutoutPercent(parseInt(e.target.value))}
+                    onMouseUp={async (e) => {
+                      try {
+                        const result = await SetDiscSettings({
+                          centerCutout: discCenterCutout,
+                          cutoutPercent: parseInt(e.target.value),
+                        })
+                        if (result?.preview) setPreview(result.preview)
+                      } catch (err) {
+                        console.error(err)
+                      }
+                    }}
+                  />
+                  <span className="value-display">{discCutoutPercent}%</span>
+                </div>
+              </DelayedHint>
             </div>
           )}
         </>

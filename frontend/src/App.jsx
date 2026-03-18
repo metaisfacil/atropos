@@ -44,6 +44,7 @@ import ShortcutsPanel   from './components/ShortcutsPanel'
 import OptionsPanel     from './components/OptionsPanel'
 import ErrorModal       from './components/ErrorModal'
 import ConfirmationModal from './components/ConfirmationModal'
+import DelayedHint      from './components/DelayedHint'
 
 export default function App() {
   // ── Shared state ──────────────────────────────────────────────────────────
@@ -1155,10 +1156,10 @@ export default function App() {
         {/* Mode selector (always visible) */}
         <div className="mode-selector">
           {['corner', 'disc', 'line', 'normal'].map(m => (
-            <button
-              key={m}
-              className={`mode-btn ${mode === m ? 'active' : ''}`}
-              onClick={async () => {
+            <DelayedHint key={m} hint={`Switch to ${m.charAt(0).toUpperCase() + m.slice(1)} mode`}>
+              <button
+                className={`mode-btn ${mode === m ? 'active' : ''}`}
+                onClick={async () => {
                 if (m === mode) return
                 setUseTouchupTool(false)
                 setUseStraightEdgeTool(false)
@@ -1234,8 +1235,9 @@ export default function App() {
                 setMode(m)
               }}
             >
-              {m.charAt(0).toUpperCase() + m.slice(1)}
-            </button>
+                {m.charAt(0).toUpperCase() + m.slice(1)}
+              </button>
+            </DelayedHint>
           ))}
         </div>
 
@@ -1277,22 +1279,28 @@ export default function App() {
         <div className="sidebar-bottom">
           <div className="sidebar-actions">
             {mode === 'corner' && (
-              <button className="primary" onClick={handleDetectCorners} disabled={!imageLoaded || loading || cropSkipped}>
-                Detect
-              </button>
+              <DelayedHint hint="Run corner detection, then click 4 corners to apply the perspective crop.">
+                <button className="primary" onClick={handleDetectCorners} disabled={!imageLoaded || loading || cropSkipped}>
+                  Detect
+                </button>
+              </DelayedHint>
             )}
             {mode === 'normal' && (
-              <button className="primary" onClick={handleNormalCrop} disabled={!imageLoaded || loading || !normalRect}>
-                Crop
-              </button>
+              <DelayedHint hint="Apply a drawn rectangle as a crop to the image.">
+                <button className="primary" onClick={handleNormalCrop} disabled={!imageLoaded || loading || !normalRect}>
+                  Crop
+                </button>
+              </DelayedHint>
             )}
             {((mode === 'corner' && cornerState.cornerCount < 4) ||
               (mode === 'disc'   && !discActive) ||
               (mode === 'line'   && !linesProcessed) ||
               (mode === 'normal' && !normalCropApplied)) && (
-              <button className="skip-crop-btn" onClick={handleSkipCrop} disabled={!imageLoaded || loading}>
-                Skip crop
-              </button>
+              <DelayedHint hint="Skip the cropping step and proceed to adjustments/touch-up. (You can re-crop later.)">
+                <button className="skip-crop-btn" onClick={handleSkipCrop} disabled={!imageLoaded || loading}>
+                  Skip crop
+                </button>
+              </DelayedHint>
             )}
             {((mode === 'corner' && cornerState.cornerCount > 0) ||
               (mode === 'disc'   && discActive) ||
@@ -1303,21 +1311,25 @@ export default function App() {
                   (mode === 'disc'   && discActive) ||
                   (mode === 'line'   && linesProcessed) ||
                   (mode === 'normal' && normalCropApplied)) && (
-                  <button className="recrop-btn" onClick={handleRecrop} disabled={!imageLoaded || loading}>
-                    Re-crop
-                  </button>
+                  <DelayedHint hint="Promote the current output to be the new source image and restart cropping.">
+                    <button className="recrop-btn" onClick={handleRecrop} disabled={!imageLoaded || loading}>
+                      Re-crop
+                    </button>
+                  </DelayedHint>
                 )}
-                <button
-                  className="reset-btn-danger"
-                  onClick={
-                    mode === 'corner' ? handleResetCorners :
-                    mode === 'disc'   ? handleResetDisc    :
-                    mode === 'normal' ? handleResetNormal  :
-                                        handleClearLines
-                  }
-                >
-                  Reset{mode === 'corner' ? ` (${cornerState.cornerCount}/4)` : ''}
-                </button>
+                <DelayedHint hint="Reset this mode's crop/selection and clear the current warp result.">
+                  <button
+                    className="reset-btn-danger"
+                    onClick={
+                      mode === 'corner' ? handleResetCorners :
+                      mode === 'disc'   ? handleResetDisc    :
+                      mode === 'normal' ? handleResetNormal  :
+                                          handleClearLines
+                    }
+                  >
+                    Reset{mode === 'corner' ? ` (${cornerState.cornerCount}/4)` : ''}
+                  </button>
+                </DelayedHint>
               </div>
             )}
           </div>
@@ -1358,15 +1370,21 @@ export default function App() {
           />
 
           <div className="file-ops">
-            <button onClick={handleLoadImage} className="load-btn" disabled={loading}>
-              Load image
-            </button>
-            <button onClick={handleSaveImage} className="save-btn" disabled={loading}>
-              Save image
-            </button>
-            <button className="options-btn" onClick={() => setOptionsOpen(true)}>
-              Options
-            </button>
+            <DelayedHint hint="Open a file dialog to select and load an image into the app.">
+              <button onClick={handleLoadImage} className="load-btn" disabled={loading}>
+                Load image
+              </button>
+            </DelayedHint>
+            <DelayedHint hint="Save the currently cropped/adjusted image to disk.">
+              <button onClick={handleSaveImage} className="save-btn" disabled={loading}>
+                Save image
+              </button>
+            </DelayedHint>
+            <DelayedHint hint="Open application Options and settings.">
+              <button className="options-btn" onClick={() => setOptionsOpen(true)}>
+                Options
+              </button>
+            </DelayedHint>
           </div>
         </div>
       </aside>
