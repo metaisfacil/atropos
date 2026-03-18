@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import './App.css'
-import { OnFileDrop, OnFileDropOff } from '../wailsjs/runtime/runtime'
+import { OnFileDrop, OnFileDropOff, Quit } from '../wailsjs/runtime/runtime'
 import {
   LoadImage,
   DetectCorners,
@@ -176,6 +176,14 @@ export default function App() {
   const setDiscCutoutPercent = (v) => {
     setDiscCutoutPercentState(v)
     localStorage.setItem('discCutoutPercent', String(v))
+  }
+
+  const [closeAfterSave, setCloseAfterSaveState] = useState(() =>
+    localStorage.getItem('closeAfterSave') === 'true'
+  )
+  const setCloseAfterSave = (v) => {
+    setCloseAfterSaveState(v)
+    localStorage.setItem('closeAfterSave', String(v))
   }
 
   // Push all persisted settings to backend on startup.
@@ -513,6 +521,7 @@ export default function App() {
       // Prefer a backend-provided message; fall back to a simple path note.
       const savedName = filePath.split(/[\\/]/).pop()
       showStatus(result?.message || `Saved to ${savedName}`)
+      if (closeAfterSave) Quit()
     } catch (err) {
       console.error('Save error:', err)
       showError(err)
@@ -1161,6 +1170,8 @@ export default function App() {
         setWarpFillColor={setWarpFillColor}
         discCenterCutout={discCenterCutout}
         setDiscCenterCutout={setDiscCenterCutout}
+        closeAfterSave={closeAfterSave}
+        setCloseAfterSave={setCloseAfterSave}
       />
 
       <main className="main-content">
