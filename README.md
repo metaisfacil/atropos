@@ -140,12 +140,15 @@ All internal processing uses `*image.NRGBA` (non-premultiplied RGBA). The `toNRG
 | Shift+Drag | Live rotate disc |
 | Ctrl+Scroll | Feather radius (disc mode) |
 | Scroll | Zoom in/out (cursor-anchored) |
+| Space+Drag | Pan canvas |
 
 ---
 
-## Zoom
+## Zoom and pan
 
 Scroll wheel zooms the canvas between 0.1× and 5×. Zoom is cursor-anchored: the pixel under the cursor remains stationary. The zoom state is stored in React and the scroll position is applied synchronously in a `useLayoutEffect` so it takes effect before the browser paints the resized image.
+
+Hold **Space** and drag to pan the canvas freely at any zoom level. The cursor changes to a grab hand while Space is held.
 
 ---
 
