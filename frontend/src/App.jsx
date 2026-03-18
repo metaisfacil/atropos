@@ -975,6 +975,20 @@ export default function App() {
     setDragStart(null); setDragCurrent(null)
   }
 
+  // Abort in-progress drawing drags when the cursor leaves the image element.
+  // Only the initial "drawing" gestures are cancelled; post-draw adjustments
+  // (Ctrl+drag shift, Shift+drag rotate) are not affected.
+  const handleImageMouseLeave = () => {
+    if (!dragging) return
+    if (mode === 'line' && !linesProcessed) {
+      setDragging(false); setDragStart(null); setDragCurrent(null)
+    } else if (mode === 'disc' && !discActive) {
+      setDragging(false); setDragStart(null); setDragCurrent(null)
+    } else if (useStraightEdgeTool && mode === 'disc' && discActive) {
+      setDragging(false); setDragStart(null); setDragCurrent(null)
+    }
+  }
+
   // ── Image load / fit width ────────────────────────────────────────────────
   const handleImgLoad = () => {
     const el        = imgRef.current
@@ -1482,6 +1496,7 @@ export default function App() {
                 alt="preview"
                 draggable={false}
                 onLoad={handleImgLoad}
+                onMouseLeave={handleImageMouseLeave}
                 style={{
                   cursor: spacePanMode ? 'grab' : 'crosshair',
                   display: 'block',
