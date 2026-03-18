@@ -23,6 +23,8 @@ export default function OptionsPanel({
   setWarpFillColor,
   discCenterCutout,
   setDiscCenterCutout,
+  closeAfterSave,
+  setCloseAfterSave,
 }) {
   const dialogRef = useRef(null)
   const [mounted, setMounted] = useState(false)
@@ -185,6 +187,23 @@ export default function OptionsPanel({
                 onChange={(e) => setDiscCenterCutout(e.target.checked)}
               />
               Center cutout <span className="options-hint">(default: on)</span>
+            </label>
+          </DelayedHint>
+
+          <div className="options-divider" />
+
+          <DelayedHint hint="Actions to perform automatically after a file is saved.">
+            <div className="options-section-title" tabIndex={0}>Post-save actions</div>
+          </DelayedHint>
+
+          <DelayedHint hint="Automatically closes Atropos after a file is saved successfully.">
+            <label className="options-radio-label">
+              <input
+                type="checkbox"
+                checked={closeAfterSave}
+                onChange={(e) => setCloseAfterSave(e.target.checked)}
+              />
+              Close after save <span className="options-hint">(default: off)</span>
             </label>
           </DelayedHint>
         </div>
