@@ -155,6 +155,7 @@ LoadImage({filePath})
 if autoDetect && mode === 'corner':
     DetectCorners(...)
     → setPreview, setCornersDetected(true)
+    → lastDetectSettings.current = current detection params   ← enables restore on next mode switch
 setLoading(false)
 ```
 
@@ -375,10 +376,10 @@ Consistent with `ResetCorners` / `ClearLines` / `ResetDisc`: clears `warpedImage
 
 ### Frontend state
 
-| State               | Meaning                                                         |
-|---------------------|-----------------------------------------------------------------|
+| State               | Meaning                                                                                    |
+|---------------------|--------------------------------------------------------------------------------------------|
 | `normalRect`        | `{x1,y1,x2,y2}` image-space selection drawn by the user, or `null` if no pending selection |
-| `normalCropApplied` | `true` after the first crop (or Skip crop) — unlocks touch-up and marks phase 1 done |
+| `normalCropApplied` | `true` after the first crop (or Skip crop) — unlocks touch-up and marks phase 1 done       |
 
 `normalRect` is purely frontend; it is never sent to Go until the user clicks **Crop**. After `NormalCrop` returns, `normalRect` is cleared to `null` and `normalCropApplied` is set to `true`. Unlike other modes, the user can draw and apply additional rectangles after the first crop without resetting — each further crop operates on the already-cropped `warpedImage`.
 
@@ -485,12 +486,12 @@ Undo()
 
 The touch-up brush button is **disabled** until the initial crop has been committed in the current mode (either by completing the normal 1st-phase operation or by clicking "Skip crop"):
 
-| Mode   | Enabled when                                   |
-|--------|------------------------------------------------|
+| Mode   | Enabled when                                                |
+|--------|-------------------------------------------------------------|
 | Corner | `cornerState.cornerCount === 4` (warp applied or Skip crop) |
-| Line   | `linesProcessed === true`                      |
-| Disc   | `discActive === true`                          |
-| Normal | `normalCropApplied === true`                   |
+| Line   | `linesProcessed === true`                                   |
+| Disc   | `discActive === true`                                       |
+| Normal | `normalCropApplied === true`                                |
 
 Switching modes always resets `useTouchupTool` to `false`. The rationale: both Disc and Line modes use mouse drag for their first-stage input (drawing the disc / drawing lines), which would conflict with the touch-up brush drag if it were accidentally left on.
 
@@ -583,12 +584,12 @@ onClick (mode button):
 
     if arriving at 'corner' && lastDetectSettings matches current settings:
         RestoreCornerOverlay({dotRadius})   ← re-render cached corners
-        setFitWidth(0)                      ← prevent stale zoom causing scrollbars
+        setFitWidth(min(container.w, container.h * res.w/res.h))  ← compute correct value immediately
         setPreview, setRealImageDims
         setCornersDetected(true)
         setMode('corner'); return           ← early return, skip GetCleanPreview
 
-    setFitWidth(0)                          ← prevent stale zoom causing scrollbars
+    setFitWidth(min(container.w, container.h * res.w/res.h))  ← compute correct value immediately
     GetCleanPreview()                       ← returns currentImage (warpedImage now nil)
     setPreview, setRealImageDims
     setMode(m)
@@ -609,7 +610,7 @@ GetCleanPreview()
 When switching back to corner mode, if all of `{maxCorners, qualityLevel, minDistance, accent, useStretch}` match the values stored in `lastDetectSettings.current` at detection time, `RestoreCornerOverlay` is called instead of `GetCleanPreview`. This avoids re-running the (potentially slow) Shi-Tomasi detector.
 
 `lastDetectSettings.current` is:
-- **Set** after a successful `DetectCorners` call
+- **Set** after a successful `DetectCorners` call (both manual and auto-detect on image load)
 - **Cleared** when a new image is loaded (`loadFile`)
 - **Not cleared** on mode switches
 
@@ -712,7 +713,7 @@ The `<img>` style:
 1. `handleImgLoad` — fires when a new image is decoded by the browser
 2. `ResizeObserver` on `canvasRef` — fires when the container is resized
 
-**Critical:** Before calling `setPreview` with a new image in the mode switch handler, `setFitWidth(0)` is called first. Without this, the stale `fitWidth` from the previous (possibly differently-sized) image would cause the new image to briefly overflow the container and create persistent scrollbars.
+**Critical:** In the mode switch handler, `fitWidth` is recomputed directly from the Go response dimensions and container size (`Math.min(container.clientWidth, container.clientHeight * w/h)`) before calling `setPreview`. Do not zero it and rely on `handleImgLoad`: if the preview src string is unchanged (same `currentImage`, deterministic JPEG encoding), the browser skips `onLoad`, leaving `fitWidth` at 0. With `fitWidth = 0`, the image falls back to percentage-based `maxWidth`/`maxHeight` that resolve circularly against the `inline-block` wrapper and collapse to natural size; the absolutely-positioned SVG overlay then expands to match, flooding the entire canvas instead of tracking the image.
 
 ### Space+Drag Pan
 
@@ -793,7 +794,7 @@ On every app start, the frontend reads localStorage and calls `SetTouchupSetting
 4. **Not clearing `warpedImage` in a mode-reset function** — `GetCleanPreview` will return the stale warped result after a mode switch (the ResetCorners/ClearLines/ResetDisc bug pattern)
 5. **Adding a new Go method without updating `App.js`** — the frontend will silently call undefined and get a JS error
 6. **Using `el.offsetLeft/offsetTop` for persistent overlays** — stale on first render after state change; use a `viewBox`-based SVG inside a relative wrapper instead
-7. **Calling `setPreview` without `setFitWidth(0)` when the image dimensions change** — stale `fitWidth` causes temporary overflow and persistent scrollbars
+7. **Setting `fitWidth` to 0 and relying on `handleImgLoad` to correct it during a mode switch** — if the preview src string is unchanged the browser skips `onLoad`, leaving `fitWidth` at 0 and causing the SVG overlay to flood the entire canvas. Always recompute `fitWidth` directly from the known dimensions when switching modes.
 8. **Using IOPaint for the warp out-of-bounds fill** — IOPaint is an inpainting model and produces black for outpainting; always use PatchMatch for `applyWarpFill`
 9. **Forgetting `e.preventDefault()` for repeated keydown events** — the browser fires repeated `keydown` events while a key is held; if you only prevent default on the first press (`!e.repeat`), native scroll or other browser behaviour fires on every subsequent tick. Guard the state update with `if (e.repeat) return`, but call `e.preventDefault()` unconditionally before that guard.
 10. **Not clearing purely-frontend selection state in `handleSkipCrop`** — Skip crop bypasses phase 1 without going through the normal commit path, so any pending frontend-only selection (e.g. `normalRect` in Normal mode) must be explicitly cleared there. If it isn't, the selection overlay remains visible even though the user is now past the crop phase.
