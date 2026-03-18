@@ -159,6 +159,28 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 		}
 		stretched := stretchGrayPercentiles(workGray, low, high)
 		workGray = applyCLAHE(stretched, 2.0, 8)
+	} else {
+		// Auto-detect dark images and apply contrast stretch automatically.
+		// Dark scans produce low-magnitude gradients that cause the Shi-Tomasi
+		// detector to miss corners; CLAHE normalises local contrast without
+		// requiring the user to enable the stretch toggle manually.
+		const autoStretchThreshold = 100
+		wb := workGray.Bounds()
+		ww, wh := wb.Dx(), wb.Dy()
+		if ww*wh > 0 {
+			var lumaSum int64
+			for y := 0; y < wh; y++ {
+				for x := 0; x < ww; x++ {
+					lumaSum += int64(workGray.GrayAt(x, y).Y)
+				}
+			}
+			meanLuma := lumaSum / int64(ww*wh)
+			if meanLuma < autoStretchThreshold {
+				a.logf("DetectCorners: auto-applying contrast stretch (mean luma %d < %d)", meanLuma, autoStretchThreshold)
+				stretched := stretchGrayPercentiles(workGray, 0.01, 0.99)
+				workGray = applyCLAHE(stretched, 2.0, 8)
+			}
+		}
 	}
 
 	quality := req.QualityLevel / 100.0

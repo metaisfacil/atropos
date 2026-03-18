@@ -268,7 +268,25 @@ func stretchGrayPercentiles(src *image.Gray, lowPct, highPct float64) *image.Gra
 	}
 
 	if vlow >= vhigh {
-		return src
+		// Both percentiles collapsed to the same bin — this happens when the
+		// object of interest occupies < 1% of the image (e.g. a small card on a
+		// large dark background). Fall back to the actual data range so the
+		// stretch is not silently skipped.
+		actualMin, actualMax := 255, 0
+		for i, c := range hist {
+			if c > 0 {
+				if i < actualMin {
+					actualMin = i
+				}
+				if i > actualMax {
+					actualMax = i
+				}
+			}
+		}
+		if actualMin >= actualMax {
+			return src
+		}
+		vlow, vhigh = actualMin, actualMax
 	}
 
 	dst := image.NewGray(image.Rect(0, 0, w, h))
@@ -462,10 +480,47 @@ func applyCLAHE(src *image.Gray, clipLimit float64, tileSize int) *image.Gray {
 
 // ---- Shi-Tomasi corner detection (goodFeaturesToTrack) ----
 
+// gaussianBlurGray applies a separable 3-tap Gaussian blur [1 2 1]/4 to a
+// grayscale image with border replication. Pre-smoothing before gradient
+// computation suppresses noise-driven false corner responses.
+func gaussianBlurGray(src *image.Gray) *image.Gray {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w < 3 || h < 3 {
+		return src
+	}
+
+	tmp := image.NewGray(image.Rect(0, 0, w, h))
+	// Horizontal pass: [1 2 1] / 4
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			x0 := clamp(x-1, 0, w-1)
+			x1 := clamp(x+1, 0, w-1)
+			v := int(src.GrayAt(x0, y).Y) + 2*int(src.GrayAt(x, y).Y) + int(src.GrayAt(x1, y).Y)
+			tmp.SetGray(x, y, color.Gray{Y: uint8(v / 4)})
+		}
+	}
+	dst := image.NewGray(image.Rect(0, 0, w, h))
+	// Vertical pass: [1 2 1] / 4
+	for y := 0; y < h; y++ {
+		y0 := clamp(y-1, 0, h-1)
+		y1 := clamp(y+1, 0, h-1)
+		for x := 0; x < w; x++ {
+			v := int(tmp.GrayAt(x, y0).Y) + 2*int(tmp.GrayAt(x, y).Y) + int(tmp.GrayAt(x, y1).Y)
+			dst.SetGray(x, y, color.Gray{Y: uint8(v / 4)})
+		}
+	}
+	return dst
+}
+
 // goodFeaturesToTrack implements the Shi-Tomasi corner detector in pure Go.
 func goodFeaturesToTrack(gray *image.Gray, maxCorners int, qualityLevel float64, minDistance int, blockSize int) []image.Point {
 	b := gray.Bounds()
 	w, h := b.Dx(), b.Dy()
+
+	// Pre-smooth to suppress noise-driven gradient responses before computing
+	// the structure tensor. This mirrors the standard OpenCV implementation.
+	gray = gaussianBlurGray(gray)
 
 	ix := make([]float64, w*h)
 	iy := make([]float64, w*h)
@@ -836,7 +891,8 @@ func drawFilledCircle(img *image.NRGBA, center image.Point, radius int, c color.
 
 // ---- Resize ----
 
-// resizeGray resizes a grayscale image using nearest-neighbor.
+// resizeGray resizes a grayscale image. Downsampling uses area averaging (box
+// filter) to preserve edge energy; upsampling falls back to nearest-neighbor.
 func resizeGray(src *image.Gray, newW, newH int) *image.Gray {
 	b := src.Bounds()
 	origW, origH := b.Dx(), b.Dy()
@@ -844,6 +900,43 @@ func resizeGray(src *image.Gray, newW, newH int) *image.Gray {
 		return src
 	}
 	dst := image.NewGray(image.Rect(0, 0, newW, newH))
+
+	if newW < origW || newH < origH {
+		// Area averaging: each output pixel averages the block of source pixels
+		// that map onto it. This prevents aliasing from destroying edge gradients
+		// at the downsampled scales used by multi-scale corner detection.
+		for y := 0; y < newH; y++ {
+			srcY0 := y * origH / newH
+			srcY1 := (y + 1) * origH / newH
+			if srcY1 > origH {
+				srcY1 = origH
+			}
+			if srcY1 == srcY0 {
+				srcY1 = srcY0 + 1
+			}
+			for x := 0; x < newW; x++ {
+				srcX0 := x * origW / newW
+				srcX1 := (x + 1) * origW / newW
+				if srcX1 > origW {
+					srcX1 = origW
+				}
+				if srcX1 == srcX0 {
+					srcX1 = srcX0 + 1
+				}
+				sum, count := 0, 0
+				for sy := srcY0; sy < srcY1; sy++ {
+					for sx := srcX0; sx < srcX1; sx++ {
+						sum += int(src.GrayAt(sx, sy).Y)
+						count++
+					}
+				}
+				dst.SetGray(x, y, color.Gray{Y: uint8(sum / count)})
+			}
+		}
+		return dst
+	}
+
+	// Nearest-neighbor for upsampling (not used in the current detection pipeline).
 	for y := 0; y < newH; y++ {
 		sy := y * origH / newH
 		for x := 0; x < newW; x++ {
