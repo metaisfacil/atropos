@@ -40,6 +40,8 @@ export function OpenSaveDialog():Promise<string>;
 
 export function ProcessLines():Promise<main.ProcessResult>;
 
+export function RecropImage():Promise<main.ImageInfo>;
+
 export function ResetCorners():Promise<main.ProcessResult>;
 
 export function ResetDisc():Promise<main.ProcessResult>;
