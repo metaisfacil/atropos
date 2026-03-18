@@ -159,7 +159,7 @@ setZoom(1)
 LoadImage({filePath})
     → setPreview, setImageLoaded, setRealImageDims
     → reset ALL mode-specific frontend state (cornerCount, linesDone, discActive,
-      touchupStrokes, lastDetectSettings, etc.)
+      touchupStrokes, useTouchupTool, useStraightEdgeTool, lastDetectSettings, etc.)
 if autoDetect && mode === 'corner':
     DetectCorners(...)
     → setPreview, setCornersDetected(true)
@@ -527,7 +527,7 @@ The touch-up brush button is **disabled** until the initial crop has been commit
 | Disc   | `discActive === true`                                       |
 | Normal | `normalCropApplied === true`                                |
 
-Switching modes always resets `useTouchupTool` to `false`. The rationale: both Disc and Line modes use mouse drag for their first-stage input (drawing the disc / drawing lines), which would conflict with the touch-up brush drag if it were accidentally left on.
+Switching modes always resets `useTouchupTool` to `false`, and so does loading a new image (`loadFile`). The rationale: both Disc and Line modes use mouse drag for their first-stage input (drawing the disc / drawing lines), which would conflict with the touch-up brush drag if it were accidentally left on.
 
 ### buildMask(maskB64)
 
@@ -834,3 +834,4 @@ On every app start, the frontend reads localStorage and calls `SetTouchupSetting
 9. **Forgetting `e.preventDefault()` for repeated keydown events** — the browser fires repeated `keydown` events while a key is held; if you only prevent default on the first press (`!e.repeat`), native scroll or other browser behaviour fires on every subsequent tick. Guard the state update with `if (e.repeat) return`, but call `e.preventDefault()` unconditionally before that guard.
 10. **Not clearing purely-frontend selection state in `handleSkipCrop`** — Skip crop bypasses phase 1 without going through the normal commit path, so any pending frontend-only selection (e.g. `normalRect` in Normal mode) must be explicitly cleared there. If it isn't, the selection overlay remains visible even though the user is now past the crop phase.
 11. **Omitting disc state from `LoadImage` / `RecropImage` resets** — `discRadius`, `discBaseImage`, `rotationAngle`, and related fields are only cleared by `ResetDisc`. If a new image is loaded (or re-cropped) without resetting these, a stale `discRadius > 0` causes `AutoContrast` (and other post-warp paths) to enter the disc code path and call `redrawDisc()`, which renders from the old `discBaseImage` and shows a previously loaded image.
+12. **Forgetting to reset tool-toggle state in `loadFile`** — `useTouchupTool` and `useStraightEdgeTool` must be reset to `false` when a new image is loaded, just as they are on mode switches. If omitted, the brush or straight-edge tool stays visually active on the new image and cannot be toggled off without switching modes.
