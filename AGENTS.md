@@ -667,6 +667,18 @@ The `<img>` style:
 
 **Critical:** Before calling `setPreview` with a new image in the mode switch handler, `setFitWidth(0)` is called first. Without this, the stale `fitWidth` from the previous (possibly differently-sized) image would cause the new image to briefly overflow the container and create persistent scrollbars.
 
+### Space+Drag Pan
+
+Holding Space while dragging pans the canvas by directly adjusting `canvasRef.current.scrollLeft/scrollTop`. Key refs involved:
+
+| Ref/State         | Purpose                                                                                 |
+|-------------------|-----------------------------------------------------------------------------------------|
+| `spaceDownRef`    | Tracks whether Space is currently held (ref, not state — no re-render on key events).   |
+| `panDragRef`      | Active pan anchor: `{startX, startY, scrollLeft, scrollTop}`. Set on mousedown, cleared on mouseup or Space release. |
+| `spacePanMode`    | React state that drives the `grab` cursor; set in the space keydown/keyup `useEffect`.  |
+
+The space `keydown` handler calls `e.preventDefault()` for **every** space keydown event including repeats (to suppress the browser's native scroll-on-space), but only updates `spaceDownRef`/`spacePanMode` on the first press (`e.repeat === false`). Pan is handled at the top of `handleMouseDown/Move/Up`, before the `e.target !== imgRef.current` guard, so it works anywhere in the canvas area.
+
 ---
 
 ## Save (`app_io.go`)
@@ -736,3 +748,4 @@ On every app start, the frontend reads localStorage and calls `SetTouchupSetting
 6. **Using `el.offsetLeft/offsetTop` for persistent overlays** — stale on first render after state change; use a `viewBox`-based SVG inside a relative wrapper instead
 7. **Calling `setPreview` without `setFitWidth(0)` when the image dimensions change** — stale `fitWidth` causes temporary overflow and persistent scrollbars
 8. **Using IOPaint for the warp out-of-bounds fill** — IOPaint is an inpainting model and produces black for outpainting; always use PatchMatch for `applyWarpFill`
+9. **Forgetting `e.preventDefault()` for repeated keydown events** — the browser fires repeated `keydown` events while a key is held; if you only prevent default on the first press (`!e.repeat`), native scroll or other browser behaviour fires on every subsequent tick. Guard the state update with `if (e.repeat) return`, but call `e.preventDefault()` unconditionally before that guard.
