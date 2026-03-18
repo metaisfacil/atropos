@@ -24,12 +24,12 @@ originalImage  ──  immutable after LoadImage; never modified
                                 │         adjustments (levels, auto-contrast)
                                 │         write here if warpedImage is nil
                                 │
-                 ┌──────────────┴───────────────────┐
-                 │              │                   │
-         CornerPanel      LinePanel            DiscPanel
-         warpFromCorners  ProcessLines         DrawDisc
-                 │              │                   │
-                 └──────────────┴───────────────────►  warpedImage
+                 ┌──────────────┬───────────────────┬─────────────────┐
+                 │              │                   │                 │
+         CornerPanel      LinePanel            DiscPanel        NormalCropPanel
+         warpFromCorners  ProcessLines         DrawDisc         NormalCrop
+                 │              │                   │                 │
+                 └──────────────┴───────────────────┴─────────────────►  warpedImage
                                                           │
                                                    All subsequent ops:
                                                    Crop / Rotate / Undo
@@ -232,15 +232,16 @@ SkipCrop()
     return currentImage preview + dims + "Crop skipped — image ready to save"
 ```
 
-`SkipCrop` is available in all three modes. It is the backend half of the "Skip crop" button. The frontend sets mode-specific state to transition past the 1st phase without performing a warp:
+`SkipCrop` is available in all four modes. It is the backend half of the "Skip crop" button. The frontend sets mode-specific state to transition past the 1st phase without performing a warp:
 
 | Mode   | Frontend state change after SkipCrop              |
 |--------|---------------------------------------------------|
 | Corner | `cornerCount = 4`, clears `detectedCornerPts`     |
 | Disc   | `discActive = true`                               |
 | Line   | `linesProcessed = true`                           |
+| Normal | `normalCropApplied = true`                        |
 
-The frontend also sets `cropSkipped = true`, which disables all 1st-phase sidebar controls (Corner detection sliders and Detect button; Disc feather/cutout sliders) until Reset is clicked. Line drawing on the canvas is also blocked when `linesProcessed` is true. `cropSkipped` is cleared by every reset path: `handleResetCorners`, `handleResetDisc`, `handleClearLines`, `loadFile`, and all mode-switch reset branches.
+The frontend also sets `cropSkipped = true`, which disables all 1st-phase sidebar controls (Corner detection sliders and Detect button; Disc feather/cutout sliders) until Reset is clicked. Line drawing on the canvas is also blocked when `linesProcessed` is true. `cropSkipped` is cleared by every reset path: `handleResetCorners`, `handleResetDisc`, `handleClearLines`, `handleResetNormal`, `loadFile`, and all mode-switch reset branches.
 
 **Key:** `detectedCorners` is NOT cleared on mode switch (only on `LoadImage`). This enables the cached-corners restore path.
 
@@ -340,6 +341,46 @@ ResetDisc()
     levelsBaseImage = nil
     return currentImage preview
 ```
+
+---
+
+## Normal Mode (`app_normal.go`)
+
+Normal mode is the simplest mode: the user drags a rectangle on the image and clicks **Crop** to apply it. There is no algorithm, no warp, and no additional Go state beyond the shared image fields.
+
+### NormalCrop — Entry Point
+
+```
+NormalCrop(req)
+    img = workingImage()
+    normalise coordinates (swap if x1>x2 or y1>y2)
+    clamp to img.Bounds()
+    if region is empty → error
+    saveUndo()
+    warpedImage = subImage(img, rect)
+    return preview + width + height + "Cropped to W×H"
+```
+
+**Key:** `NormalCrop` calls `workingImage()`, so it works on `currentImage` (pre-warp) or `warpedImage` (post any prior operation) transparently. Each call commits a new undo entry, so sequential crops are each individually reversible.
+
+### ResetNormal
+
+```
+ResetNormal()
+    warpedImage = nil
+    return currentImage preview + dims + "Normal crop reset"
+```
+
+Consistent with `ResetCorners` / `ClearLines` / `ResetDisc`: clears `warpedImage` so that `GetCleanPreview` returns `currentImage` after a mode switch.
+
+### Frontend state
+
+| State               | Meaning                                                         |
+|---------------------|-----------------------------------------------------------------|
+| `normalRect`        | `{x1,y1,x2,y2}` image-space selection drawn by the user, or `null` if no pending selection |
+| `normalCropApplied` | `true` after the first crop (or Skip crop) — unlocks touch-up and marks phase 1 done |
+
+`normalRect` is purely frontend; it is never sent to Go until the user clicks **Crop**. After `NormalCrop` returns, `normalRect` is cleared to `null` and `normalCropApplied` is set to `true`. Unlike other modes, the user can draw and apply additional rectangles after the first crop without resetting — each further crop operates on the already-cropped `warpedImage`.
 
 ---
 
@@ -449,6 +490,7 @@ The touch-up brush button is **disabled** until the initial crop has been commit
 | Corner | `cornerState.cornerCount === 4` (warp applied or Skip crop) |
 | Line   | `linesProcessed === true`                      |
 | Disc   | `discActive === true`                          |
+| Normal | `normalCropApplied === true`                   |
 
 Switching modes always resets `useTouchupTool` to `false`. The rationale: both Disc and Line modes use mouse drag for their first-stage input (drawing the disc / drawing lines), which would conflict with the touch-up brush drag if it were accidentally left on.
 
@@ -510,9 +552,9 @@ iopaintFill(src, mask)
 
 ## Mode Switching
 
-### The Three Modes Are Mutually Exclusive
+### The Four Modes Are Mutually Exclusive
 
-Corner, Disc, and Line modes are not a pipeline. Each mode operates independently on the same source scan. A user crops one object with Corners, saves, then might switch to Lines for a different object in the same scan. Switching modes always resets the warp result.
+Corner, Disc, Line, and Normal modes are not a pipeline. Each mode operates independently on the same source scan. A user crops one object with Corners, saves, then might switch to Lines for a different object in the same scan. Switching modes always resets the warp result.
 
 ### Mode Switch Handler (frontend `App.jsx`)
 
@@ -532,6 +574,11 @@ onClick (mode button):
     if leaving 'line':
         ClearLines()                ← clears lines + warpedImage
         setLinesDone(0), setLines([]), setLinesProcessed(false)
+        setCropSkipped(false)
+
+    if leaving 'normal':
+        ResetNormal()               ← clears warpedImage
+        setNormalRect(null), setNormalCropApplied(false)
         setCropSkipped(false)
 
     if arriving at 'corner' && lastDetectSettings matches current settings:
@@ -749,3 +796,4 @@ On every app start, the frontend reads localStorage and calls `SetTouchupSetting
 7. **Calling `setPreview` without `setFitWidth(0)` when the image dimensions change** — stale `fitWidth` causes temporary overflow and persistent scrollbars
 8. **Using IOPaint for the warp out-of-bounds fill** — IOPaint is an inpainting model and produces black for outpainting; always use PatchMatch for `applyWarpFill`
 9. **Forgetting `e.preventDefault()` for repeated keydown events** — the browser fires repeated `keydown` events while a key is held; if you only prevent default on the first press (`!e.repeat`), native scroll or other browser behaviour fires on every subsequent tick. Guard the state update with `if (e.repeat) return`, but call `e.preventDefault()` unconditionally before that guard.
+10. **Not clearing purely-frontend selection state in `handleSkipCrop`** — Skip crop bypasses phase 1 without going through the normal commit path, so any pending frontend-only selection (e.g. `normalRect` in Normal mode) must be explicitly cleared there. If it isn't, the selection overlay remains visible even though the user is now past the crop phase.

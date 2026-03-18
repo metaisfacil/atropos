@@ -32,6 +32,8 @@ export function LoadImage(arg1:main.LoadImageRequest):Promise<main.ImageInfo>;
 
 export function LogFrontend(arg1:string):Promise<void>;
 
+export function NormalCrop(arg1:main.NormalCropRequest):Promise<main.ProcessResult>;
+
 export function OpenImageDialog():Promise<string>;
 
 export function OpenSaveDialog():Promise<string>;
@@ -41,6 +43,8 @@ export function ProcessLines():Promise<main.ProcessResult>;
 export function ResetCorners():Promise<main.ProcessResult>;
 
 export function ResetDisc():Promise<main.ProcessResult>;
+
+export function ResetNormal():Promise<main.ProcessResult>;
 
 export function RestoreCornerOverlay(arg1:main.RestoreCornerOverlayRequest):Promise<main.ProcessResult>;
 

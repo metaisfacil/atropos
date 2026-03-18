@@ -21,6 +21,8 @@ import {
   ClearLines,
   SaveImage,
   SkipCrop,
+  NormalCrop,
+  ResetNormal,
   OpenImageDialog,
   OpenSaveDialog,
   GetLaunchArgs,
@@ -32,6 +34,7 @@ import {
   SetDiscSettings,
 } from '../wailsjs/go/main/App'
 
+import NormalCropPanel  from './components/NormalCropPanel'
 import CornerPanel      from './components/CornerPanel'
 import DiscPanel        from './components/DiscPanel'
 import LinePanel        from './components/LinePanel'
@@ -101,6 +104,10 @@ export default function App() {
   // ── Line mode ─────────────────────────────────────────────────────────────
   const [linesDone, setLinesDone]         = useState(0)
   const [linesProcessed, setLinesProcessed] = useState(false)
+
+  // ── Normal crop mode ───────────────────────────────────────────────────────
+  const [normalRect, setNormalRect]               = useState(null)  // {x1,y1,x2,y2} image-space, or null
+  const [normalCropApplied, setNormalCropApplied] = useState(false)
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
@@ -318,6 +325,8 @@ export default function App() {
     setLinesDone(0)
     setLinesProcessed(false)
     setDiscActive(false)
+    setNormalRect(null)
+    setNormalCropApplied(false)
     setCropSkipped(false)
     setCornersDetected(false)
     lastDetectSettings.current = null
@@ -445,6 +454,9 @@ export default function App() {
         setDiscActive(true)
       } else if (mode === 'line') {
         setLinesProcessed(true)
+      } else if (mode === 'normal') {
+        setNormalCropApplied(true)
+        setNormalRect(null)
       }
       setCropSkipped(true)
       showStatus(result?.message || 'Crop skipped')
@@ -490,6 +502,44 @@ export default function App() {
       showStatus(result?.message || 'Disc selection reset')
     } catch (err) {
       console.error('ResetDisc error:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleResetNormal = async () => {
+    setLoading(true)
+    showStatus('Resetting normal crop…')
+    try {
+      const result = await ResetNormal()
+      if (result?.preview) setPreview(result.preview)
+      if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+      setNormalRect(null)
+      setNormalCropApplied(false)
+      setCropSkipped(false)
+      setUseTouchupTool(false)
+      showStatus(result?.message || 'Normal crop reset')
+    } catch (err) {
+      console.error('ResetNormal error:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleNormalCrop = async () => {
+    if (!normalRect) return
+    setLoading(true)
+    showStatus('Applying crop…')
+    try {
+      const result = await NormalCrop({ x1: normalRect.x1, y1: normalRect.y1, x2: normalRect.x2, y2: normalRect.y2 })
+      if (result?.preview) setPreview(result.preview)
+      if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+      showStatus(result?.message || 'Crop applied')
+      setNormalRect(null)
+      setNormalCropApplied(true)
+    } catch (err) {
+      console.error('NormalCrop error:', err)
+      showError(err)
     } finally {
       setLoading(false)
     }
@@ -785,6 +835,19 @@ export default function App() {
       }
     }
 
+    // Normal crop: record the selection rectangle in image-space coords
+    if (mode === 'normal' && !useTouchupTool) {
+      const start = displayToImage(dragStart.x, dragStart.y)
+      const end   = displayToImage(pos.x, pos.y)
+      const w = Math.abs(end.x - start.x)
+      const h = Math.abs(end.y - start.y)
+      if (w >= 5 && h >= 5) {
+        setNormalRect({ x1: start.x, y1: start.y, x2: end.x, y2: end.y })
+      }
+      setDragStart(null); setDragCurrent(null)
+      return
+    }
+
     // Line draw
     if (mode === 'line' && !linesProcessed) {
       const start = displayToImage(dragStart.x, dragStart.y)
@@ -1043,7 +1106,7 @@ export default function App() {
       <aside className="sidebar">
         {/* Mode selector (always visible) */}
         <div className="mode-selector">
-          {['corner', 'disc', 'line'].map(m => (
+          {['corner', 'disc', 'line', 'normal'].map(m => (
             <button
               key={m}
               className={`mode-btn ${mode === m ? 'active' : ''}`}
@@ -1071,6 +1134,11 @@ export default function App() {
                       setLinesDone(0)
                       setLines([])
                       setLinesProcessed(false)
+                      setCropSkipped(false)
+                    } else if (mode === 'normal') {
+                      await ResetNormal()
+                      setNormalRect(null)
+                      setNormalCropApplied(false)
                       setCropSkipped(false)
                     }
 
@@ -1138,6 +1206,10 @@ export default function App() {
           <LinePanel linesDone={linesDone} />
         </div>
 
+        <div className={`mode-panel ${mode === 'normal' ? 'active' : ''}`}>
+          <NormalCropPanel normalRect={normalRect} />
+        </div>
+
           </div>{/* .sidebar-scroll-inner */}
         </div>{/* .sidebar-scroll */}
         {/* Bottom section: actions, adjustments, shortcuts, file ops */}
@@ -1148,21 +1220,29 @@ export default function App() {
                 Detect
               </button>
             )}
+            {mode === 'normal' && (
+              <button className="primary" onClick={handleNormalCrop} disabled={!imageLoaded || loading || !normalRect}>
+                Crop
+              </button>
+            )}
             {((mode === 'corner' && cornerState.cornerCount < 4) ||
               (mode === 'disc'   && !discActive) ||
-              (mode === 'line'   && !linesProcessed)) && (
+              (mode === 'line'   && !linesProcessed) ||
+              (mode === 'normal' && !normalCropApplied)) && (
               <button onClick={handleSkipCrop} disabled={!imageLoaded || loading}>
                 Skip crop
               </button>
             )}
             {((mode === 'corner' && cornerState.cornerCount > 0) ||
               (mode === 'disc'   && discActive) ||
-              (mode === 'line'   && (linesDone > 0 || linesProcessed))) && (
+              (mode === 'line'   && (linesDone > 0 || linesProcessed)) ||
+              (mode === 'normal' && (normalRect !== null || normalCropApplied))) && (
               <button
                 className="reset-btn-danger"
                 onClick={
                   mode === 'corner' ? handleResetCorners :
                   mode === 'disc'   ? handleResetDisc    :
+                  mode === 'normal' ? handleResetNormal  :
                                       handleClearLines
                 }
               >
@@ -1184,7 +1264,8 @@ export default function App() {
             touchupAvailable={
               (mode === 'corner' && cornerState.cornerCount === 4) ||
               (mode === 'line'   && linesProcessed) ||
-              (mode === 'disc'   && discActive)
+              (mode === 'disc'   && discActive) ||
+              (mode === 'normal' && normalCropApplied)
             }
             useTouchupTool={useTouchupTool}
             setUseTouchupTool={setUseTouchupTool}
@@ -1327,6 +1408,40 @@ export default function App() {
                   ))}
                 </svg>
               )}
+              {mode === 'normal' && (() => {
+                // During drag: show live rect in display-space coords
+                if (dragging && dragStart && dragCurrent && !useTouchupTool) {
+                  const x = Math.min(dragStart.x, dragCurrent.x)
+                  const y = Math.min(dragStart.y, dragCurrent.y)
+                  const w = Math.abs(dragCurrent.x - dragStart.x)
+                  const h = Math.abs(dragCurrent.y - dragStart.y)
+                  return (
+                    <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6, overflow: 'visible' }}>
+                      <rect x={x} y={y} width={w} height={h}
+                        stroke="#00ff00" strokeWidth="2" fill="rgba(0,255,0,0.08)" strokeDasharray="6 3" />
+                    </svg>
+                  )
+                }
+                // Confirmed selection: use viewBox so it tracks zoom/resize
+                if (normalRect) {
+                  const x1 = Math.min(normalRect.x1, normalRect.x2)
+                  const y1 = Math.min(normalRect.y1, normalRect.y2)
+                  const x2 = Math.max(normalRect.x1, normalRect.x2)
+                  const y2 = Math.max(normalRect.y1, normalRect.y2)
+                  return (
+                    <svg
+                      viewBox={`0 0 ${realImageDims.w} ${realImageDims.h}`}
+                      preserveAspectRatio="none"
+                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6 }}
+                    >
+                      <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1}
+                        stroke="#00ff00" strokeWidth="2" fill="rgba(0,255,0,0.08)"
+                        strokeDasharray="6 3" vectorEffect="non-scaling-stroke" />
+                    </svg>
+                  )
+                }
+                return null
+              })()}
               {mode === 'line' && (() => {
                 const allLines = [...lines] // image-space coords
                 if (dragging && dragStart && dragCurrent) {
