@@ -262,6 +262,8 @@ export default function App() {
   const mousePosRef      = useRef({ x: 0, y: 0 })
   const spaceDownRef     = useRef(false)
   const panDragRef       = useRef(null)  // {startX, startY, scrollLeft, scrollTop} while space+dragging
+  const cornerMouseDownRef = useRef(false) // true when mousedown fired on the image in corner mode
+  const lastResizeRef      = useRef(0)     // timestamp of last window resize (to suppress post-maximize clicks)
 
   // ── Coordinate helpers ────────────────────────────────────────────────────
   const displayToImage = useCallback((dispX, dispY) => {
@@ -554,7 +556,7 @@ export default function App() {
     const pos = getRelPos(e)
     if (!pos) return
 
-    if (mode === 'corner' && !useTouchupTool) return // corner clicks handled in mouseUp
+    if (mode === 'corner' && !useTouchupTool) { cornerMouseDownRef.current = true; return } // corner clicks handled in mouseUp
 
     if (useTouchupTool) {
       // Start a touch-up stroke; record image-space coordinates
@@ -660,6 +662,10 @@ export default function App() {
 
     // Corner click
     if (mode === 'corner' && !useTouchupTool) {
+      const hadMouseDown = cornerMouseDownRef.current
+      cornerMouseDownRef.current = false
+      if (!hadMouseDown) return // no matching mousedown on canvas (e.g. stray mouseup from window maximize)
+      if (Date.now() - lastResizeRef.current < 300) return // ignore clicks immediately after window resize/maximize
       if (!cornersDetected || cornerState.cornerCount >= 4) return
       const imgPt = displayToImage(pos.x, pos.y)
       try {
@@ -1003,6 +1009,13 @@ export default function App() {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
     }
+  }, [])
+
+  // Track window resizes so post-maximize stray clicks don't register as corners
+  useEffect(() => {
+    const onResize = () => { lastResizeRef.current = Date.now() }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
   }, [])
 
   useLayoutEffect(() => {
