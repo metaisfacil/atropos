@@ -43,6 +43,7 @@ import AdjustmentsPanel from './components/AdjustmentsPanel'
 import ShortcutsPanel   from './components/ShortcutsPanel'
 import OptionsPanel     from './components/OptionsPanel'
 import ErrorModal       from './components/ErrorModal'
+import ConfirmationModal from './components/ConfirmationModal'
 
 export default function App() {
   // ── Shared state ──────────────────────────────────────────────────────────
@@ -69,6 +70,7 @@ export default function App() {
   const [loadingFull, setLoadingFull] = useState(false)
   const [errorMessage, setErrorMessage] = useState(null)
   const showError = (err) => setErrorMessage(err?.message || String(err))
+  const [confirmDialog, setConfirmDialog] = useState(null) // { message, onConfirm }
 
   // Real image dimensions in Go (full resolution)
   const [realImageDims, setRealImageDims] = useState({ w: 1, h: 1 })
@@ -476,36 +478,42 @@ export default function App() {
     }
   }
 
-  const handleRecrop = async () => {
-    setLoading(true)
-    showStatus('Re-cropping…')
-    try {
-      const result = await RecropImage()
-      setFitWidth(0)
-      setPreview(result.preview)
-      setRealImageDims({ w: result.width, h: result.height })
-      setCornerState(s => ({ ...s, cornerCount: 0 }))
-      setLinesDone(0)
-      setLinesProcessed(false)
-      setDiscActive(false)
-      setNormalRect(null)
-      setNormalCropApplied(false)
-      setCropSkipped(false)
-      setCornersDetected(false)
-      lastDetectSettings.current = null
-      setLines([])
-      setTouchupStrokes([])
-      setDetectedCornerPts([])
-      setSelectedCornerPts([])
-      setBlackPoint(0)
-      setWhitePoint(255)
-      showStatus(`Re-cropping from ${result.width}×${result.height} image`)
-    } catch (err) {
-      console.error('RecropImage error:', err)
-      showError(err)
-    } finally {
-      setLoading(false)
-    }
+  const handleRecrop = () => {
+    setConfirmDialog({
+      message: 'Re-crop will use the current output as a new source image, resetting all crop and adjustment state. Continue?',
+      onConfirm: async () => {
+        setConfirmDialog(null)
+        setLoading(true)
+        showStatus('Re-cropping…')
+        try {
+          const result = await RecropImage()
+          setFitWidth(0)
+          setPreview(result.preview)
+          setRealImageDims({ w: result.width, h: result.height })
+          setCornerState(s => ({ ...s, cornerCount: 0 }))
+          setLinesDone(0)
+          setLinesProcessed(false)
+          setDiscActive(false)
+          setNormalRect(null)
+          setNormalCropApplied(false)
+          setCropSkipped(false)
+          setCornersDetected(false)
+          lastDetectSettings.current = null
+          setLines([])
+          setTouchupStrokes([])
+          setDetectedCornerPts([])
+          setSelectedCornerPts([])
+          setBlackPoint(0)
+          setWhitePoint(255)
+          showStatus(`Re-cropping from ${result.width}×${result.height} image`)
+        } catch (err) {
+          console.error('RecropImage error:', err)
+          showError(err)
+        } finally {
+          setLoading(false)
+        }
+      },
+    })
   }
 
   const handleResetCorners = async () => {
@@ -1364,6 +1372,11 @@ export default function App() {
       </aside>
 
       <ErrorModal message={errorMessage} onClose={() => setErrorMessage(null)} />
+      <ConfirmationModal
+        message={confirmDialog?.message}
+        onConfirm={confirmDialog?.onConfirm ?? (() => {})}
+        onCancel={() => setConfirmDialog(null)}
+      />
 
       <OptionsPanel
         open={optionsOpen}
