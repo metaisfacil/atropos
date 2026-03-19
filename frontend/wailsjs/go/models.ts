@@ -69,7 +69,6 @@ export namespace main {
 	    useStretch: boolean;
 	    stretchLow: number;
 	    stretchHigh: number;
-	    useEdgeEnhance: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new CornerDetectRequest(source);
@@ -84,7 +83,6 @@ export namespace main {
 	        this.useStretch = source["useStretch"];
 	        this.stretchLow = source["stretchLow"];
 	        this.stretchHigh = source["stretchHigh"];
-	        this.useEdgeEnhance = source["useEdgeEnhance"];
 	    }
 	}
 	export class CropRequest {
