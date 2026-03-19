@@ -160,6 +160,7 @@ export default function App() {
     ctrlDragRef, shiftDragRef, mousePosRef,
     setPreview, setFeatherSize, setRealImageDims, setLoading,
     displayToImage, showStatus, showError, handleSaveImage,
+    canSave: imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive),
     normalRect, handleNormalCrop,
   })
 
@@ -323,7 +324,7 @@ export default function App() {
               </button>
             </DelayedHint>
             <DelayedHint hint="Save the currently cropped/adjusted image to disk.">
-              <button onClick={handleSaveImage} className="save-btn" disabled={loading}>
+              <button onClick={handleSaveImage} className="save-btn" disabled={loading || !(imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive))}>
                 Save image
               </button>
             </DelayedHint>
