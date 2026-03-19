@@ -149,7 +149,7 @@ export default function App() {
     handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave,
     displayToImage,
   } = useMouseHandlers({
-    imageLoaded, loading, mode, dragging, dragStart,
+    imageLoaded, loading, mode, dragging, dragStart, dragCurrent,
     useTouchupTool, useStraightEdgeTool, discActive, linesProcessed,
     touchupStrokes, cornerState, dotRadius, cornersDetected, customCorner, linesDone,
     realImageDims,
