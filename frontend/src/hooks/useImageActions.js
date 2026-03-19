@@ -41,7 +41,10 @@ export function useImageActions({
   const suggestedCornerParamsRef = useRef({})
   const savingRef          = useRef(false)
   const pendingDropRef     = useRef(null)
+  const pendingSaveRef     = useRef(false)
+  const loadingRef         = useRef(false)
   useEffect(() => { modeRef.current = mode }, [mode])
+  useEffect(() => { loadingRef.current = loading }, [loading])
 
   // ── Shared mode/image state reset (used by loadFile and handleRecrop) ────────
   const resetImageState = () => {
@@ -432,7 +435,10 @@ export function useImageActions({
   }
 
   // ── Save ──────────────────────────────────────────────────────────────────
-  const handleSaveImage = async () => {
+  // Core save implementation. Called by handleSaveImage (direct) and
+  // flushPendingSave (deferred, after an operation completes).
+  const _performSave = async () => {
+    pendingSaveRef.current = false
     try {
       const filePath = await OpenSaveDialog()
       if (!filePath) return
@@ -465,6 +471,22 @@ export function useImageActions({
         }
       }
     }
+  }
+
+  // If an operation is active, queue the save; otherwise save immediately.
+  const handleSaveImage = async () => {
+    if (loadingRef.current || touchupDraggingRef.current) {
+      pendingSaveRef.current = true
+      showStatus('Save queued…')
+      return
+    }
+    await _performSave()
+  }
+
+  // Called by useKeyboardShortcuts and useTouchup once their operation finishes.
+  const flushPendingSave = async () => {
+    if (!pendingSaveRef.current) return
+    await _performSave()
   }
 
   // ── Mode switch ───────────────────────────────────────────────────────────
@@ -558,6 +580,7 @@ export function useImageActions({
     handleNormalCrop,
     handleClearLines,
     handleSaveImage,
+    flushPendingSave,
     handleModeSwitch,
     handleUndo,
   }
