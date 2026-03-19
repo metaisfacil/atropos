@@ -3,10 +3,13 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"image"
 	"image/jpeg"
 	"image/png"
+	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,9 +28,12 @@ type LoadImageRequest struct {
 
 // ImageInfo contains image metadata and preview data.
 type ImageInfo struct {
-	Width   int    `json:"width"`
-	Height  int    `json:"height"`
-	Preview string `json:"preview"`
+	Width   int     `json:"width"`
+	Height  int     `json:"height"`
+	Preview string  `json:"preview"`
+	Format  string  `json:"format"`           // e.g. "JPEG", "PNG", "TIFF", "BMP"
+	DPIX    float64 `json:"dpiX"`             // horizontal DPI; 0 if unknown
+	DPIY    float64 `json:"dpiY"`             // vertical DPI; 0 if unknown
 }
 
 // LoadImage loads an image from disk and returns its metadata.
@@ -92,10 +98,15 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	// Update window title with the filename
 	name := filepath.Base(req.FilePath)
 	runtime.WindowSetTitle(a.ctx, AppBaseTitle()+" — "+name)
+
+	format, dpiX, dpiY := extractFileMeta(req.FilePath)
 	return &ImageInfo{
 		Width:   b.Dx(),
 		Height:  b.Dy(),
 		Preview: preview,
+		Format:  format,
+		DPIX:    dpiX,
+		DPIY:    dpiY,
 	}, nil
 }
 
@@ -296,6 +307,142 @@ func (a *App) OpenSaveDialog() (string, error) {
 	})
 	a.logf("OpenSaveDialog: path=%q err=%v", path, err)
 	return path, err
+}
+
+// extractFileMeta returns the format name and DPI (X, Y) for the given file.
+// DPI values are 0 if unavailable or unknown.
+func extractFileMeta(path string) (format string, dpiX, dpiY float64) {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".jpg", ".jpeg":
+		format = "JPEG"
+		dpiX, dpiY = extractJPEGDPI(path)
+	case ".png":
+		format = "PNG"
+		dpiX, dpiY = extractPNGDPI(path)
+	case ".tif", ".tiff":
+		format = "TIFF"
+	case ".bmp":
+		format = "BMP"
+		dpiX, dpiY = extractBMPDPI(path)
+	case ".gif":
+		format = "GIF"
+	case ".webp":
+		format = "WebP"
+	default:
+		format = strings.ToUpper(strings.TrimPrefix(ext, "."))
+	}
+	return
+}
+
+// extractJPEGDPI reads DPI from a JFIF APP0 header.
+func extractJPEGDPI(path string) (dpiX, dpiY float64) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0
+	}
+	defer f.Close()
+
+	// Need 18 bytes: SOI(2) + APP0 marker(2) + length(2) + "JFIF\0"(5) + ver(2) + units(1) + density(4)
+	buf := make([]byte, 18)
+	if _, err := io.ReadFull(f, buf); err != nil {
+		return 0, 0
+	}
+	if buf[0] != 0xFF || buf[1] != 0xD8 || buf[2] != 0xFF || buf[3] != 0xE0 {
+		return 0, 0
+	}
+	if string(buf[6:11]) != "JFIF\x00" {
+		return 0, 0
+	}
+	units := buf[13]
+	xDens := binary.BigEndian.Uint16(buf[14:16])
+	yDens := binary.BigEndian.Uint16(buf[16:18])
+	if xDens == 0 || yDens == 0 {
+		return 0, 0
+	}
+	switch units {
+	case 1: // dots per inch
+		return float64(xDens), float64(yDens)
+	case 2: // dots per cm → DPI
+		return math.Round(float64(xDens)*2.54*10) / 10, math.Round(float64(yDens)*2.54*10) / 10
+	}
+	return 0, 0
+}
+
+// extractPNGDPI reads DPI from a PNG pHYs chunk (searches first 20 chunks).
+func extractPNGDPI(path string) (dpiX, dpiY float64) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0
+	}
+	defer f.Close()
+
+	sig := make([]byte, 8)
+	if _, err := io.ReadFull(f, sig); err != nil {
+		return 0, 0
+	}
+	if string(sig) != "\x89PNG\r\n\x1a\n" {
+		return 0, 0
+	}
+
+	for i := 0; i < 20; i++ {
+		var hdr [8]byte
+		if _, err := io.ReadFull(f, hdr[:]); err != nil {
+			return 0, 0
+		}
+		length := binary.BigEndian.Uint32(hdr[0:4])
+		chunkType := string(hdr[4:8])
+
+		if chunkType == "pHYs" && length >= 9 {
+			data := make([]byte, 9)
+			if _, err := io.ReadFull(f, data); err != nil {
+				return 0, 0
+			}
+			xPPU := binary.BigEndian.Uint32(data[0:4])
+			yPPU := binary.BigEndian.Uint32(data[4:8])
+			if data[8] == 1 && xPPU > 0 && yPPU > 0 {
+				// pixels per metre → DPI
+				return math.Round(float64(xPPU)*0.0254*10) / 10, math.Round(float64(yPPU)*0.0254*10) / 10
+			}
+			return 0, 0
+		}
+		if chunkType == "IDAT" || chunkType == "IEND" {
+			return 0, 0
+		}
+		// Skip chunk data + CRC (4 bytes)
+		if _, err := f.Seek(int64(length)+4, io.SeekCurrent); err != nil {
+			return 0, 0
+		}
+	}
+	return 0, 0
+}
+
+// extractBMPDPI reads DPI from a BMP BITMAPINFOHEADER (XPelsPerMeter / YPelsPerMeter).
+func extractBMPDPI(path string) (dpiX, dpiY float64) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0
+	}
+	defer f.Close()
+
+	// File header (14 bytes) + first 32 bytes of DIB header covers through YPelsPerMeter
+	buf := make([]byte, 46)
+	if _, err := io.ReadFull(f, buf); err != nil {
+		return 0, 0
+	}
+	if buf[0] != 'B' || buf[1] != 'M' {
+		return 0, 0
+	}
+	dibSize := binary.LittleEndian.Uint32(buf[14:18])
+	if dibSize < 40 {
+		return 0, 0
+	}
+	xPPM := int32(binary.LittleEndian.Uint32(buf[38:42]))
+	yPPM := int32(binary.LittleEndian.Uint32(buf[42:46]))
+	if xPPM <= 0 || yPPM <= 0 {
+		return 0, 0
+	}
+	return math.Round(float64(xPPM)*0.0254*10) / 10, math.Round(float64(yPPM)*0.0254*10) / 10
 }
 
 // OpenImageDialog shows a file picker for loading images.
