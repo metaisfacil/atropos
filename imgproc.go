@@ -478,6 +478,43 @@ func applyCLAHE(src *image.Gray, clipLimit float64, tileSize int) *image.Gray {
 	return dst
 }
 
+// ---- Edge enhancement ----
+
+// sobelMagnitude computes the Sobel gradient magnitude of a grayscale image,
+// normalised to the full 0–255 range. It is used as an alternative to CLAHE
+// when dark material sits on a dark background: absolute pixel values carry
+// little information, but the local gradient still fires at edges/corners.
+func sobelMagnitude(src *image.Gray) *image.Gray {
+	blurred := gaussianBlurGray(src)
+	b := blurred.Bounds()
+	w, h := b.Dx(), b.Dy()
+	mags := make([]float64, w*h)
+	maxMag := 0.0
+	for y := 1; y < h-1; y++ {
+		for x := 1; x < w-1; x++ {
+			gx := -float64(blurred.GrayAt(x-1, y-1).Y) - 2*float64(blurred.GrayAt(x-1, y).Y) - float64(blurred.GrayAt(x-1, y+1).Y) +
+				float64(blurred.GrayAt(x+1, y-1).Y) + 2*float64(blurred.GrayAt(x+1, y).Y) + float64(blurred.GrayAt(x+1, y+1).Y)
+			gy := -float64(blurred.GrayAt(x-1, y-1).Y) - 2*float64(blurred.GrayAt(x, y-1).Y) - float64(blurred.GrayAt(x+1, y-1).Y) +
+				float64(blurred.GrayAt(x-1, y+1).Y) + 2*float64(blurred.GrayAt(x, y+1).Y) + float64(blurred.GrayAt(x+1, y+1).Y)
+			mag := math.Sqrt(gx*gx + gy*gy)
+			mags[y*w+x] = mag
+			if mag > maxMag {
+				maxMag = mag
+			}
+		}
+	}
+	dst := image.NewGray(image.Rect(0, 0, w, h))
+	if maxMag > 0 {
+		scale := 255.0 / maxMag
+		for y := 1; y < h-1; y++ {
+			for x := 1; x < w-1; x++ {
+				dst.SetGray(x, y, color.Gray{Y: clampByte(int(mags[y*w+x] * scale))})
+			}
+		}
+	}
+	return dst
+}
+
 // ---- Shi-Tomasi corner detection (goodFeaturesToTrack) ----
 
 // gaussianBlurGray applies a separable 3-tap Gaussian blur [1 2 1]/4 to a

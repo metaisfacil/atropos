@@ -74,6 +74,7 @@ export default function App() {
   const [blackPoint, setBlackPoint] = useState(0)
   const [whitePoint, setWhitePoint] = useState(255)
   const [useStretchPreprocess, setUseStretchPreprocess] = useState(true)
+  const [useEdgeEnhance, setUseEdgeEnhance] = useState(false)
   const [useTouchupTool, setUseTouchupTool] = useState(false)
   const [useStraightEdgeTool, setUseStraightEdgeTool] = useState(false)
   const [optionsOpen, setOptionsOpen] = useState(false)
@@ -132,7 +133,7 @@ export default function App() {
     handleModeSwitch,
   } = useImageActions({
     mode, loading, imageLoaded, discActive,
-    cornerState, dotRadius, useStretchPreprocess, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
+    cornerState, dotRadius, useStretchPreprocess, useEdgeEnhance, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
     setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural,
     setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
     setDiscActive, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
@@ -299,6 +300,8 @@ export default function App() {
             setPreview={setPreview}
             useStretchPreprocess={useStretchPreprocess}
             setUseStretchPreprocess={setUseStretchPreprocess}
+            useEdgeEnhance={useEdgeEnhance}
+            setUseEdgeEnhance={setUseEdgeEnhance}
             postCropAvailable={
               (mode === 'corner' && cornerState.cornerCount === 4) ||
               (mode === 'line'   && linesProcessed) ||
