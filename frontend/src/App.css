@@ -832,6 +832,47 @@ button.options-ok-btn:hover {
   word-break: break-word;
 }
 
+/* ── Status bar ────────────────────────────────────────────────────────────── */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 24px;
+  padding: 0 12px;
+  background: #2d2d30;
+  border-top: 1px solid #3e3e42;
+  font-size: 11px;
+  color: #858585;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.status-bar-item {
+  white-space: nowrap;
+}
+
+.status-bar-item--clickable {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin: 0 -4px;
+}
+
+.status-bar-item--clickable:hover {
+  background: #3e3e42;
+  color: #e0e0e0;
+}
+
+.status-bar-sep {
+  display: inline-block;
+  width: 1px;
+  height: 12px;
+  background: #3e3e42;
+  margin: 0 10px;
+  flex-shrink: 0;
+}
+
 /* Scrollbar styling */
 .sidebar::-webkit-scrollbar {
   width: 10px;
