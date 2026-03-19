@@ -7,7 +7,7 @@ export function useKeyboardShortcuts({
   imageLoaded, mode, discActive, featherSize,
   ctrlDragRef, shiftDragRef, mousePosRef,
   setPreview, setFeatherSize, setRealImageDims, setLoading,
-  displayToImage, showStatus, showError, handleSaveImage,
+  displayToImage, showStatus, showError, handleSaveImage, canSave,
   normalRect, handleNormalCrop,
 }) {
   useEffect(() => {
@@ -66,6 +66,7 @@ export function useKeyboardShortcuts({
         if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
           if (e.repeat) return
           e.preventDefault()
+          if (!canSave) return
           try {
             await handleSaveImage()
           } catch (err) {
@@ -109,5 +110,5 @@ export function useKeyboardShortcuts({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [imageLoaded, mode, discActive, featherSize, displayToImage, normalRect, handleNormalCrop]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imageLoaded, mode, discActive, featherSize, displayToImage, normalRect, handleNormalCrop, canSave]) // eslint-disable-line react-hooks/exhaustive-deps
 }
