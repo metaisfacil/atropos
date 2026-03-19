@@ -116,12 +116,13 @@ export function useImageActions({
 
     suggestedCornerParamsRef.current = result.suggestedCornerParams || {}
 
+    setLoadingFull(false)
+
     if (autoDetect && mode === 'corner') {
       await runDetectCorners(autoCornerParams ? suggestedCornerParamsRef.current : {})
     }
 
     setLoading(false)
-    setLoadingFull(false)
   }
 
   // ── Load image (dialog) ───────────────────────────────────────────────────
