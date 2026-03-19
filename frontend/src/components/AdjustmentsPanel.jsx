@@ -22,6 +22,8 @@ export default function AdjustmentsPanel({
   setPreview,
   useStretchPreprocess,
   setUseStretchPreprocess,
+  useEdgeEnhance,
+  setUseEdgeEnhance,
   postCropAvailable,
   useTouchupTool,
   setUseTouchupTool,
@@ -133,9 +135,18 @@ export default function AdjustmentsPanel({
 
           <div className="shortcut-item">
             <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" checked={useStretchPreprocess} onChange={e => setUseStretchPreprocess(e.target.checked)} />
+              <input type="checkbox" checked={useStretchPreprocess} disabled={useEdgeEnhance} onChange={e => setUseStretchPreprocess(e.target.checked)} />
               <DelayedHint hint="Remaps 1%/99% luminance to full range before corner detection. This can improve outcomes on scans with dark backgrounds.">
                 <span style={{ fontWeight: 500 }}>Pre-stretch contrast for detection</span>
+              </DelayedHint>
+            </label>
+          </div>
+
+          <div className="shortcut-item">
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input type="checkbox" checked={useEdgeEnhance} onChange={e => setUseEdgeEnhance(e.target.checked)} />
+              <DelayedHint hint="Replaces CLAHE with a Sobel gradient-magnitude map before corner detection. Useful for dark material on dark backgrounds where contrast stretching has little to work with.">
+                <span style={{ fontWeight: 500 }}>Edge enhance for detection</span>
               </DelayedHint>
             </label>
           </div>

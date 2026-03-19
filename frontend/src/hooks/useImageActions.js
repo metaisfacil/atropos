@@ -22,7 +22,7 @@ import {
 
 export function useImageActions({
   mode, loading, imageLoaded, discActive,
-  cornerState, dotRadius, useStretchPreprocess, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
+  cornerState, dotRadius, useStretchPreprocess, useEdgeEnhance, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
   setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural,
   setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
   setDiscActive, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
@@ -72,9 +72,10 @@ export function useImageActions({
       minDistance:  cornerState.minDistance,
       accentValue:  cornerState.accent,
       dotRadius,
-      useStretch:   useStretchPreprocess,
-      stretchLow:   0.01,
-      stretchHigh:  0.99,
+      useStretch:      useStretchPreprocess,
+      stretchLow:      0.01,
+      stretchHigh:     0.99,
+      useEdgeEnhance:  useEdgeEnhance,
     })
     setPreview(result.preview)
     showStatus(result.message + ' — click 4 corners')
@@ -84,11 +85,12 @@ export function useImageActions({
     setCornerState(s => ({ ...s, cornerCount: 0 }))
     setCornersDetected(true)
     lastDetectSettings.current = {
-      maxCorners:   cornerState.maxCorners,
-      qualityLevel: cornerState.qualityLevel,
-      minDistance:  cornerState.minDistance,
-      accent:       cornerState.accent,
-      useStretch:   useStretchPreprocess,
+      maxCorners:     cornerState.maxCorners,
+      qualityLevel:   cornerState.qualityLevel,
+      minDistance:    cornerState.minDistance,
+      accent:         cornerState.accent,
+      useStretch:     useStretchPreprocess,
+      useEdgeEnhance: useEdgeEnhance,
     }
   }
 
@@ -448,7 +450,8 @@ export function useImageActions({
               snap.qualityLevel === cornerState.qualityLevel &&
               snap.minDistance === cornerState.minDistance &&
               snap.accent === cornerState.accent &&
-              snap.useStretch === useStretchPreprocess) {
+              snap.useStretch === useStretchPreprocess &&
+              snap.useEdgeEnhance === useEdgeEnhance) {
             try {
               const res = await RestoreCornerOverlay({ dotRadius })
               const c = canvasRef.current
