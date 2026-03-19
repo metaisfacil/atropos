@@ -23,6 +23,8 @@ export default function OptionsPanel({
   setWarpFillColor,
   discCenterCutout,
   setDiscCenterCutout,
+  autoCornerParams,
+  setAutoCornerParams,
   closeAfterSave,
   setCloseAfterSave,
   postSaveEnabled,
@@ -191,6 +193,23 @@ export default function OptionsPanel({
                 onChange={(e) => setDiscCenterCutout(e.target.checked)}
               />
               Center cutout <span className="options-hint">(default: on)</span>
+            </label>
+          </DelayedHint>
+
+          <div className="options-divider" />
+
+          <DelayedHint hint="Settings for the corner detection mode.">
+            <div className="options-section-title" tabIndex={0}>Corner detection</div>
+          </DelayedHint>
+
+          <DelayedHint hint="When on, Min Distance and Max Corners are automatically set from image dimensions each time an image is loaded. You can still adjust them manually after loading.">
+            <label className="options-radio-label">
+              <input
+                type="checkbox"
+                checked={autoCornerParams}
+                onChange={(e) => setAutoCornerParams(e.target.checked)}
+              />
+              Auto-adjust parameters on load <span className="options-hint">(default: on)</span>
             </label>
           </DelayedHint>
 

@@ -3,12 +3,13 @@ import { SetTouchupSettings, SetWarpSettings, SetDiscSettings } from '../../wail
 
 // Default values for every persisted setting. Keep in sync with NewApp() in app.go.
 const DEFAULTS = {
-  touchupBackend:   'patchmatch',
-  iopaintURL:       'http://127.0.0.1:8086/',
-  warpFillMode:     'clamp',
-  warpFillColor:    '#ffffff',
-  discCenterCutout: true,
-  discCutoutPercent: 11,
+  touchupBackend:      'patchmatch',
+  iopaintURL:          'http://127.0.0.1:8086/',
+  warpFillMode:        'clamp',
+  warpFillColor:       '#ffffff',
+  discCenterCutout:    true,
+  discCutoutPercent:   11,
+  autoCornerParams:    true,
 }
 
 export function usePersistentSettings({ setPreview }) {
@@ -71,6 +72,15 @@ export function usePersistentSettings({ setPreview }) {
     localStorage.setItem('discCutoutPercent', String(v))
   }
 
+  const [autoCornerParams, setAutoCornerParamsState] = useState(() => {
+    const stored = localStorage.getItem('autoCornerParams')
+    return stored === null ? DEFAULTS.autoCornerParams : stored === 'true'
+  })
+  const setAutoCornerParams = (v) => {
+    setAutoCornerParamsState(v)
+    localStorage.setItem('autoCornerParams', String(v))
+  }
+
   const [closeAfterSave, setCloseAfterSaveState] = useState(() =>
     localStorage.getItem('closeAfterSave') === 'true'
   )
@@ -120,6 +130,7 @@ export function usePersistentSettings({ setPreview }) {
     warpFillColor, setWarpFillColor,
     discCenterCutout, setDiscCenterCutout,
     discCutoutPercent, setDiscCutoutPercent,
+    autoCornerParams, setAutoCornerParams,
     closeAfterSave, setCloseAfterSave,
     postSaveEnabled, setPostSaveEnabled,
     postSaveCommand, setPostSaveCommand,
