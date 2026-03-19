@@ -36,22 +36,8 @@ export function useImageActions({
   const lastDetectSettings = useRef(null)
   useEffect(() => { modeRef.current = mode }, [mode])
 
-  // ── Core file loader (private — used by dialog, drag-drop, and launch args) ─
-  const loadFile = async (filePath, autoDetect = true) => {
-    CancelTouchup()
-    setLoading(true)
-    setLoadingFull(true)
-    setZoom(1)
-    const name = filePath.split(/[\\/]/).pop()
-    showStatus(`Loading ${name}…`)
-
-    const result = await LoadImage({ filePath })
-    showStatus(`Loaded: ${result.width}x${result.height}`)
-    setFitWidth(0)
-    setPreview(result.preview)
-    setImageLoaded(true)
-    setRealImageDims({ w: result.width, h: result.height })
-    setImgNatural({ w: result.width, h: result.height })
+  // ── Shared mode/image state reset (used by loadFile and handleRecrop) ────────
+  const resetImageState = () => {
     setCornerState(s => ({ ...s, cornerCount: 0 }))
     setLinesDone(0)
     setLinesProcessed(false)
@@ -70,32 +56,57 @@ export function useImageActions({
     setSelectedCornerPts([])
     setBlackPoint(0)
     setWhitePoint(255)
+  }
+
+  // ── Core corner detector (private — used by loadFile and handleDetectCorners) ─
+  const runDetectCorners = async () => {
+    showStatus('Detecting corners…')
+    const result = await DetectCorners({
+      maxCorners:   cornerState.maxCorners,
+      qualityLevel: cornerState.qualityLevel,
+      minDistance:  cornerState.minDistance,
+      accentValue:  cornerState.accent,
+      dotRadius,
+      useStretch:   useStretchPreprocess,
+      stretchLow:   0.01,
+      stretchHigh:  0.99,
+    })
+    setPreview(result.preview)
+    showStatus(result.message + ' — click 4 corners')
+    if (result.width && result.height) setRealImageDims({ w: result.width, h: result.height })
+    setDetectedCornerPts(result.corners || [])
+    setSelectedCornerPts([])
+    setCornerState(s => ({ ...s, cornerCount: 0 }))
+    setCornersDetected(true)
+    lastDetectSettings.current = {
+      maxCorners:   cornerState.maxCorners,
+      qualityLevel: cornerState.qualityLevel,
+      minDistance:  cornerState.minDistance,
+      accent:       cornerState.accent,
+      useStretch:   useStretchPreprocess,
+    }
+  }
+
+  // ── Core file loader (private — used by dialog, drag-drop, and launch args) ─
+  const loadFile = async (filePath, autoDetect = true) => {
+    CancelTouchup()
+    setLoading(true)
+    setLoadingFull(true)
+    setZoom(1)
+    const name = filePath.split(/[\\/]/).pop()
+    showStatus(`Loading ${name}…`)
+
+    const result = await LoadImage({ filePath })
+    showStatus(`Loaded: ${result.width}x${result.height}`)
+    setFitWidth(0)
+    setPreview(result.preview)
+    setImageLoaded(true)
+    setRealImageDims({ w: result.width, h: result.height })
+    setImgNatural({ w: result.width, h: result.height })
+    resetImageState()
 
     if (autoDetect && mode === 'corner') {
-      showStatus('Detecting corners…')
-      const dr = await DetectCorners({
-        maxCorners:   cornerState.maxCorners,
-        qualityLevel: cornerState.qualityLevel,
-        minDistance:  cornerState.minDistance,
-        accentValue:  cornerState.accent,
-        dotRadius,
-        useStretch:   useStretchPreprocess,
-        stretchLow:   0.01,
-        stretchHigh:  0.99,
-      })
-      setPreview(dr.preview)
-      showStatus(dr.message + ' — click 4 corners')
-      if (dr.width && dr.height) setRealImageDims({ w: dr.width, h: dr.height })
-      setDetectedCornerPts(dr.corners || [])
-      setSelectedCornerPts([])
-      setCornersDetected(true)
-      lastDetectSettings.current = {
-        maxCorners:   cornerState.maxCorners,
-        qualityLevel: cornerState.qualityLevel,
-        minDistance:  cornerState.minDistance,
-        accent:       cornerState.accent,
-        useStretch:   useStretchPreprocess,
-      }
+      await runDetectCorners()
     }
 
     setLoading(false)
@@ -169,32 +180,8 @@ export function useImageActions({
   // ── Corner detection ───────────────────────────────────────────────────────
   const handleDetectCorners = async () => {
     setLoading(true)
-    showStatus('Detecting corners…')
     try {
-      const result = await DetectCorners({
-        maxCorners:   cornerState.maxCorners,
-        qualityLevel: cornerState.qualityLevel,
-        minDistance:  cornerState.minDistance,
-        accentValue:  cornerState.accent,
-        dotRadius,
-        useStretch:   useStretchPreprocess,
-        stretchLow:   0.01,
-        stretchHigh:  0.99,
-      })
-      setPreview(result.preview)
-      showStatus(result.message + ' — click 4 corners')
-      if (result.width && result.height) setRealImageDims({ w: result.width, h: result.height })
-      setDetectedCornerPts(result.corners || [])
-      setSelectedCornerPts([])
-      setCornerState(s => ({ ...s, cornerCount: 0 }))
-      setCornersDetected(true)
-      lastDetectSettings.current = {
-        maxCorners:   cornerState.maxCorners,
-        qualityLevel: cornerState.qualityLevel,
-        minDistance:  cornerState.minDistance,
-        accent:       cornerState.accent,
-        useStretch:   useStretchPreprocess,
-      }
+      await runDetectCorners()
     } catch (err) {
       console.error('Detect error:', err)
     } finally {
@@ -249,21 +236,7 @@ export function useImageActions({
           setFitWidth(0)
           setPreview(result.preview)
           setRealImageDims({ w: result.width, h: result.height })
-          setCornerState(s => ({ ...s, cornerCount: 0 }))
-          setLinesDone(0)
-          setLinesProcessed(false)
-          setDiscActive(false)
-          setNormalRect(null)
-          setNormalCropApplied(false)
-          setCropSkipped(false)
-          setCornersDetected(false)
-          lastDetectSettings.current = null
-          setLines([])
-          setTouchupStrokes([])
-          setDetectedCornerPts([])
-          setSelectedCornerPts([])
-          setBlackPoint(0)
-          setWhitePoint(255)
+          resetImageState()
           showStatus(`Re-cropping from ${result.width}×${result.height} image`)
         } catch (err) {
           console.error('RecropImage error:', err)
