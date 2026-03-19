@@ -82,6 +82,10 @@ export function useKeyboardShortcuts({
           return
         }
 
+        if (['w', 's', 'a', 'd', 'q', 'e'].includes(key)) {
+          if (!canSave) { showStatus('Apply a crop first before adjusting'); return }
+        }
+
         switch (key) {
           case 'w': result = await Crop({ direction: 'top'    }); if (result?.preview) setPreview(result.preview); break
           case 's': result = await Crop({ direction: 'bottom' }); if (result?.preview) setPreview(result.preview); break
