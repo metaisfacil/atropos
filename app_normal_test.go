@@ -325,4 +325,3 @@ func TestResetNormal_AfterCropRestoresOriginalDims(t *testing.T) {
 		t.Fatalf("expected 200×150 after reset, got %d×%d", res.Width, res.Height)
 	}
 }
-
