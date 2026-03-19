@@ -2,12 +2,9 @@ package main
 
 import (
 	"embed"
-	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -63,26 +60,11 @@ func main() {
 	// Set up debug logger if requested
 	var logger *log.Logger
 	if debug {
+		logger = log.New(os.Stderr, "[Atropos] ", log.Ldate|log.Ltime|log.Lmicroseconds)
 		cwd, _ := os.Getwd()
-		debugDir := filepath.Join(cwd, "debug")
-		if err := os.MkdirAll(debugDir, 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create debug dir: %v\n", err)
-			os.Exit(1)
-		}
-		ts := time.Now().Format("20060102_150405")
-		logPath := filepath.Join(debugDir, ts+".txt")
-		f, err := os.Create(logPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create log file: %v\n", err)
-			os.Exit(1)
-		}
-		// NOTE: file is intentionally never closed; it stays open for the
-		// lifetime of the process and the OS reclaims it on exit.
-		logger = log.New(f, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 		logger.Println("=== Atropos debug session started ===")
 		logger.Printf("CWD: %s", cwd)
 		logger.Printf("Args: %v", os.Args)
-		fmt.Fprintf(os.Stderr, "[Atropos] Debug log: %s\n", logPath)
 	}
 
 	// Create an instance of the app structure
