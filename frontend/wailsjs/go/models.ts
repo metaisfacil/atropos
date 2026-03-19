@@ -176,6 +176,9 @@ export namespace main {
 	export class LaunchArgs {
 	    filePath: string;
 	    mode: string;
+	    postSaveCommand?: string;
+	    postSaveEnabled?: boolean;
+	    postSaveExit?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new LaunchArgs(source);
@@ -185,6 +188,9 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.filePath = source["filePath"];
 	        this.mode = source["mode"];
+	        this.postSaveCommand = source["postSaveCommand"];
+	        this.postSaveEnabled = source["postSaveEnabled"];
+	        this.postSaveExit = source["postSaveExit"];
 	    }
 	}
 	export class LineAddRequest {
