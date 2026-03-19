@@ -110,6 +110,10 @@ export function RotateDisc(arg1) {
   return window['go']['main']['App']['RotateDisc'](arg1);
 }
 
+export function RunPostSaveCommand(arg1, arg2) {
+  return window['go']['main']['App']['RunPostSaveCommand'](arg1, arg2);
+}
+
 export function SaveImage(arg1) {
   return window['go']['main']['App']['SaveImage'](arg1);
 }

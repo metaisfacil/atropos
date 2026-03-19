@@ -445,6 +445,59 @@ func extractBMPDPI(path string) (dpiX, dpiY float64) {
 	return math.Round(float64(xPPM)*0.0254*10) / 10, math.Round(float64(yPPM)*0.0254*10) / 10
 }
 
+// RunPostSaveCommand executes a user-specified command after a successful save.
+// commandLine may contain {path} as a placeholder for the saved file path.
+// The first token (respecting double-quoted strings) is the executable; the
+// remaining tokens are passed as individual arguments.  The process is started
+// and detached — Atropos does not wait for it to finish.
+func (a *App) RunPostSaveCommand(commandLine, savedPath string) error {
+	if commandLine == "" {
+		return nil
+	}
+	tokens := tokenizeCommandLine(commandLine)
+	if len(tokens) == 0 {
+		return nil
+	}
+	exe := strings.ReplaceAll(tokens[0], "{path}", savedPath)
+	args := make([]string, len(tokens)-1)
+	for i, t := range tokens[1:] {
+		args[i] = strings.ReplaceAll(t, "{path}", savedPath)
+	}
+	cmd := exec.Command(exe, args...)
+	hideCommandWindow(cmd)
+	a.logf("RunPostSaveCommand: exe=%q args=%v", exe, args)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("RunPostSaveCommand: failed to start %q: %w", exe, err)
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
+}
+
+// tokenizeCommandLine splits a command-line string into tokens, respecting
+// double-quoted sub-strings (which may contain spaces).
+func tokenizeCommandLine(s string) []string {
+	var tokens []string
+	var cur strings.Builder
+	inQuote := false
+	for _, ch := range s {
+		switch {
+		case ch == '"':
+			inQuote = !inQuote
+		case ch == ' ' && !inQuote:
+			if cur.Len() > 0 {
+				tokens = append(tokens, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(ch)
+		}
+	}
+	if cur.Len() > 0 {
+		tokens = append(tokens, cur.String())
+	}
+	return tokens
+}
+
 // OpenImageDialog shows a file picker for loading images.
 func (a *App) OpenImageDialog() (string, error) {
 	a.logf("OpenImageDialog: showing dialog")

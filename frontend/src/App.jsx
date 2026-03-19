@@ -89,6 +89,8 @@ export default function App() {
     discCenterCutout, setDiscCenterCutout,
     discCutoutPercent, setDiscCutoutPercent,
     closeAfterSave, setCloseAfterSave,
+    postSaveEnabled, setPostSaveEnabled,
+    postSaveCommand, setPostSaveCommand,
   } = usePersistentSettings({ setPreview })
 
   const {
@@ -130,7 +132,7 @@ export default function App() {
     handleModeSwitch,
   } = useImageActions({
     mode, loading, imageLoaded, discActive,
-    cornerState, dotRadius, useStretchPreprocess, normalRect, closeAfterSave,
+    cornerState, dotRadius, useStretchPreprocess, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
     setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural,
     setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
     setDiscActive, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
@@ -366,6 +368,10 @@ export default function App() {
         setDiscCenterCutout={setDiscCenterCutout}
         closeAfterSave={closeAfterSave}
         setCloseAfterSave={setCloseAfterSave}
+        postSaveEnabled={postSaveEnabled}
+        setPostSaveEnabled={setPostSaveEnabled}
+        postSaveCommand={postSaveCommand}
+        setPostSaveCommand={setPostSaveCommand}
       />
 
       <main className="main-content">
