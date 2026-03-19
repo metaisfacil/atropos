@@ -4,7 +4,7 @@ import {
 } from '../../wailsjs/go/main/App'
 
 export function useMouseHandlers({
-  imageLoaded, loading, mode, dragging, dragStart,
+  imageLoaded, loading, mode, dragging, dragStart, dragCurrent,
   useTouchupTool, useStraightEdgeTool, discActive, linesProcessed,
   touchupStrokes, cornerState, dotRadius, cornersDetected, customCorner, linesDone,
   realImageDims,
@@ -19,6 +19,7 @@ export function useMouseHandlers({
   const cornerMouseDownRef = useRef(false)
   const ctrlDragBusy  = useRef(false)
   const shiftDragBusy = useRef(false)
+  const normalDragPendingRef = useRef(false) // mousedown outside image in Normal mode — waiting to enter bounds
 
   const displayToImage = useCallback((dispX, dispY) => {
     const el = imgRef.current
@@ -51,7 +52,13 @@ export function useMouseHandlers({
       }
       return
     }
-    if (e.target !== imgRef.current) return
+    if (e.target !== imgRef.current) {
+      if (mode === 'normal' && !useTouchupTool) {
+        e.preventDefault()
+        normalDragPendingRef.current = true
+      }
+      return
+    }
     e.preventDefault()
     const pos = getRelPos(e)
     if (!pos) return
@@ -104,8 +111,32 @@ export function useMouseHandlers({
     }
     const pos = getRelPos(e)
     if (pos) mousePosRef.current = pos
+
+    const imgRect = imgRef.current ? imgRef.current.getBoundingClientRect() : null
+    const insideImage = pos && imgRect &&
+      pos.x >= 0 && pos.y >= 0 && pos.x <= imgRect.width && pos.y <= imgRect.height
+
+    if (normalDragPendingRef.current) {
+      if (mode === 'normal' && !useTouchupTool && insideImage) {
+        normalDragPendingRef.current = false
+        ctrlDragRef.current = null
+        shiftDragRef.current = null
+        setDragging(true); setDragStart(pos); setDragCurrent(pos)
+      }
+      return
+    }
+
     if (!dragging) return
-    if (pos) setDragCurrent(pos)
+    if (pos) {
+      if (mode === 'normal' && !useTouchupTool && imgRect) {
+        setDragCurrent({
+          x: Math.max(0, Math.min(pos.x, imgRect.width)),
+          y: Math.max(0, Math.min(pos.y, imgRect.height)),
+        })
+      } else {
+        setDragCurrent(pos)
+      }
+    }
 
     if (useTouchupTool) {
       if (pos) {
@@ -156,6 +187,12 @@ export function useMouseHandlers({
     if (panDragRef.current) { panDragRef.current = null; return }
     if (!imageLoaded || loading) return
 
+    if (normalDragPendingRef.current) {
+      normalDragPendingRef.current = false
+      if (mode === 'normal' && !useTouchupTool) setNormalRect(null)
+      return
+    }
+
     if (useTouchupTool && touchupDraggingRef.current) {
       touchupDraggingRef.current = false
       setDragging(false)
@@ -165,6 +202,22 @@ export function useMouseHandlers({
       } catch (err) {
         console.error('Auto-commit touchup error:', err)
       }
+      return
+    }
+
+    if (mode === 'normal' && !useTouchupTool) {
+      if (!dragging || !dragStart || !dragCurrent) { setDragging(false); return }
+      setDragging(false)
+      const start = displayToImage(dragStart.x, dragStart.y)
+      const end   = displayToImage(dragCurrent.x, dragCurrent.y)
+      const w = Math.abs(end.x - start.x)
+      const h = Math.abs(end.y - start.y)
+      if (w >= 5 && h >= 5) {
+        setNormalRect({ x1: start.x, y1: start.y, x2: end.x, y2: end.y })
+      } else {
+        setNormalRect(null)
+      }
+      setDragStart(null); setDragCurrent(null)
       return
     }
 
@@ -277,18 +330,6 @@ export function useMouseHandlers({
       } finally {
         setLoading(false)
       }
-    }
-
-    if (mode === 'normal' && !useTouchupTool) {
-      const start = displayToImage(dragStart.x, dragStart.y)
-      const end   = displayToImage(pos.x, pos.y)
-      const w = Math.abs(end.x - start.x)
-      const h = Math.abs(end.y - start.y)
-      if (w >= 5 && h >= 5) {
-        setNormalRect({ x1: start.x, y1: start.y, x2: end.x, y2: end.y })
-      }
-      setDragStart(null); setDragCurrent(null)
-      return
     }
 
     if (mode === 'line' && !linesProcessed) {
