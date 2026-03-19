@@ -26,6 +26,13 @@ type LoadImageRequest struct {
 	FilePath string `json:"filePath"`
 }
 
+// SuggestedCornerParams holds auto-computed corner detection defaults derived
+// from objective image properties (dimensions, luminance statistics).
+type SuggestedCornerParams struct {
+	MinDistance int `json:"minDistance"`
+	MaxCorners  int `json:"maxCorners"`
+}
+
 // ImageInfo contains image metadata and preview data.
 type ImageInfo struct {
 	Width   int     `json:"width"`
@@ -34,6 +41,8 @@ type ImageInfo struct {
 	Format  string  `json:"format"` // e.g. "JPEG", "PNG", "TIFF", "BMP"
 	DPIX    float64 `json:"dpiX"`   // horizontal DPI; 0 if unknown
 	DPIY    float64 `json:"dpiY"`   // vertical DPI; 0 if unknown
+
+	SuggestedCornerParams SuggestedCornerParams `json:"suggestedCornerParams"`
 }
 
 // LoadImage loads an image from disk and returns its metadata.
@@ -101,12 +110,13 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 
 	format, dpiX, dpiY := extractFileMeta(req.FilePath)
 	return &ImageInfo{
-		Width:   b.Dx(),
-		Height:  b.Dy(),
-		Preview: preview,
-		Format:  format,
-		DPIX:    dpiX,
-		DPIY:    dpiY,
+		Width:                 b.Dx(),
+		Height:                b.Dy(),
+		Preview:               preview,
+		Format:                format,
+		DPIX:                  dpiX,
+		DPIY:                  dpiY,
+		SuggestedCornerParams: suggestCornerParams(b.Dx(), b.Dy()),
 	}, nil
 }
 
