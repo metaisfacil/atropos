@@ -31,9 +31,9 @@ type ImageInfo struct {
 	Width   int     `json:"width"`
 	Height  int     `json:"height"`
 	Preview string  `json:"preview"`
-	Format  string  `json:"format"`           // e.g. "JPEG", "PNG", "TIFF", "BMP"
-	DPIX    float64 `json:"dpiX"`             // horizontal DPI; 0 if unknown
-	DPIY    float64 `json:"dpiY"`             // vertical DPI; 0 if unknown
+	Format  string  `json:"format"` // e.g. "JPEG", "PNG", "TIFF", "BMP"
+	DPIX    float64 `json:"dpiX"`   // horizontal DPI; 0 if unknown
+	DPIY    float64 `json:"dpiY"`   // vertical DPI; 0 if unknown
 }
 
 // LoadImage loads an image from disk and returns its metadata.
@@ -234,6 +234,22 @@ func (a *App) SaveImage(req SaveRequest) (*ProcessResult, error) {
 	}
 
 	a.logf("SaveImage: saved successfully to %s", req.OutputPath)
+	// If a CLI-supplied post-save command was provided, run it and exit.
+	if a.postSaveCmd != "" {
+		a.logf("SaveImage: running CLI post-save command: %q", a.postSaveCmd)
+		if err := a.RunPostSaveCommand(a.postSaveCmd, req.OutputPath); err != nil {
+			a.logf("SaveImage: RunPostSaveCommand failed: %v", err)
+			// Still return success to the frontend; do not treat post-save failure as save failure.
+			return &ProcessResult{Message: fmt.Sprintf("Saved to %s (post-save failed)", req.OutputPath)}, nil
+		}
+		// If the CLI requested exit after launching the command, quit now.
+		if a.postSaveExit {
+			a.logf("SaveImage: started CLI post-save command, quitting as requested")
+			runtime.Quit(a.ctx)
+		}
+		a.logf("SaveImage: started CLI post-save command")
+	}
+
 	return &ProcessResult{
 		Message: fmt.Sprintf("Saved to %s", req.OutputPath),
 	}, nil

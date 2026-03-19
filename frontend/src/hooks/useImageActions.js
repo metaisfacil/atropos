@@ -178,6 +178,12 @@ export function useImageActions({
       try {
         const args = await GetLaunchArgs()
         if (args.mode) setMode(args.mode)
+        // CLI-provided post-save overrides persisted settings (do not force quit)
+        if (args.postSaveCommand) {
+          setPostSaveCommand(args.postSaveCommand)
+          setPostSaveEnabled(true)
+          if (args.postSaveExit) setCloseAfterSave(true)
+        }
         if (args.filePath) {
           const shouldDetect = args.mode ? (args.mode === 'corner') : (mode === 'corner')
           await loadFile(args.filePath, shouldDetect)
