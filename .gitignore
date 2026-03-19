@@ -10,4 +10,7 @@ debug/
 Thumbs.db
 .DS_Store
 
+# Claude
+.claude/
+
 *.exe
