@@ -21,13 +21,15 @@ This document describes the complete system architecture, data flow, and operati
 |------|----------------|
 | `hooks/useImageActions.js` | All Go API action handlers: `loadFile`, `handleLoadImage`, `handleDetectCorners`, `handleSkipCrop`, `handleRecrop`, `handleResetCorners/Disc/Normal`, `handleNormalCrop`, `handleClearLines`, `handleSaveImage`, `handleModeSwitch`. Also owns the `OnFileDrop` and launch-args `useEffect`s, plus internal `modeRef` and `lastDetectSettings`. |
 | `hooks/useMouseHandlers.js` | All pointer interaction: `handleMouseDown/Move/Up/ImageMouseLeave` across all modes. Owns internal `cornerMouseDownRef`, `ctrlDragBusy`, `shiftDragBusy`. Defines and returns `displayToImage` (also forwarded to `<ImageOverlays>`). |
-| `hooks/useKeyboardShortcuts.js` | Single `keydown` `useEffect`: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+Z` (undo), `Ctrl+S` (save), `WASDQE` (crop/rotate). |
+| `hooks/useKeyboardShortcuts.js` | Single `keydown` `useEffect`: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+Z` (undo), `Ctrl+S` (save), `WASDQE` (crop/rotate). WASDQE are guarded by `canSave`; if no crop result exists, `showStatus` is called instead of forwarding to Go (prevents a backend error modal). |
 | `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, window mouseup effect, `EventsOn("touchup-done")` effect. |
 | `hooks/useZoomPan.js` | Canvas viewport: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, scroll `useLayoutEffect`. |
 | `hooks/usePersistentSettings.js` | localStorage-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, `closeAfterSave`). Syncs to Go on startup and on every change. |
 | `hooks/useStatusMessage.js` | `imageInfo` + fade timer logic (`showStatus`). |
 | `components/ImageOverlays.jsx` | Pure render: all SVG overlays (corner dots, touch-up circles, disc guide, straight-edge line, normal crop rect, line mode lines). |
-| `components/*Panel.jsx` | Mode-specific sidebar controls. `AdjustmentsPanel` also owns the levels sliders, auto-contrast, and touch-up brush controls. |
+| `components/StatusBar.jsx` | Thin bar at the bottom of the main content area. Shows file format, pixel dimensions, DPI (when known), and zoom level. Zoom is clickable — clicking resets zoom to 100%. All fields use `DelayedHint` for tooltips. |
+| `components/DelayedHint.jsx` | Portal-rendered tooltip that appears after a 1 s hover delay. Uses a two-pass `useLayoutEffect` to clamp the tooltip inside the viewport before making it visible (avoids flicker and edge clipping). |
+| `components/*Panel.jsx` | Mode-specific sidebar controls. `AdjustmentsPanel` also owns the levels sliders, auto-contrast, and touch-up brush controls. `ShortcutsPanel` accepts `canSave` and `imageLoaded` props and applies `.shortcut-item--disabled` (opacity 0.35) to shortcuts that are currently unavailable. |
 
 `ctrlDragRef` and `shiftDragRef` are defined in `App.jsx` (not moved to `useMouseHandlers`) because they are read by `<ImageOverlays>` at render time for the disc guide condition, in addition to being written by the mouse handlers.
 
@@ -168,7 +170,8 @@ LoadImage(req)
          postDiscWhite = 255
     6. imageToBase64(currentImage)   JPEG, downscaled if > 1600px longest side
     7. Update window title
-    8. Return ImageInfo{Width, Height, Preview}
+    8. extractFileMeta(filePath)      read format name + DPI from file header (JPEG JFIF APP0, PNG pHYs chunk, BMP BITMAPINFOHEADER)
+    9. Return ImageInfo{Width, Height, Preview, Format, DPIX, DPIY}
 ```
 
 **Frontend `loadFile(filePath, autoDetect)` flow:**
@@ -178,6 +181,7 @@ setLoading(true)
 setZoom(1)
 LoadImage({filePath})
     → setPreview, setImageLoaded, setRealImageDims
+    → setImageMeta({ format, dpiX, dpiY })   ← populated from ImageInfo response
     → reset ALL mode-specific frontend state (cornerCount, linesDone, discActive,
       touchupStrokes, useTouchupTool, useStraightEdgeTool, lastDetectSettings, etc.)
 if autoDetect && mode === 'corner':
@@ -303,7 +307,7 @@ RecropImage()
     return ImageInfo{Width, Height, Preview}
 ```
 
-`RecropImage` is the backend half of the **Re-crop** button, which appears in all four modes once phase 1 is complete (i.e. when `warpedImage != nil`). It promotes the current output image to become the new source, allowing the user to apply a second crop mode without saving and reloading. The frontend resets all mode-specific state identically to `loadFile` (corner count, disc active, lines, undo history, levels sliders, touch-up strokes, etc.) and shows a `ConfirmationModal` before calling this method, because the operation is irreversible within the session.
+`RecropImage` is the backend half of the **Re-crop** button, which appears in all four modes once phase 1 is complete (i.e. when `warpedImage != nil`). It promotes the current output image to become the new source, allowing the user to apply a second crop mode without saving and reloading. The frontend resets all mode-specific state identically to `loadFile` (corner count, disc active, lines, undo history, levels sliders, touch-up strokes, etc.) and shows a `ConfirmationModal` before calling this method, because the operation is irreversible within the session. `imageMeta` (format/DPI) is cleared on recrop because the in-memory result has no associated file metadata.
 
 ---
 
@@ -870,6 +874,7 @@ Complex argument/return types are defined in `frontend/wailsjs/go/models.ts`.
 - **Recoverable errors** (invalid state, bad args): Go returns `(nil, error)` → Wails rejects the JS promise → `catch` block in `App.jsx`
 - **Touch-up failure**: displays an `ErrorModal` with a user-friendly message; if IOPaint backend, includes a hint to check the server. Clears the status bar message and touch-up strokes.
 - **Save failure / load failure / shortcut errors**: `ErrorModal`
+- **WASDQE before crop**: guarded in `useKeyboardShortcuts` — calls `showStatus('Apply a crop first before adjusting')` instead of forwarding to Go, so no error modal is shown.
 - **Destructive confirmation** (Re-crop): displays a `ConfirmationModal` (Cancel / Continue) before calling `RecropImage`. `ConfirmationModal` is a close variant of `ErrorModal` with two buttons; it is driven by `confirmDialog` state `{ message, onConfirm }` in `App.jsx`. Use this pattern for any future action that irreversibly discards session state.
 - **Warp outpaint failure**: propagates as a hard error; there is no automatic fallback
 - **IOPaint for warp**: NOT used. Only PatchMatch is used for out-of-bounds warp fill.
