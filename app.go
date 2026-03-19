@@ -146,6 +146,10 @@ type ProcessResult struct {
 	// Corners is populated by DetectCorners and ResetCorners so the frontend
 	// can render the overlay dots via SVG instead of baking them into the image.
 	Corners []image.Point `json:"corners,omitempty"`
+	// Uncropped is set by Undo when the popped entry was saved before any warp
+	// had produced a warpedImage — i.e. undoing the initial crop itself.  The
+	// frontend uses this to return the UI to the cropping phase.
+	Uncropped bool `json:"uncropped,omitempty"`
 }
 
 // LaunchArgs contains the initial file path and mode from CLI arguments.

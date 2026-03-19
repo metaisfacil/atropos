@@ -131,8 +131,9 @@ export default function App() {
     handleClearLines,
     handleSaveImage,
     handleModeSwitch,
+    handleUndo,
   } = useImageActions({
-    mode, loading, imageLoaded, discActive,
+    mode, loading, imageLoaded, discActive, linesProcessed, normalCropApplied,
     cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
     setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural,
     setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
@@ -165,10 +166,10 @@ export default function App() {
   useKeyboardShortcuts({
     imageLoaded, mode, discActive, featherSize,
     ctrlDragRef, shiftDragRef, mousePosRef,
-    setPreview, setFeatherSize, setRealImageDims, setLoading,
+    setPreview, setFeatherSize, setLoading,
     displayToImage, showStatus, showError, handleSaveImage,
     canSave: imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive),
-    normalRect, handleNormalCrop,
+    normalRect, handleNormalCrop, handleUndo,
   })
 
   // ── Render ─────────────────────────────────────────────────────────────────

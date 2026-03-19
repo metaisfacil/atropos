@@ -18,10 +18,11 @@ import {
   ClearLines,
   SaveImage,
   RunPostSaveCommand,
+  Undo,
 } from '../../wailsjs/go/main/App'
 
 export function useImageActions({
-  mode, loading, imageLoaded, discActive,
+  mode, loading, imageLoaded, discActive, linesProcessed, normalCropApplied,
   cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
   setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural,
   setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
@@ -382,6 +383,54 @@ export function useImageActions({
     }
   }
 
+  // ── Undo ──────────────────────────────────────────────────────────────────
+  const handleUndo = async () => {
+    setLoading(true)
+    showStatus('Undoing…')
+    try {
+      const res = await Undo()
+      if (res?.preview) setPreview(res.preview)
+      if (res?.width && res?.height) setRealImageDims({ w: res.width, h: res.height })
+      showStatus(res?.message || '')
+      if (res?.uncropped) {
+        // The undo took us back past the initial crop — return to the cropping
+        // phase by resetting the mode-specific post-crop state.  Only act if
+        // the frontend was actually in post-crop state to avoid clobbering
+        // in-progress corner clicks or other pre-crop selections.
+        if (mode === 'corner' && cornerState.cornerCount >= 4) {
+          setCornerState(s => ({ ...s, cornerCount: 0 }))
+          setSelectedCornerPts([])
+          setCropSkipped(false)
+          setUseTouchupTool(false)
+        } else if (mode === 'disc' && discActive) {
+          setDiscActive(false)
+          setDragging(false)
+          setDragStart(null)
+          setDragCurrent(null)
+          setCropSkipped(false)
+          setUseTouchupTool(false)
+          setUseStraightEdgeTool(false)
+        } else if (mode === 'line' && linesProcessed) {
+          setLinesProcessed(false)
+          setCropSkipped(false)
+          setUseTouchupTool(false)
+        } else if (mode === 'normal' && normalCropApplied) {
+          setNormalCropApplied(false)
+          setNormalRect(null)
+          setCropSkipped(false)
+          setUseTouchupTool(false)
+        }
+        setBlackPoint(0)
+        setWhitePoint(255)
+      }
+    } catch (err) {
+      console.error('Undo error:', err)
+      showError(err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // ── Save ──────────────────────────────────────────────────────────────────
   const handleSaveImage = async () => {
     try {
@@ -510,5 +559,6 @@ export function useImageActions({
     handleClearLines,
     handleSaveImage,
     handleModeSwitch,
+    handleUndo,
   }
 }
