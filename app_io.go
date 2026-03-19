@@ -31,9 +31,9 @@ type ImageInfo struct {
 	Width   int     `json:"width"`
 	Height  int     `json:"height"`
 	Preview string  `json:"preview"`
-	Format  string  `json:"format"`           // e.g. "JPEG", "PNG", "TIFF", "BMP"
-	DPIX    float64 `json:"dpiX"`             // horizontal DPI; 0 if unknown
-	DPIY    float64 `json:"dpiY"`             // vertical DPI; 0 if unknown
+	Format  string  `json:"format"` // e.g. "JPEG", "PNG", "TIFF", "BMP"
+	DPIX    float64 `json:"dpiX"`   // horizontal DPI; 0 if unknown
+	DPIY    float64 `json:"dpiY"`   // vertical DPI; 0 if unknown
 }
 
 // LoadImage loads an image from disk and returns its metadata.
@@ -234,6 +234,22 @@ func (a *App) SaveImage(req SaveRequest) (*ProcessResult, error) {
 	}
 
 	a.logf("SaveImage: saved successfully to %s", req.OutputPath)
+	// If a CLI-supplied post-save command was provided, run it and exit.
+	if a.postSaveCmd != "" {
+		a.logf("SaveImage: running CLI post-save command: %q", a.postSaveCmd)
+		if err := a.RunPostSaveCommand(a.postSaveCmd, req.OutputPath); err != nil {
+			a.logf("SaveImage: RunPostSaveCommand failed: %v", err)
+			// Still return success to the frontend; do not treat post-save failure as save failure.
+			return &ProcessResult{Message: fmt.Sprintf("Saved to %s (post-save failed)", req.OutputPath)}, nil
+		}
+		// If the CLI requested exit after launching the command, quit now.
+		if a.postSaveExit {
+			a.logf("SaveImage: started CLI post-save command, quitting as requested")
+			runtime.Quit(a.ctx)
+		}
+		a.logf("SaveImage: started CLI post-save command")
+	}
+
 	return &ProcessResult{
 		Message: fmt.Sprintf("Saved to %s", req.OutputPath),
 	}, nil
@@ -443,6 +459,59 @@ func extractBMPDPI(path string) (dpiX, dpiY float64) {
 		return 0, 0
 	}
 	return math.Round(float64(xPPM)*0.0254*10) / 10, math.Round(float64(yPPM)*0.0254*10) / 10
+}
+
+// RunPostSaveCommand executes a user-specified command after a successful save.
+// commandLine may contain {path} as a placeholder for the saved file path.
+// The first token (respecting double-quoted strings) is the executable; the
+// remaining tokens are passed as individual arguments.  The process is started
+// and detached — Atropos does not wait for it to finish.
+func (a *App) RunPostSaveCommand(commandLine, savedPath string) error {
+	if commandLine == "" {
+		return nil
+	}
+	tokens := tokenizeCommandLine(commandLine)
+	if len(tokens) == 0 {
+		return nil
+	}
+	exe := strings.ReplaceAll(tokens[0], "{path}", savedPath)
+	args := make([]string, len(tokens)-1)
+	for i, t := range tokens[1:] {
+		args[i] = strings.ReplaceAll(t, "{path}", savedPath)
+	}
+	cmd := exec.Command(exe, args...)
+	hideCommandWindow(cmd)
+	a.logf("RunPostSaveCommand: exe=%q args=%v", exe, args)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("RunPostSaveCommand: failed to start %q: %w", exe, err)
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
+}
+
+// tokenizeCommandLine splits a command-line string into tokens, respecting
+// double-quoted sub-strings (which may contain spaces).
+func tokenizeCommandLine(s string) []string {
+	var tokens []string
+	var cur strings.Builder
+	inQuote := false
+	for _, ch := range s {
+		switch {
+		case ch == '"':
+			inQuote = !inQuote
+		case ch == ' ' && !inQuote:
+			if cur.Len() > 0 {
+				tokens = append(tokens, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(ch)
+		}
+	}
+	if cur.Len() > 0 {
+		tokens = append(tokens, cur.String())
+	}
+	return tokens
 }
 
 // OpenImageDialog shows a file picker for loading images.

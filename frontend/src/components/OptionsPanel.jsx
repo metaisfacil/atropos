@@ -25,6 +25,10 @@ export default function OptionsPanel({
   setDiscCenterCutout,
   closeAfterSave,
   setCloseAfterSave,
+  postSaveEnabled,
+  setPostSaveEnabled,
+  postSaveCommand,
+  setPostSaveCommand,
 }) {
   const dialogRef = useRef(null)
   const [mounted, setMounted] = useState(false)
@@ -196,7 +200,33 @@ export default function OptionsPanel({
             <div className="options-section-title" tabIndex={0}>Post-save actions</div>
           </DelayedHint>
 
-          <DelayedHint hint="Automatically closes Atropos after a file is saved successfully.">
+          <DelayedHint hint="Run a program automatically after each save. Use {path} in the command as a placeholder for the saved image path.">
+            <label className="options-radio-label">
+              <input
+                type="checkbox"
+                checked={postSaveEnabled}
+                onChange={(e) => setPostSaveEnabled(e.target.checked)}
+              />
+              Run after save <span className="options-hint">(default: off)</span>
+            </label>
+          </DelayedHint>
+
+          <div className={`options-iopaint-url ${postSaveEnabled ? 'visible' : ''}`}>
+            <label className="options-field-label" htmlFor="post-save-command">Command</label>
+            <DelayedHint hint="Command to run after saving. Use {path} as a placeholder for the saved image path. The first token is the executable; the rest are arguments. Example: C:\tools\viewer.exe {path}">
+              <input
+                id="post-save-command"
+                className="options-text-input"
+                type="text"
+                value={postSaveCommand}
+                onChange={(e) => setPostSaveCommand(e.target.value)}
+                placeholder={'e.g. C:\\tools\\viewer.exe {path}'}
+                spellCheck={false}
+              />
+            </DelayedHint>
+          </div>
+
+          <DelayedHint hint="Automatically closes Atropos after a file is saved successfully. This will occur after any post-save command, if specified.">
             <label className="options-radio-label">
               <input
                 type="checkbox"

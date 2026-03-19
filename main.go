@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wailsapp/wails/v2"
@@ -17,22 +18,40 @@ import (
 var assets embed.FS
 
 func main() {
-	// Parse flags: --debug, --corners, --disc, --lines, --normal, and positional image path
+	// Parse flags: --debug, --corners, --disc, --lines, --normal, --post-save, and positional image path
 	debug := false
 	launchMode := ""
 	launchFile := ""
-	for _, arg := range os.Args[1:] {
-		switch arg {
-		case "--debug", "-debug":
+	postSave := ""
+	postSaveExit := false
+	for i := 1; i < len(os.Args); i++ {
+		arg := os.Args[i]
+		switch {
+		case arg == "--debug" || arg == "-debug":
 			debug = true
-		case "--corners":
+		case arg == "--corners":
 			launchMode = "corner"
-		case "--disc":
+		case arg == "--disc":
 			launchMode = "disc"
-		case "--lines":
+		case arg == "--lines":
 			launchMode = "line"
-		case "--normal":
+		case arg == "--normal":
 			launchMode = "normal"
+		case strings.HasPrefix(arg, "--post-save="):
+			postSave = strings.TrimPrefix(arg, "--post-save=")
+		case strings.HasPrefix(arg, "--post-save-exit="):
+			v := strings.TrimPrefix(arg, "--post-save-exit=")
+			if v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") {
+				postSaveExit = true
+			}
+		case arg == "--post-save":
+			// Consume next arg as the command, if present
+			if i+1 < len(os.Args) {
+				i++
+				postSave = os.Args[i]
+			}
+		case arg == "--post-save-exit":
+			postSaveExit = true
 		default:
 			// Treat non-flag args as file path
 			if len(arg) > 0 && arg[0] != '-' {
@@ -71,6 +90,8 @@ func main() {
 	app.logger = logger
 	app.launchFilePath = launchFile
 	app.launchMode = launchMode
+	app.postSaveCmd = postSave
+	app.postSaveExit = postSaveExit
 
 	// Create application with options
 	err := wails.Run(&options.App{
