@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react'
+import { useRef, useCallback, useEffect } from 'react'
 import {
   ClickCorner, StraightEdgeRotate, RotateDisc, ShiftDisc, DrawDisc, AddLine, ProcessLines,
 } from '../../wailsjs/go/main/App'
@@ -16,12 +16,23 @@ export function useMouseHandlers({
   touchupDraggingRef, imgRef, lastResizeRef, mousePosRef,
   commitTouchup, showStatus, showError,
 }) {
-  const cornerMouseDownRef = useRef(false)
-  const ctrlDragBusy  = useRef(false)
-  const shiftDragBusy = useRef(false)
+  const cornerMouseDownRef   = useRef(false)
+  const ctrlDragBusy         = useRef(false)
+  const shiftDragBusy        = useRef(false)
   const normalDragPendingRef = useRef(false) // mousedown outside image in Normal mode — waiting to enter bounds
+  const mouseUpHandledRef    = useRef(false) // set by canvas handler to suppress window handler double-fire
 
-  const displayToImage = useCallback((dispX, dispY) => {
+  // Refs that shadow state/callback values so the window mouseup listener
+  // can read current values without being re-registered on every render.
+  const draggingRef        = useRef(dragging)
+  const dragStartRef       = useRef(dragStart)
+  const dragCurrentRef     = useRef(dragCurrent)
+  const displayToImageRef  = useRef(null)
+  draggingRef.current      = dragging
+  dragStartRef.current     = dragStart
+  dragCurrentRef.current   = dragCurrent
+
+  const displayToImage = displayToImageRef.current = useCallback((dispX, dispY) => {
     const el = imgRef.current
     if (!el) return { x: 0, y: 0 }
     const rect = el.getBoundingClientRect()
@@ -189,7 +200,7 @@ export function useMouseHandlers({
 
     if (normalDragPendingRef.current) {
       normalDragPendingRef.current = false
-      if (mode === 'normal' && !useTouchupTool) setNormalRect(null)
+      if (mode === 'normal' && !useTouchupTool) { mouseUpHandledRef.current = true; setNormalRect(null) }
       return
     }
 
@@ -206,6 +217,7 @@ export function useMouseHandlers({
     }
 
     if (mode === 'normal' && !useTouchupTool) {
+      mouseUpHandledRef.current = true
       if (!dragging || !dragStart || !dragCurrent) { setDragging(false); return }
       setDragging(false)
       const start = displayToImage(dragStart.x, dragStart.y)
@@ -371,6 +383,41 @@ export function useMouseHandlers({
       setDragging(false); setDragStart(null); setDragCurrent(null)
     }
   }
+
+  // Catch mouseup events that fire outside the canvas-area (sidebar, outside window, etc.)
+  // so that a Normal mode drag is never left stuck in an active state.
+  useEffect(() => {
+    const onWindowMouseUp = () => {
+      if (mouseUpHandledRef.current) { mouseUpHandledRef.current = false; return }
+      if (normalDragPendingRef.current) {
+        normalDragPendingRef.current = false
+        setNormalRect(null)
+        return
+      }
+      if (!draggingRef.current) return
+      setDragging(false)
+      const ds = dragStartRef.current
+      const dc = dragCurrentRef.current
+      if (ds && dc) {
+        const d2i = displayToImageRef.current
+        const start = d2i(ds.x, ds.y)
+        const end   = d2i(dc.x, dc.y)
+        const w = Math.abs(end.x - start.x)
+        const h = Math.abs(end.y - start.y)
+        if (w >= 5 && h >= 5) {
+          setNormalRect({ x1: start.x, y1: start.y, x2: end.x, y2: end.y })
+        } else {
+          setNormalRect(null)
+        }
+      } else {
+        setNormalRect(null)
+      }
+      setDragStart(null)
+      setDragCurrent(null)
+    }
+    window.addEventListener('mouseup', onWindowMouseUp)
+    return () => window.removeEventListener('mouseup', onWindowMouseUp)
+  }, [mode, useTouchupTool]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return { handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave, displayToImage }
 }
