@@ -185,7 +185,7 @@ export default function OptionsPanel({
             <div className="options-section-title" tabIndex={0}>Disc mode</div>
           </DelayedHint>
 
-          <DelayedHint hint="Punches a small centred hole (11% of the disc diameter) filled with the background colour, so the eyedropper can affect the spindle area in the middle of the disc.">
+          <DelayedHint hint={"Punches a small centred hole (11% of the disc diameter) filled with the background colour, so the eyedropper can affect the spindle area in the middle of the disc.\r\n\r\nYou can also set the Cutout % slider to 0% for the same effect."}>
             <label className="options-radio-label">
               <input
                 type="checkbox"
