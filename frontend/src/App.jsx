@@ -12,6 +12,7 @@ import ErrorModal       from './components/ErrorModal'
 import ConfirmationModal from './components/ConfirmationModal'
 import DelayedHint      from './components/DelayedHint'
 import ImageOverlays    from './components/ImageOverlays'
+import StatusBar        from './components/StatusBar'
 
 import { useStatusMessage }      from './hooks/useStatusMessage'
 import { usePersistentSettings } from './hooks/usePersistentSettings'
@@ -32,6 +33,7 @@ export default function App() {
   const [confirmDialog, setConfirmDialog] = useState(null)
 
   const [realImageDims, setRealImageDims] = useState({ w: 1, h: 1 })
+  const [imageMeta, setImageMeta] = useState({ format: '', dpiX: 0, dpiY: 0 })
   const imgRef     = useRef(null)
   const ctrlDragRef  = useRef(null)
   const shiftDragRef = useRef(null)
@@ -137,6 +139,7 @@ export default function App() {
     setConfirmDialog, setTouchupStrokes,
     touchupDraggingRef, canvasRef,
     showStatus, showError,
+    setImageMeta,
   })
 
   const {
@@ -419,6 +422,13 @@ export default function App() {
             <div className="placeholder">Load or drop an image to begin</div>
           ) : null}
         </div>
+        <StatusBar
+          imageLoaded={imageLoaded}
+          imageMeta={imageMeta}
+          realImageDims={realImageDims}
+          zoom={zoom}
+          onResetZoom={() => setZoom(1)}
+        />
       </main>
     </div>
   )
