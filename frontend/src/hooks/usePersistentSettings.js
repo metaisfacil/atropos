@@ -79,6 +79,22 @@ export function usePersistentSettings({ setPreview }) {
     localStorage.setItem('closeAfterSave', String(v))
   }
 
+  const [postSaveEnabled, setPostSaveEnabledState] = useState(() =>
+    localStorage.getItem('postSaveEnabled') === 'true'
+  )
+  const setPostSaveEnabled = (v) => {
+    setPostSaveEnabledState(v)
+    localStorage.setItem('postSaveEnabled', String(v))
+  }
+
+  const [postSaveCommand, setPostSaveCommandState] = useState(() =>
+    localStorage.getItem('postSaveCommand') || ''
+  )
+  const setPostSaveCommand = (v) => {
+    setPostSaveCommandState(v)
+    localStorage.setItem('postSaveCommand', v)
+  }
+
   // Push all persisted settings to backend on startup.
   useEffect(() => {
     SetTouchupSettings({
@@ -105,5 +121,7 @@ export function usePersistentSettings({ setPreview }) {
     discCenterCutout, setDiscCenterCutout,
     discCutoutPercent, setDiscCutoutPercent,
     closeAfterSave, setCloseAfterSave,
+    postSaveEnabled, setPostSaveEnabled,
+    postSaveCommand, setPostSaveCommand,
   }
 }

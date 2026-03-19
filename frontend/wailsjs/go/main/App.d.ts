@@ -56,6 +56,8 @@ export function Rotate(arg1:main.RotateRequest):Promise<main.ProcessResult>;
 
 export function RotateDisc(arg1:main.DiscRotateRequest):Promise<main.ProcessResult>;
 
+export function RunPostSaveCommand(arg1:string,arg2:string):Promise<void>;
+
 export function SaveImage(arg1:main.SaveRequest):Promise<main.ProcessResult>;
 
 export function SetBackgroundColor(arg1:number,arg2:number,arg3:number):Promise<void>;
