@@ -37,7 +37,6 @@ type CornerDetectRequest struct {
 	UseStretch     bool    `json:"useStretch"`
 	StretchLow     float64 `json:"stretchLow"`
 	StretchHigh    float64 `json:"stretchHigh"`
-	UseEdgeEnhance bool    `json:"useEdgeEnhance"`
 }
 
 // ClickCornerRequest holds the image-space coordinates of a user click.
@@ -175,13 +174,7 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 
 	// Optionally pre-stretch contrast using percentiles to handle non-white backgrounds,
 	// then apply CLAHE to boost local contrast before detection.
-	// UseEdgeEnhance replaces CLAHE with a Sobel gradient-magnitude map, which
-	// works better for dark material on dark backgrounds where CLAHE sees little
-	// histogram variance to stretch.
-	if req.UseEdgeEnhance {
-		a.logf("DetectCorners: applying edge-enhance (Sobel magnitude)")
-		workGray = sobelMagnitude(workGray)
-	} else if req.UseStretch {
+	if req.UseStretch {
 		low := req.StretchLow
 		high := req.StretchHigh
 		if low <= 0 || low >= 1 {

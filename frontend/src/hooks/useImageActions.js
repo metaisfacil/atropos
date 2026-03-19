@@ -22,7 +22,7 @@ import {
 
 export function useImageActions({
   mode, loading, imageLoaded, discActive,
-  cornerState, dotRadius, useStretchPreprocess, useEdgeEnhance, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
+  cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
   setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural,
   setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
   setDiscActive, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
@@ -36,7 +36,8 @@ export function useImageActions({
   const [loadingFull, setLoadingFull] = useState(false)
   const [saving, setSaving]          = useState(false)
   const modeRef            = useRef(mode)
-  const lastDetectSettings = useRef(null)
+  const lastDetectSettings      = useRef(null)
+  const suggestedCornerParamsRef = useRef({})
   const savingRef          = useRef(false)
   const pendingDropRef     = useRef(null)
   useEffect(() => { modeRef.current = mode }, [mode])
@@ -77,7 +78,6 @@ export function useImageActions({
       useStretch:      useStretchPreprocess,
       stretchLow:      0.01,
       stretchHigh:     0.99,
-      useEdgeEnhance:  useEdgeEnhance,
     })
     setPreview(result.preview)
     showStatus(result.message + ' — click 4 corners')
@@ -92,7 +92,6 @@ export function useImageActions({
       minDistance,
       accent:         cornerState.accent,
       useStretch:     useStretchPreprocess,
-      useEdgeEnhance: useEdgeEnhance,
     }
   }
 
@@ -115,8 +114,10 @@ export function useImageActions({
     setImageMeta({ format: result.format || '', dpiX: result.dpiX || 0, dpiY: result.dpiY || 0 })
     resetImageState()
 
+    suggestedCornerParamsRef.current = result.suggestedCornerParams || {}
+
     if (autoDetect && mode === 'corner') {
-      await runDetectCorners(autoCornerParams ? (result.suggestedCornerParams || {}) : {})
+      await runDetectCorners(autoCornerParams ? suggestedCornerParamsRef.current : {})
     }
 
     setLoading(false)
@@ -207,7 +208,7 @@ export function useImageActions({
   const handleDetectCorners = async () => {
     setLoading(true)
     try {
-      await runDetectCorners()
+      await runDetectCorners(autoCornerParams ? suggestedCornerParamsRef.current : {})
     } catch (err) {
       console.error('Detect error:', err)
     } finally {
@@ -452,8 +453,7 @@ export function useImageActions({
               snap.qualityLevel === cornerState.qualityLevel &&
               snap.minDistance === cornerState.minDistance &&
               snap.accent === cornerState.accent &&
-              snap.useStretch === useStretchPreprocess &&
-              snap.useEdgeEnhance === useEdgeEnhance) {
+              snap.useStretch === useStretchPreprocess) {
             try {
               const res = await RestoreCornerOverlay({ dotRadius })
               const c = canvasRef.current
