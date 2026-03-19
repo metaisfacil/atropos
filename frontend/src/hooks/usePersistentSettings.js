@@ -3,13 +3,16 @@ import { SetTouchupSettings, SetWarpSettings, SetDiscSettings } from '../../wail
 
 // Default values for every persisted setting. Keep in sync with NewApp() in app.go.
 const DEFAULTS = {
-  touchupBackend:      'patchmatch',
-  iopaintURL:          'http://127.0.0.1:8086/',
-  warpFillMode:        'clamp',
-  warpFillColor:       '#ffffff',
-  discCenterCutout:    true,
-  discCutoutPercent:   11,
-  autoCornerParams:    true,
+  touchupBackend:           'patchmatch',
+  iopaintURL:               'http://127.0.0.1:8086/',
+  warpFillMode:             'clamp',
+  warpFillColor:            '#ffffff',
+  discCenterCutout:         true,
+  discCutoutPercent:        11,
+  autoCornerParams:         true,
+  touchupRemainsActive:     true,
+  straightEdgeRemainsActive: true,
+  autoDetectOnModeSwitch:   true,
 }
 
 export function usePersistentSettings({ setPreview }) {
@@ -105,6 +108,33 @@ export function usePersistentSettings({ setPreview }) {
     localStorage.setItem('postSaveCommand', v)
   }
 
+  const [touchupRemainsActive, setTouchupRemainsActiveState] = useState(() => {
+    const stored = localStorage.getItem('touchupRemainsActive')
+    return stored === null ? DEFAULTS.touchupRemainsActive : stored === 'true'
+  })
+  const setTouchupRemainsActive = (v) => {
+    setTouchupRemainsActiveState(v)
+    localStorage.setItem('touchupRemainsActive', String(v))
+  }
+
+  const [straightEdgeRemainsActive, setStraightEdgeRemainsActiveState] = useState(() => {
+    const stored = localStorage.getItem('straightEdgeRemainsActive')
+    return stored === null ? DEFAULTS.straightEdgeRemainsActive : stored === 'true'
+  })
+  const setStraightEdgeRemainsActive = (v) => {
+    setStraightEdgeRemainsActiveState(v)
+    localStorage.setItem('straightEdgeRemainsActive', String(v))
+  }
+
+  const [autoDetectOnModeSwitch, setAutoDetectOnModeSwitchState] = useState(() => {
+    const stored = localStorage.getItem('autoDetectOnModeSwitch')
+    return stored === null ? DEFAULTS.autoDetectOnModeSwitch : stored === 'true'
+  })
+  const setAutoDetectOnModeSwitch = (v) => {
+    setAutoDetectOnModeSwitchState(v)
+    localStorage.setItem('autoDetectOnModeSwitch', String(v))
+  }
+
   // Push all persisted settings to backend on startup.
   useEffect(() => {
     SetTouchupSettings({
@@ -134,5 +164,8 @@ export function usePersistentSettings({ setPreview }) {
     closeAfterSave, setCloseAfterSave,
     postSaveEnabled, setPostSaveEnabled,
     postSaveCommand, setPostSaveCommand,
+    touchupRemainsActive, setTouchupRemainsActive,
+    straightEdgeRemainsActive, setStraightEdgeRemainsActive,
+    autoDetectOnModeSwitch, setAutoDetectOnModeSwitch,
   }
 }

@@ -31,6 +31,12 @@ export default function OptionsPanel({
   setPostSaveEnabled,
   postSaveCommand,
   setPostSaveCommand,
+  touchupRemainsActive,
+  setTouchupRemainsActive,
+  straightEdgeRemainsActive,
+  setStraightEdgeRemainsActive,
+  autoDetectOnModeSwitch,
+  setAutoDetectOnModeSwitch,
 }) {
   const dialogRef = useRef(null)
   const [mounted, setMounted] = useState(false)
@@ -253,6 +259,51 @@ export default function OptionsPanel({
                 onChange={(e) => setCloseAfterSave(e.target.checked)}
               />
               Close after save <span className="options-hint">(default: off)</span>
+            </label>
+          </DelayedHint>
+
+          <div className="options-divider" />
+
+          <DelayedHint hint="Controls what happens after you finish using a tool.">
+            <div className="options-section-title" tabIndex={0}>After use</div>
+          </DelayedHint>
+
+          <DelayedHint hint="When on, the touch-up brush stays active after each stroke is committed, so you can immediately paint another area without re-enabling the tool.">
+            <label className="options-radio-label">
+              <input
+                type="checkbox"
+                checked={touchupRemainsActive}
+                onChange={(e) => setTouchupRemainsActive(e.target.checked)}
+              />
+              Touch-up brush remains active <span className="options-hint">(default: on)</span>
+            </label>
+          </DelayedHint>
+
+          <DelayedHint hint="When on, the straight edge tool stays active after a rotation is applied, letting you draw another reference line without re-enabling the tool.">
+            <label className="options-radio-label">
+              <input
+                type="checkbox"
+                checked={straightEdgeRemainsActive}
+                onChange={(e) => setStraightEdgeRemainsActive(e.target.checked)}
+              />
+              Straight edge remains active <span className="options-hint">(default: on)</span>
+            </label>
+          </DelayedHint>
+
+          <div className="options-divider" />
+
+          <DelayedHint hint="Controls what happens automatically when you switch between modes.">
+            <div className="options-section-title" tabIndex={0}>After switching modes</div>
+          </DelayedHint>
+
+          <DelayedHint hint="When on, switching to Corner mode automatically runs corner detection on the loaded image, the same as pressing Detect manually.">
+            <label className="options-radio-label">
+              <input
+                type="checkbox"
+                checked={autoDetectOnModeSwitch}
+                onChange={(e) => setAutoDetectOnModeSwitch(e.target.checked)}
+              />
+              Automatically detect corners <span className="options-hint">(default: on)</span>
             </label>
           </DelayedHint>
         </div>
