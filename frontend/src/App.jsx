@@ -286,7 +286,7 @@ export default function App() {
             blackPoint={blackPoint}               setBlackPoint={setBlackPoint}
             whitePoint={whitePoint}               setWhitePoint={setWhitePoint}
             imageLoaded={imageLoaded}
-            loading={loading}                     setLoading={setLoading}
+            setLoading={setLoading}
             setPreview={setPreview}
             useStretchPreprocess={useStretchPreprocess}
             setUseStretchPreprocess={setUseStretchPreprocess}
