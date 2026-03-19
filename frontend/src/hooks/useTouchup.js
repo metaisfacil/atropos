@@ -4,6 +4,7 @@ import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 export function useTouchup({
   imageLoaded, loading, setLoading, showStatus,
   realImageDims, touchupBackend, setErrorMessage, setPreview, onDragEnd,
+  flushPendingSaveRef,
 }) {
   const [touchupStrokes, setTouchupStrokes] = useState([])
   const [brushSize, setBrushSize]           = useState(40)
@@ -100,6 +101,7 @@ export function useTouchup({
     } else if (data?.preview) {
       setPreview(data.preview)
       showStatus(data.message || '')
+      flushPendingSaveRef?.current?.()
     }
   }
   useEffect(() => {

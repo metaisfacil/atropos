@@ -37,6 +37,7 @@ export default function App() {
   const imgRef     = useRef(null)
   const ctrlDragRef  = useRef(null)
   const shiftDragRef = useRef(null)
+  const flushPendingSaveRef = useRef(null)
 
   // ── Drag / interaction state ───────────────────────────────────────────────
   const [dragging, setDragging]       = useState(false)
@@ -115,6 +116,7 @@ export default function App() {
     realImageDims, touchupBackend,
     setErrorMessage, setPreview,
     onDragEnd: () => { setDragging(false); setDragStart(null); setDragCurrent(null) },
+    flushPendingSaveRef,
   })
 
   const {
@@ -130,6 +132,7 @@ export default function App() {
     handleNormalCrop,
     handleClearLines,
     handleSaveImage,
+    flushPendingSave,
     handleModeSwitch,
     handleUndo,
   } = useImageActions({
@@ -145,6 +148,7 @@ export default function App() {
     showStatus, showError,
     setImageMeta,
   })
+  flushPendingSaveRef.current = flushPendingSave
 
   const {
     handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave,
@@ -167,7 +171,7 @@ export default function App() {
     imageLoaded, mode, discActive, featherSize,
     ctrlDragRef, shiftDragRef, mousePosRef,
     setPreview, setFeatherSize, setLoading,
-    displayToImage, showStatus, showError, handleSaveImage,
+    displayToImage, showStatus, showError, handleSaveImage, flushPendingSave,
     canSave: imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive),
     normalRect, handleNormalCrop, handleUndo,
   })
