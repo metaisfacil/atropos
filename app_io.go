@@ -33,8 +33,9 @@ type ImageInfo struct {
 // LoadImage loads an image from disk and returns its metadata.
 func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	if !a.loadMu.TryLock() {
-		a.logf("LoadImage: rejected, another load is already in progress")
-		return nil, fmt.Errorf("another image is still loading — please wait")
+		const msg = "LoadImage: rejected, another load is already in progress"
+		a.logf(msg)
+		return nil, fmt.Errorf(msg)
 	}
 	defer a.loadMu.Unlock()
 	a.cancelTouchup()
@@ -44,8 +45,9 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	t0 := time.Now()
 	src, err := a.decodeImageFile(req.FilePath)
 	if err != nil {
-		a.logf("LoadImage: decode error: %v", err)
-		return nil, fmt.Errorf("failed to decode %s: %w", req.FilePath, err)
+		msg := fmt.Sprintf("LoadImage: decode error: %v", err)
+		a.logf(msg)
+		return nil, fmt.Errorf(msg)
 	}
 	a.logf("LoadImage: decode took %v", time.Since(t0))
 
@@ -78,8 +80,9 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	t3 := time.Now()
 	preview, err := imageToBase64(a.currentImage)
 	if err != nil {
-		a.logf("LoadImage: base64 error: %v", err)
-		return nil, err
+		msg := fmt.Sprintf("LoadImage: base64 error: %v", err)
+		a.logf(msg)
+		return nil, fmt.Errorf(msg)
 	}
 	a.logf("LoadImage: preview took %v", time.Since(t3))
 
@@ -161,15 +164,17 @@ func (a *App) decodeViaMagick(path, outFmt string) (image.Image, error) {
 	cmd.Stderr = &stderr
 
 	if runErr := cmd.Run(); runErr != nil {
-		a.logf("decodeViaMagick: magick failed: %v stderr=%s", runErr, stderr.String())
-		return nil, fmt.Errorf("magick: %v", runErr)
+		msg := fmt.Sprintf("decodeViaMagick: magick failed: %v stderr=%s", runErr, stderr.String())
+		a.logf(msg)
+		return nil, fmt.Errorf(msg)
 	}
 
 	a.logf("decodeViaMagick: magick produced %d bytes of %s", stdout.Len(), outFmt)
 	img, decErr := bmp.Decode(bytes.NewReader(stdout.Bytes()))
 	if decErr != nil {
-		a.logf("decodeViaMagick: bmp decode failed: %v", decErr)
-		return nil, fmt.Errorf("bmp decode: %v", decErr)
+		msg := fmt.Sprintf("decodeViaMagick: bmp decode failed: %v", decErr)
+		a.logf(msg)
+		return nil, fmt.Errorf(msg)
 	}
 
 	a.logf("decodeViaMagick: OK, bounds=%v", img.Bounds())
@@ -212,8 +217,9 @@ func (a *App) SaveImage(req SaveRequest) (*ProcessResult, error) {
 		}
 	}
 	if err != nil {
-		a.logf("SaveImage: encode error: %v", err)
-		return nil, fmt.Errorf("failed to encode image: %w", err)
+		msg := fmt.Sprintf("SaveImage: encode error: %v", err)
+		a.logf(msg)
+		return nil, fmt.Errorf(msg)
 	}
 
 	a.logf("SaveImage: saved successfully to %s", req.OutputPath)
