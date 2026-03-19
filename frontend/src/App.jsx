@@ -286,11 +286,11 @@ export default function App() {
             blackPoint={blackPoint}               setBlackPoint={setBlackPoint}
             whitePoint={whitePoint}               setWhitePoint={setWhitePoint}
             imageLoaded={imageLoaded}
-            loading={loading}                     setLoading={setLoading}
+            setLoading={setLoading}
             setPreview={setPreview}
             useStretchPreprocess={useStretchPreprocess}
             setUseStretchPreprocess={setUseStretchPreprocess}
-            touchupAvailable={
+            postCropAvailable={
               (mode === 'corner' && cornerState.cornerCount === 4) ||
               (mode === 'line'   && linesProcessed) ||
               (mode === 'disc'   && discActive) ||
