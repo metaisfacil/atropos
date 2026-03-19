@@ -12,6 +12,16 @@ export function ClearLines():Promise<main.ProcessResult>;
 
 export function ClickCorner(arg1:main.ClickCornerRequest):Promise<main.ClickCornerResult>;
 
+export function CompositorLoadResult():Promise<main.ImageInfo>;
+
+export function CompositorOpenFilesDialog():Promise<Array<string>>;
+
+export function CompositorOpenSaveDialog():Promise<string>;
+
+export function CompositorSave(arg1:main.CompositorSaveRequest):Promise<string>;
+
+export function CompositorStitch(arg1:main.CompositorStitchRequest):Promise<main.CompositorResult>;
+
 export function Crop(arg1:main.CropRequest):Promise<main.ProcessResult>;
 
 export function DetectCorners(arg1:main.CornerDetectRequest):Promise<main.ProcessResult>;

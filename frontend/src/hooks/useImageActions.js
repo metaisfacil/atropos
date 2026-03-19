@@ -19,6 +19,7 @@ import {
   SaveImage,
   RunPostSaveCommand,
   Undo,
+  CompositorLoadResult,
 } from '../../wailsjs/go/main/App'
 
 export function useImageActions({
@@ -208,6 +209,32 @@ export function useImageActions({
       }
     })()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Compositor: load result into corner-mode pipeline ───────────────────────
+  // Called by CompositorModal via the onLoad prop.  Receives the ImageInfo
+  // returned by CompositorLoadResult (Go) which the modal already called;
+  // this function applies the corresponding React state reset, switches to
+  // corner mode, and runs corner detection.
+  const handleCompositorLoad = async (info) => {
+    setLoading(true)
+    try {
+      setFitWidth(0)
+      setZoom(1)
+      setPreview(info.preview)
+      setImageLoaded(true)
+      setRealImageDims({ w: info.width, h: info.height })
+      setImgNatural({ w: info.width, h: info.height })
+      setImageMeta({ format: '', dpiX: 0, dpiY: 0 })
+      resetImageState()
+      suggestedCornerParamsRef.current = info.suggestedCornerParams || {}
+      setMode('corner')
+      await runDetectCorners(autoCornerParams ? suggestedCornerParamsRef.current : {})
+    } catch (err) {
+      showError(err)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   // ── Corner detection ───────────────────────────────────────────────────────
   const handleDetectCorners = async () => {
@@ -583,6 +610,7 @@ export function useImageActions({
     saving,
     handleLoadImage,
     handleDetectCorners,
+    handleCompositorLoad,
     handleSkipCrop,
     handleRecrop,
     handleResetCorners,

@@ -61,6 +61,50 @@ export namespace main {
 	        this.height = source["height"];
 	    }
 	}
+	export class CompositorResult {
+	    preview: string;
+	    width: number;
+	    height: number;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CompositorResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.preview = source["preview"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.message = source["message"];
+	    }
+	}
+	export class CompositorSaveRequest {
+	    outputPath: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CompositorSaveRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.outputPath = source["outputPath"];
+	    }
+	}
+	export class CompositorStitchRequest {
+	    imagePaths: string[];
+	    orientation: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CompositorStitchRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.imagePaths = source["imagePaths"];
+	        this.orientation = source["orientation"];
+	    }
+	}
 	export class CornerDetectRequest {
 	    maxCorners: number;
 	    qualityLevel: number;

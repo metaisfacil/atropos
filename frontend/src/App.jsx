@@ -8,6 +8,8 @@ import LinePanel        from './components/LinePanel'
 import AdjustmentsPanel from './components/AdjustmentsPanel'
 import ShortcutsPanel   from './components/ShortcutsPanel'
 import OptionsPanel     from './components/OptionsPanel'
+import ToolsPanel       from './components/ToolsPanel'
+import CompositorModal  from './components/CompositorModal'
 import ErrorModal       from './components/ErrorModal'
 import ConfirmationModal from './components/ConfirmationModal'
 import DelayedHint      from './components/DelayedHint'
@@ -77,7 +79,9 @@ export default function App() {
   const [useStretchPreprocess, setUseStretchPreprocess] = useState(true)
   const [useTouchupTool, setUseTouchupTool] = useState(false)
   const [useStraightEdgeTool, setUseStraightEdgeTool] = useState(false)
-  const [optionsOpen, setOptionsOpen] = useState(false)
+  const [optionsOpen, setOptionsOpen]         = useState(false)
+  const [compositorOpen, setCompositorOpen]   = useState(false)
+  const [toolsOpen, setToolsOpen]             = useState(false)
 
   // ── Hooks ─────────────────────────────────────────────────────────────────
   const { imageInfo, imageInfoVisible, showStatus } = useStatusMessage()
@@ -139,6 +143,7 @@ export default function App() {
     flushPendingSave,
     handleModeSwitch,
     handleUndo,
+    handleCompositorLoad,
   } = useImageActions({
     mode, loading, imageLoaded, discActive, linesProcessed, normalCropApplied,
     cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
@@ -329,6 +334,11 @@ export default function App() {
             setUseStraightEdgeTool={setUseStraightEdgeTool}
           />
 
+          <ToolsPanel
+            toolsOpen={toolsOpen} setToolsOpen={setToolsOpen}
+            onOpenCompositor={() => setCompositorOpen(true)}
+          />
+
           <ShortcutsPanel
             shortcutsOpen={shortcutsOpen} setShortcutsOpen={setShortcutsOpen}
             mode={mode}
@@ -357,6 +367,11 @@ export default function App() {
         </div>
       </aside>
 
+      <CompositorModal
+        open={compositorOpen}
+        onClose={() => setCompositorOpen(false)}
+        onLoad={async (info) => { setCompositorOpen(false); await handleCompositorLoad(info) }}
+      />
       <ErrorModal message={errorMessage} onClose={() => setErrorMessage(null)} />
       <ConfirmationModal
         message={confirmDialog?.message}

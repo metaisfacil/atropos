@@ -90,6 +90,10 @@ type App struct {
 	// Disc mode settings
 	discCenterCutout  bool // if true, a centered hole is cut out to expose the bg colour
 	discCutoutPercent int  // diameter of the cutout as a percentage of the disc diameter (1–50)
+
+	// Compositor state
+	compositorMu     sync.Mutex
+	compositorResult *image.NRGBA
 }
 
 // NewApp creates a new App application struct.
