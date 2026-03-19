@@ -24,7 +24,7 @@ This document describes the complete system architecture, data flow, and operati
 | `hooks/useKeyboardShortcuts.js` | Single `keydown` `useEffect`: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+Z` (undo), `Ctrl+S` (save), `WASDQE` (crop/rotate). WASDQE are guarded by `canSave`; if no crop result exists, `showStatus` is called instead of forwarding to Go (prevents a backend error modal). |
 | `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, window mouseup effect, `EventsOn("touchup-done")` effect. |
 | `hooks/useZoomPan.js` | Canvas viewport: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, scroll `useLayoutEffect`. |
-| `hooks/usePersistentSettings.js` | localStorage-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, `autoCornerParams`, `closeAfterSave`). Syncs to Go on startup and on every change. |
+| `hooks/usePersistentSettings.js` | localStorage-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, `autoCornerParams`, `closeAfterSave`, `touchupRemainsActive`, `straightEdgeRemainsActive`, `autoDetectOnModeSwitch`). Syncs to Go on startup and on every change. |
 | `hooks/useStatusMessage.js` | `imageInfo` + fade timer logic (`showStatus`). |
 | `components/ImageOverlays.jsx` | Pure render: all SVG overlays (corner dots, touch-up circles, disc guide, straight-edge line, normal crop rect, line mode lines). |
 | `components/StatusBar.jsx` | Thin bar at the bottom of the main content area. Shows file format, pixel dimensions, DPI (when known), and zoom level. Zoom is clickable — clicking resets zoom to 100%. All fields use `DelayedHint` for tooltips. |
@@ -569,6 +569,8 @@ The touch-up brush button is **disabled** until the initial crop has been commit
 
 Switching modes always resets `useTouchupTool` to `false`, and so does loading a new image (`loadFile`). The rationale: both Disc and Line modes use mouse drag for their first-stage input (drawing the disc / drawing lines), which would conflict with the touch-up brush drag if it were accidentally left on.
 
+After a successful touch-up commit (the `"touchup-done"` event with a preview result), `useTouchupTool` is also reset to `false` unless the `touchupRemainsActive` setting is `true` (default). Similarly, `useStraightEdgeTool` is reset to `false` after a `StraightEdgeRotate` completes unless `straightEdgeRemainsActive` is `true` (default). Both settings are persisted in localStorage and exposed in the Options modal under "After use".
+
 ### buildMask(maskB64)
 
 ```
@@ -704,6 +706,13 @@ onClick (mode button):
         setFitWidth(min(container.w, container.h * res.w/res.h))  ← compute correct value immediately
         setPreview, setRealImageDims
         setCornersDetected(true)
+        setMode('corner'); return           ← early return, skip detection / GetCleanPreview
+
+    if arriving at 'corner' && autoDetectOnModeSwitch:
+        setLoading(true)
+        DetectCorners(autoCornerParams ? suggestedCornerParams : {})
+                                            ← same path as manual Detect button
+        setLoading(false)
         setMode('corner'); return           ← early return, skip GetCleanPreview
 
     setFitWidth(min(container.w, container.h * res.w/res.h))  ← compute correct value immediately
@@ -724,10 +733,12 @@ GetCleanPreview()
 
 ### Cached Corner Restoration
 
-When switching back to corner mode, if all of `{maxCorners, qualityLevel, minDistance, accent, useStretch}` match the values stored in `lastDetectSettings.current` at detection time, `RestoreCornerOverlay` is called instead of `GetCleanPreview`. This avoids re-running the (potentially slow) Shi-Tomasi detector.
+When switching back to corner mode, if all of `{maxCorners, qualityLevel, minDistance, accent, useStretch}` match the values stored in `lastDetectSettings.current` at detection time, `RestoreCornerOverlay` is called instead of running detection or `GetCleanPreview`. This avoids re-running the (potentially slow) Shi-Tomasi detector.
+
+If `RestoreCornerOverlay` is not applicable (settings differ, or cache is stale) and `autoDetectOnModeSwitch` is `true` (default), `runDetectCorners` is called automatically — identical in effect to clicking the Detect button manually. Only when both conditions are false does the switch fall back to `GetCleanPreview`.
 
 `lastDetectSettings.current` is:
-- **Set** after a successful `DetectCorners` call (both manual and auto-detect on image load)
+- **Set** after a successful `DetectCorners` call (manual, auto-detect on image load, or auto-detect on mode switch)
 - **Cleared** when a new image is loaded (`loadFile`)
 - **Not cleared** on mode switches
 
@@ -904,6 +915,9 @@ Complex argument/return types are defined in `frontend/wailsjs/go/models.ts`.
 | Disc cutout size | `discCutoutPercent` | `discCutoutPercent` | Integer 0–50 (default `11`) |
 | Auto-adjust corner params | *(frontend-only)* | `autoCornerParams` | `"true"`, `"false"` (default `true`) |
 | Close after save | *(frontend-only)* | `closeAfterSave` | `"true"`, `"false"` (default `false`) |
+| Touch-up brush remains active | *(frontend-only)* | `touchupRemainsActive` | `"true"`, `"false"` (default `true`) |
+| Straight edge remains active | *(frontend-only)* | `straightEdgeRemainsActive` | `"true"`, `"false"` (default `true`) |
+| Auto-detect corners on mode switch | *(frontend-only)* | `autoDetectOnModeSwitch` | `"true"`, `"false"` (default `true`) |
 
 On every app start, the frontend reads localStorage and calls `SetTouchupSettings` + `SetWarpSettings` + `SetDiscSettings` to synchronise the Go side. `closeAfterSave` has no Go counterpart — it is consumed entirely in the frontend `handleSaveImage` handler.
 
