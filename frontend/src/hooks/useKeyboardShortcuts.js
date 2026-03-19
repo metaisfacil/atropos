@@ -8,6 +8,7 @@ export function useKeyboardShortcuts({
   ctrlDragRef, shiftDragRef, mousePosRef,
   setPreview, setFeatherSize, setRealImageDims, setLoading,
   displayToImage, showStatus, showError, handleSaveImage,
+  normalRect, handleNormalCrop,
 }) {
   useEffect(() => {
     const handleKeyDown = async (e) => {
@@ -74,6 +75,12 @@ export function useKeyboardShortcuts({
           return
         }
 
+        if (e.key === 'Enter' && mode === 'normal' && normalRect) {
+          e.preventDefault()
+          await handleNormalCrop()
+          return
+        }
+
         switch (key) {
           case 'w': result = await Crop({ direction: 'top'    }); if (result?.preview) setPreview(result.preview); break
           case 's': result = await Crop({ direction: 'bottom' }); if (result?.preview) setPreview(result.preview); break
@@ -102,5 +109,5 @@ export function useKeyboardShortcuts({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [imageLoaded, mode, discActive, featherSize, displayToImage]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imageLoaded, mode, discActive, featherSize, displayToImage, normalRect, handleNormalCrop]) // eslint-disable-line react-hooks/exhaustive-deps
 }

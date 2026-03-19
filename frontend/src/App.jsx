@@ -160,6 +160,7 @@ export default function App() {
     ctrlDragRef, shiftDragRef, mousePosRef,
     setPreview, setFeatherSize, setRealImageDims, setLoading,
     displayToImage, showStatus, showError, handleSaveImage,
+    normalRect, handleNormalCrop,
   })
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -232,7 +233,7 @@ export default function App() {
               </DelayedHint>
             )}
             {mode === 'normal' && (
-              <DelayedHint hint="Apply a drawn rectangle as a crop to the image.">
+              <DelayedHint hint="Apply a drawn rectangle as a crop to the image. You can also press Enter.">
                 <button className="primary" onClick={handleNormalCrop} disabled={!imageLoaded || loading || !normalRect}>
                   Crop
                 </button>
