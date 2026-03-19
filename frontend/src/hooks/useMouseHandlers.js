@@ -209,7 +209,7 @@ export function useMouseHandlers({
     if (useStraightEdgeTool && mode === 'disc' && discActive) {
       const dx = pos.x - dragStart.x
       const dy = pos.y - dragStart.y
-      if (Math.sqrt(dx * dx + dy * dy) >= 5) {
+      if (Math.hypot(dx, dy) >= 5) {
         const angleDeg = Math.atan2(dy, dx) * 180 / Math.PI
         setLoading(true)
         showStatus('Applying straight edge rotation…')
@@ -262,7 +262,7 @@ export function useMouseHandlers({
     if (mode === 'disc') {
       const start  = displayToImage(dragStart.x, dragStart.y)
       const end    = displayToImage(pos.x, pos.y)
-      const radius = Math.round(Math.sqrt((start.x - end.x) ** 2 + (start.y - end.y) ** 2))
+      const radius = Math.round(Math.hypot(start.x - end.x, start.y - end.y))
       if (radius < 5) return
       setZoom(1)
       setLoading(true)
@@ -295,7 +295,7 @@ export function useMouseHandlers({
       const start = displayToImage(dragStart.x, dragStart.y)
       const end   = displayToImage(pos.x, pos.y)
       const dx = end.x - start.x; const dy = end.y - start.y
-      if (Math.sqrt(dx * dx + dy * dy) < 5) return
+      if (Math.hypot(dx, dy) < 5) return
       try {
         setLines(prev => [...prev, { x1: start.x, y1: start.y, x2: end.x, y2: end.y }])
         const result   = await AddLine({ x1: start.x, y1: start.y, x2: end.x, y2: end.y })
