@@ -884,8 +884,11 @@ Complex argument/return types are defined in `frontend/wailsjs/go/models.ts`.
 | IOPaint URL | `iopaintURL` | `iopaintURL` | Any URL string |
 | Warp fill mode | `warpFillMode` | `warpFillMode` | `"clamp"`, `"fill"`, `"outpaint"` |
 | Warp fill color | `warpFillColor` | `warpFillColor` | CSS hex `"#rrggbb"` |
+| Disc centre cutout | `discCenterCutout` | `discCenterCutout` | `"true"`, `"false"` (default `true`) |
+| Disc cutout size | `discCutoutPercent` | `discCutoutPercent` | Integer 0–50 (default `11`) |
+| Close after save | *(frontend-only)* | `closeAfterSave` | `"true"`, `"false"` (default `false`) |
 
-On every app start, the frontend reads localStorage and calls `SetTouchupSettings` + `SetWarpSettings` to synchronise the Go side.
+On every app start, the frontend reads localStorage and calls `SetTouchupSettings` + `SetWarpSettings` + `SetDiscSettings` to synchronise the Go side. `closeAfterSave` has no Go counterpart — it is consumed entirely in the frontend `handleSaveImage` handler.
 
 ---
 
