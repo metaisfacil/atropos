@@ -22,6 +22,26 @@ export function ClickCorner(arg1) {
   return window['go']['main']['App']['ClickCorner'](arg1);
 }
 
+export function CompositorLoadResult() {
+  return window['go']['main']['App']['CompositorLoadResult']();
+}
+
+export function CompositorOpenFilesDialog() {
+  return window['go']['main']['App']['CompositorOpenFilesDialog']();
+}
+
+export function CompositorOpenSaveDialog() {
+  return window['go']['main']['App']['CompositorOpenSaveDialog']();
+}
+
+export function CompositorSave(arg1) {
+  return window['go']['main']['App']['CompositorSave'](arg1);
+}
+
+export function CompositorStitch(arg1) {
+  return window['go']['main']['App']['CompositorStitch'](arg1);
+}
+
 export function Crop(arg1) {
   return window['go']['main']['App']['Crop'](arg1);
 }
