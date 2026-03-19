@@ -10,7 +10,7 @@ import DelayedHint from './DelayedHint'
 //   blackPoint / setBlackPoint
 //   whitePoint / setWhitePoint
 //   imageLoaded
-//   loading / setLoading
+//   setLoading
 //   setPreview
 export default function AdjustmentsPanel({
   adjPanelOpen, setAdjPanelOpen,
@@ -18,7 +18,7 @@ export default function AdjustmentsPanel({
   blackPoint, setBlackPoint,
   whitePoint, setWhitePoint,
   imageLoaded,
-  loading, setLoading,
+  setLoading,
   setPreview,
   useStretchPreprocess,
   setUseStretchPreprocess,
@@ -124,7 +124,7 @@ export default function AdjustmentsPanel({
                 className="primary auto-contrast-btn"
                 style={{ minWidth: 120 }}
                 onClick={applyAutoContrast}
-                disabled={autoContrastPending || !imageLoaded || loading || !postCropAvailable}
+                disabled={autoContrastPending || !imageLoaded || !postCropAvailable}
               >
                 {autoContrastPending ? 'Auto-contrast…' : 'Auto-contrast'}
               </button>
