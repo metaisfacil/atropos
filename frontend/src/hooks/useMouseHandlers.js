@@ -12,6 +12,7 @@ export function useMouseHandlers({
   setLoading, setZoom, setRealImageDims, setCornerState, setDetectedCornerPts,
   setSelectedCornerPts, setDiscActive, setNormalRect, setLines, setLinesDone,
   setLinesProcessed, setUseStraightEdgeTool,
+  straightEdgeRemainsActive,
   spaceDownRef, panDragRef, canvasRef, ctrlDragRef, shiftDragRef,
   touchupDraggingRef, imgRef, lastResizeRef, mousePosRef,
   commitTouchup, showStatus, showError,
@@ -292,7 +293,7 @@ export function useMouseHandlers({
           setLoading(false)
         }
       }
-      setUseStraightEdgeTool(false)
+      if (!straightEdgeRemainsActive) setUseStraightEdgeTool(false)
       setDragStart(null); setDragCurrent(null)
       return
     }

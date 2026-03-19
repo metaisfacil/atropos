@@ -23,7 +23,7 @@ import {
 
 export function useImageActions({
   mode, loading, imageLoaded, discActive, linesProcessed, normalCropApplied,
-  cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
+  cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
   setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural,
   setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
   setDiscActive, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
@@ -546,6 +546,17 @@ export function useImageActions({
               // RestoreCornerOverlay failed (e.g. stale cache) — fall through to GetCleanPreview
             }
           }
+        }
+
+        if (m === 'corner' && autoDetectOnModeSwitch) {
+          setLoading(true)
+          try {
+            await runDetectCorners(autoCornerParams ? suggestedCornerParamsRef.current : {})
+          } finally {
+            setLoading(false)
+          }
+          setMode(m)
+          return
         }
 
         const res = await GetCleanPreview()
