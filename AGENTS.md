@@ -19,12 +19,12 @@ This document describes the complete system architecture, data flow, and operati
 
 | File | Responsibility |
 |------|----------------|
-| `hooks/useImageActions.js` | All Go API action handlers: `loadFile`, `handleLoadImage`, `handleDetectCorners`, `handleSkipCrop`, `handleRecrop`, `handleResetCorners/Disc/Normal`, `handleNormalCrop`, `handleClearLines`, `handleSaveImage`, `handleModeSwitch`. Also owns the `OnFileDrop` and launch-args `useEffect`s, plus internal `modeRef` and `lastDetectSettings`. |
-| `hooks/useMouseHandlers.js` | All pointer interaction: `handleMouseDown/Move/Up/ImageMouseLeave` across all modes. Owns internal `cornerMouseDownRef`, `ctrlDragBusy`, `shiftDragBusy`. Defines and returns `displayToImage` (also forwarded to `<ImageOverlays>`). |
+| `hooks/useImageActions.js` | All Go API action handlers: `loadFile`, `handleLoadImage`, `handleDetectCorners`, `handleSkipCrop`, `handleRecrop`, `handleResetCorners/Disc/Normal`, `handleNormalCrop`, `handleClearLines`, `handleSaveImage`, `handleModeSwitch`. Also owns the `OnFileDrop` and launch-args `useEffect`s, plus internal `modeRef`, `lastDetectSettings`, and `suggestedCornerParamsRef`. |
+| `hooks/useMouseHandlers.js` | All pointer interaction: `handleMouseDown/Move/Up/ImageMouseLeave` across all modes. Owns internal `cornerMouseDownRef`, `ctrlDragBusy`, `shiftDragBusy`, `normalDragPendingRef`. Defines and returns `displayToImage` (also forwarded to `<ImageOverlays>`). |
 | `hooks/useKeyboardShortcuts.js` | Single `keydown` `useEffect`: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+Z` (undo), `Ctrl+S` (save), `WASDQE` (crop/rotate). WASDQE are guarded by `canSave`; if no crop result exists, `showStatus` is called instead of forwarding to Go (prevents a backend error modal). |
 | `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, window mouseup effect, `EventsOn("touchup-done")` effect. |
 | `hooks/useZoomPan.js` | Canvas viewport: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, scroll `useLayoutEffect`. |
-| `hooks/usePersistentSettings.js` | localStorage-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, `closeAfterSave`). Syncs to Go on startup and on every change. |
+| `hooks/usePersistentSettings.js` | localStorage-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, `autoCornerParams`, `closeAfterSave`). Syncs to Go on startup and on every change. |
 | `hooks/useStatusMessage.js` | `imageInfo` + fade timer logic (`showStatus`). |
 | `components/ImageOverlays.jsx` | Pure render: all SVG overlays (corner dots, touch-up circles, disc guide, straight-edge line, normal crop rect, line mode lines). |
 | `components/StatusBar.jsx` | Thin bar at the bottom of the main content area. Shows file format, pixel dimensions, DPI (when known), and zoom level. Zoom is clickable — clicking resets zoom to 100%. All fields use `DelayedHint` for tooltips. |
@@ -171,7 +171,7 @@ LoadImage(req)
     6. imageToBase64(currentImage)   JPEG, downscaled if > 1600px longest side
     7. Update window title
     8. extractFileMeta(filePath)      read format name + DPI from file header (JPEG JFIF APP0, PNG pHYs chunk, BMP BITMAPINFOHEADER)
-    9. Return ImageInfo{Width, Height, Preview, Format, DPIX, DPIY}
+    9. Return ImageInfo{Width, Height, Preview, Format, DPIX, DPIY, SuggestedCornerParams{MinDistance, MaxCorners}}
 ```
 
 **Frontend `loadFile(filePath, autoDetect)` flow:**
@@ -184,10 +184,13 @@ LoadImage({filePath})
     → setImageMeta({ format, dpiX, dpiY })   ← populated from ImageInfo response
     → reset ALL mode-specific frontend state (cornerCount, linesDone, discActive,
       touchupStrokes, useTouchupTool, useStraightEdgeTool, lastDetectSettings, etc.)
+    → suggestedCornerParamsRef.current = result.suggestedCornerParams  ← dimension-derived defaults
+setLoadingFull(false)                    ← hides opaque loading overlay before detect runs
 if autoDetect && mode === 'corner':
-    DetectCorners(...)
+    DetectCorners(autoCornerParams ? suggestedCornerParamsRef.current overrides : {})
     → setPreview, setCornersDetected(true)
-    → lastDetectSettings.current = current detection params   ← enables restore on next mode switch
+    → setCornerState updated with the overridden maxCorners/minDistance values
+    → lastDetectSettings.current = detection params used   ← enables restore on next mode switch
 setLoading(false)
 ```
 
@@ -411,6 +414,12 @@ ResetDisc()
 ## Normal Mode (`app_normal.go`)
 
 Normal mode is the simplest mode: the user drags a rectangle on the image and clicks **Crop** to apply it. There is no algorithm, no warp, and no additional Go state beyond the shared image fields.
+
+**Drag interaction rules (all enforced in `useMouseHandlers`):**
+- A drag may begin on the canvas area outside image bounds; the selection starts when the cursor first enters the image (entry point becomes `dragStart`).
+- While dragging, `dragCurrent` is clamped to the image boundary — the rectangle tracks the cursor and extends to the edge, but never beyond.
+- A click (drag smaller than 5 px in either dimension) clears any existing `normalRect`.
+- `normalDragPendingRef` tracks the outside-image mousedown state; `e.preventDefault()` is called on that mousedown to suppress the browser's native drag gesture.
 
 ### NormalCrop — Entry Point
 
@@ -891,6 +900,7 @@ Complex argument/return types are defined in `frontend/wailsjs/go/models.ts`.
 | Warp fill color | `warpFillColor` | `warpFillColor` | CSS hex `"#rrggbb"` |
 | Disc centre cutout | `discCenterCutout` | `discCenterCutout` | `"true"`, `"false"` (default `true`) |
 | Disc cutout size | `discCutoutPercent` | `discCutoutPercent` | Integer 0–50 (default `11`) |
+| Auto-adjust corner params | *(frontend-only)* | `autoCornerParams` | `"true"`, `"false"` (default `true`) |
 | Close after save | *(frontend-only)* | `closeAfterSave` | `"true"`, `"false"` (default `false`) |
 
 On every app start, the frontend reads localStorage and calls `SetTouchupSettings` + `SetWarpSettings` + `SetDiscSettings` to synchronise the Go side. `closeAfterSave` has no Go counterpart — it is consumed entirely in the frontend `handleSaveImage` handler.
