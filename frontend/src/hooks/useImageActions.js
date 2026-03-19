@@ -425,7 +425,9 @@ export function useImageActions({
               setCornerState(s => ({ ...s, cornerCount: 0 }))
               setMode(m)
               return
-            } catch (_) {}
+            } catch (_) {
+              // RestoreCornerOverlay failed (e.g. stale cache) — fall through to GetCleanPreview
+            }
           }
         }
 
@@ -440,7 +442,10 @@ export function useImageActions({
           setPreview(res.preview)
         }
         if (res?.width && res?.height) setRealImageDims({ w: res.width, h: res.height })
-      } catch (_) {}
+      } catch (err) {
+        console.error('Mode switch error:', err)
+        showError(err)
+      }
     }
     setMode(m)
   }
