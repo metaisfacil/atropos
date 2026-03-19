@@ -20,6 +20,7 @@ export function useMouseHandlers({
   const ctrlDragBusy         = useRef(false)
   const shiftDragBusy        = useRef(false)
   const normalDragPendingRef = useRef(false) // mousedown outside image in Normal mode — waiting to enter bounds
+  const normalDragActiveRef  = useRef(false) // drag started this frame; bridges the gap before React re-renders dragging=true
   const mouseUpHandledRef    = useRef(false) // set by canvas handler to suppress window handler double-fire
 
   // Refs that shadow state/callback values so the window mouseup listener
@@ -130,6 +131,7 @@ export function useMouseHandlers({
     if (normalDragPendingRef.current) {
       if (mode === 'normal' && !useTouchupTool && insideImage) {
         normalDragPendingRef.current = false
+        normalDragActiveRef.current = true
         ctrlDragRef.current = null
         shiftDragRef.current = null
         setDragging(true); setDragStart(pos); setDragCurrent(pos)
@@ -137,7 +139,7 @@ export function useMouseHandlers({
       return
     }
 
-    if (!dragging) return
+    if (!dragging && !normalDragActiveRef.current) return
     if (pos) {
       if (mode === 'normal' && !useTouchupTool && imgRect) {
         setDragCurrent({
@@ -218,6 +220,7 @@ export function useMouseHandlers({
 
     if (mode === 'normal' && !useTouchupTool) {
       mouseUpHandledRef.current = true
+      normalDragActiveRef.current = false
       if (!dragging || !dragStart || !dragCurrent) { setDragging(false); return }
       setDragging(false)
       const start = displayToImage(dragStart.x, dragStart.y)
@@ -395,6 +398,7 @@ export function useMouseHandlers({
         return
       }
       if (!draggingRef.current) return
+      normalDragActiveRef.current = false
       setDragging(false)
       const ds = dragStartRef.current
       const dc = dragCurrentRef.current
