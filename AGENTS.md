@@ -178,13 +178,18 @@ DetectCorners(req)
     1. Downsample currentImage to max ~1500px on longest side (scaleFactor)
     2. applyAccentAdjustment(currentImage, accentValue)
     3. toGrayscale(adjusted)
-    4. Optional pre-stretch (if useStretch):
-         stretched = stretchGrayPercentiles(workGray, stretchLow, stretchHigh)
-         workGray  = applyCLAHE(stretched, clipLimit=2.0, tileSize=8)
+    4. Contrast stretch (one of two paths, mutually exclusive):
+         if useStretch:
+             stretched = stretchGrayPercentiles(workGray, stretchLow, stretchHigh)
+             workGray  = applyCLAHE(stretched, clipLimit=2.0, tileSize=8)
+         else if mean(workGray) < 100:   ← auto-dark detection
+             stretched = stretchGrayPercentiles(workGray, 0.01, 0.99)
+             workGray  = applyCLAHE(stretched, clipLimit=2.0, tileSize=8)
     5. Multi-scale Shi-Tomasi detection at scales [1, 2, 4]:
          for each scale:
-             resize gray down by scale factor
+             resizeGray (box-filter averaging when downsampling)
              goodFeaturesToTrack(scaled, perScale, quality, minDist, blockSize=7)
+               ↳ internally applies gaussianBlurGray before Sobel gradient computation
              scale results back up to working resolution
          accumulate all corners
     6. Deduplicate: enforce minDistSq/4 between all retained corners
@@ -538,50 +543,93 @@ Switching modes always resets `useTouchupTool` to `false`, and so does loading a
 4. Return *image.Alpha  (alpha > 0 = region to fill)
 ```
 
-### TouchUpApply (commits)
+### Touch-up cancellation
+
+An in-flight `TouchUpApply` can be aborted via two paths:
+
+- **Internal** (`cancelTouchup()`): called at the top of every reset and load handler in Go so that a slow fill never commits stale results after the user has moved on.
+- **External** (`CancelTouchup()`): a public Wails-bound method called **fire-and-forget** (no `await`) from the frontend immediately before any reset IPC call. This ensures the cancel signal arrives at the backend before the reset call, even though both are in-flight concurrently.
+
+| Field / method      | Location          | Purpose |
+|---------------------|-------------------|---------|
+| `touchupCancel`     | `App` struct      | `context.CancelFunc` for the current operation; `nil` when idle |
+| `touchupMu`         | `App` struct      | `sync.Mutex` protecting `touchupCancel` |
+| `cancelTouchup()`   | `app_touchup.go`  | Acquires lock, calls and nils `touchupCancel`. Safe from any goroutine. |
+| `CancelTouchup()`   | `app_touchup.go`  | Wails-bound public wrapper around `cancelTouchup()`. Called fire-and-forget from the frontend. |
+
+`cancelTouchup()` is called at the top of: `ResetCorners`, `ResetDisc`, `ClearLines`, `ResetNormal`, `LoadImage`, `RecropImage`.
+
+### TouchUpApply (commits) — async
+
+`TouchUpApply` is **non-blocking**: it builds the mask synchronously (fast), then launches a goroutine for the fill and returns `ProcessResult{Message:"running"}` immediately. This keeps the Wails IPC queue free so `CancelTouchup()` can arrive and execute while PatchMatch is still running. The fill result is delivered via the `"touchup-done"` Wails event.
 
 ```
-TouchUpApply(maskB64, patchSize, iterations)
-    mask = buildMask(maskB64)
-    if touchupBackend == "iopaint":
-        out = iopaintFill(workingImage, mask)
-    else:
-        out = PatchMatchFill(workingImage, mask, patchSize, iterations)
-    saveUndo()
-    setWorkingImage(out)   ← writes to warpedImage
-    return preview
+TouchUpApply(maskB64, patchSize, iterations) → ProcessResult{Message:"running"}, nil
+    cancelTouchup()                   ← abort any prior in-flight operation
+    ctx, cancel = context.WithCancel(Background)
+    store cancel in touchupCancel (mutex-protected)
+
+    mask = buildMask(maskB64)         ← synchronous; takes ~1s on large images
+
+    go func():
+        defer: cancel(); touchupCancel = nil
+        if touchupBackend == "iopaint":
+            out, err = iopaintFill(ctx, workingImage, mask)
+        else:
+            out, err = PatchMatchFill(ctx, workingImage, mask, patchSize, iterations)
+
+        if err is context.Canceled → EventsEmit("touchup-done", {cancelled:true})
+        if err != nil              → EventsEmit("touchup-done", {error: err})
+        if ctx.Err() != nil        → EventsEmit("touchup-done", {cancelled:true})
+
+        saveUndo()
+        setWorkingImage(out)
+        EventsEmit("touchup-done", {preview, message, width, height})
 ```
+
+The frontend registers a single persistent `EventsOn("touchup-done", ...)` handler (via `useEffect([], [])`) that calls a ref-backed callback so it always sees current state. On `cancelled`, it silently clears the loading spinner. On `error`, it shows an ErrorModal. On success, it updates the preview.
 
 ### PatchMatchFill (patchmatch.go)
 
 ```
-PatchMatchFill(src, mask, patchSize, iterations)
+PatchMatchFill(ctx, src, mask, patchSize, iterations) → (*image.NRGBA, error)
+    0. ctx.Err() check at entry → return immediately if already cancelled
     1. Collect all target patches (center pixel masked)
+         ctx.Err() check every 64 rows → return if cancelled during init
     2. Collect all source patches (no mask overlap)
+         ctx.Err() check every 64 rows → return if cancelled during init
     3. Randomly initialise nearest-neighbour field (NNF)
     4. For each iteration:
-         forward pass:  propagate from left/up neighbours + random search
-         reverse pass:  propagate from right/down neighbours + random search
+         check ctx.Done() → return nil, ctx.Err() if cancelled
+         forward pass (parallelised):
+             each worker checks ctx.Done() per target → returns early if cancelled
+         wg.Wait(); check ctx.Err() again
+         reverse pass (parallelised):
+             each worker checks ctx.Done() per target → returns early if cancelled
+         wg.Wait(); check ctx.Err() again
     5. Reconstruct: for each target pixel, average contributions from best source patch
-    6. Return dst
+    6. Return dst, nil
 ```
+
+The entry-point `ctx.Err()` check is critical: `buildMask` can take ~1s on large images, so the context may already be cancelled by the time `PatchMatchFill` starts. Without the upfront check, PatchMatch would run the entire O(w×h×patchSize²) initialization (billions of ops on a 5000px image) before reaching any cancellation point. Workers check `ctx.Done()` via a non-blocking `select` at the top of every per-target loop. `ctx.Done()` is pre-fetched into a local `done` variable before the goroutines start; for `context.Background()` (used by warp outpaint) the channel is nil and the select always takes the default branch with zero overhead.
 
 ### iopaintFill (app_iopaint.go)
 
 ```
-iopaintFill(src, mask)
+iopaintFill(ctx, src, mask) → (*image.NRGBA, error)
     1. Encode src as PNG → base64 data URI
     2. Build grayscale mask PNG (white=fill, black=keep) → base64 data URI
-    3. POST JSON to {iopaintURL}/api/v1/inpaint  (120s timeout)
+    3. http.NewRequestWithContext(ctx, POST, {iopaintURL}/api/v1/inpaint, body)
+       client.Do(req)   ← request is torn down immediately if ctx is cancelled
     4. Parse response:
          try raw image.Decode on body bytes
          fall back to JSON {"image": "data:...;base64,..."}
-    5. return toNRGBA(decoded)
+    5. return toNRGBA(decoded), nil
 ```
 
-**Failure handling:** `iopaintFill` errors propagate to `TouchUpFill`/`TouchUpApply` as hard errors. The frontend displays a modal with a user-friendly message. There is **no automatic fallback** to PatchMatch for touch-up.
+**Failure handling:** `iopaintFill` errors (other than `context.Canceled`) propagate to `TouchUpApply` as hard errors. The frontend displays a modal with a user-friendly message. There is **no automatic fallback** to PatchMatch for touch-up.
 
-**Outpaint (warp fill) always uses PatchMatch** — IOPaint is not used for out-of-bounds warp regions because it is an inpainting (not outpainting) model.
+**Outpaint (warp fill) always uses PatchMatch** — IOPaint is not used for out-of-bounds warp regions because it is an inpainting (not outpainting) model. Warp fill passes `context.Background()` to `PatchMatchFill` and is not cancellable.
 
 ---
 
@@ -835,3 +883,4 @@ On every app start, the frontend reads localStorage and calls `SetTouchupSetting
 10. **Not clearing purely-frontend selection state in `handleSkipCrop`** — Skip crop bypasses phase 1 without going through the normal commit path, so any pending frontend-only selection (e.g. `normalRect` in Normal mode) must be explicitly cleared there. If it isn't, the selection overlay remains visible even though the user is now past the crop phase.
 11. **Omitting disc state from `LoadImage` / `RecropImage` resets** — `discRadius`, `discBaseImage`, `rotationAngle`, and related fields are only cleared by `ResetDisc`. If a new image is loaded (or re-cropped) without resetting these, a stale `discRadius > 0` causes `AutoContrast` (and other post-warp paths) to enter the disc code path and call `redrawDisc()`, which renders from the old `discBaseImage` and shows a previously loaded image.
 12. **Forgetting to reset tool-toggle state in `loadFile`** — `useTouchupTool` and `useStraightEdgeTool` must be reset to `false` when a new image is loaded, just as they are on mode switches. If omitted, the brush or straight-edge tool stays visually active on the new image and cannot be toggled off without switching modes.
+13. **Forgetting `cancelTouchup()` in a new reset or load path** — any Go path that clears `warpedImage` and returns the app to a "clean" state must call `a.cancelTouchup()` first. Any JS reset handler must also call `CancelTouchup()` (fire-and-forget, no `await`) before the reset IPC call. Without both, an in-flight `TouchUpApply` (PatchMatch or IOPaint) can finish and emit `touchup-done` or call `saveUndo()` / `setWorkingImage()` after the reset has already cleared the image.

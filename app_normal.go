@@ -71,6 +71,7 @@ func (a *App) NormalCrop(req NormalCropRequest) (*ProcessResult, error) {
 // currentImage — consistent with ResetCorners / ClearLines / ResetDisc.
 func (a *App) ResetNormal() (*ProcessResult, error) {
 	a.logf("ResetNormal")
+	a.cancelTouchup()
 	a.warpedImage = nil
 	img := a.workingImage()
 	if img == nil {

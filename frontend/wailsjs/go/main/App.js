@@ -10,6 +10,10 @@ export function AutoContrast() {
   return window['go']['main']['App']['AutoContrast']();
 }
 
+export function CancelTouchup() {
+  return window['go']['main']['App']['CancelTouchup']();
+}
+
 export function ClearLines() {
   return window['go']['main']['App']['ClearLines']();
 }

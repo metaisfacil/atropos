@@ -142,6 +142,7 @@ func (a *App) ProcessLines() (*ProcessResult, error) {
 // ClearLines removes all drawn lines and restores the pre-line image.
 func (a *App) ClearLines() (*ProcessResult, error) {
 	a.logf("ClearLines")
+	a.cancelTouchup()
 	a.lines = nil
 	a.warpedImage = nil
 

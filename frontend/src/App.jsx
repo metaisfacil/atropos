@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import './App.css'
-import { OnFileDrop, OnFileDropOff, Quit } from '../wailsjs/runtime/runtime'
+import { OnFileDrop, OnFileDropOff, Quit, EventsOn, EventsOff } from '../wailsjs/runtime/runtime'
 import {
   LoadImage,
   DetectCorners,
@@ -33,6 +33,7 @@ import {
   SetWarpSettings,
   SetDiscSettings,
   RecropImage,
+  CancelTouchup,
 } from '../wailsjs/go/main/App'
 
 import NormalCropPanel  from './components/NormalCropPanel'
@@ -248,17 +249,20 @@ export default function App() {
       let patchSize = Math.max(7, Math.floor(brushSize / 3))
       if (patchSize % 2 === 0) patchSize++
       const iterations = 5
-      const result = await window['go']['main']['App']['TouchUpApply'](b64, patchSize, iterations)
-      if (result?.preview) setPreview(result.preview)
-      showStatus(result?.message || '')
+      // TouchUpApply returns immediately after launching the fill goroutine.
+      // The result (preview, error, or cancellation) arrives via the
+      // "touchup-done" event handled by touchupDoneHandlerRef. setLoading(false)
+      // is therefore NOT called here — the event handler does it.
+      await window['go']['main']['App']['TouchUpApply'](b64, patchSize, iterations)
+      setTouchupStrokes([])
     } catch (err) {
+      // Immediate errors (no image, mask decode failure, canvas issues).
       console.error('TouchUp commit error:', err)
       showStatus('')
       const hint = touchupBackend === 'iopaint'
         ? '\n\nPlease make sure IOPaint is running and that you have the server address configured correctly. Alternatively, try switching to the PatchMatch backend in Options.'
         : ''
       setErrorMessage('Failed to inpaint.' + hint + '\n\n' + (err?.message || String(err)))
-    } finally {
       setTouchupStrokes([])
       setLoading(false)
     }
@@ -279,6 +283,9 @@ export default function App() {
   // Holds the latest touch-up commit handler for the window-level mouseup listener.
   // Updated every render so the closure always sees fresh state.
   const windowTouchupMouseUpRef = useRef(null)
+  // Holds the latest "touchup-done" event handler. Updated every render so the
+  // closure always sees current state (preview, error helpers, etc.).
+  const touchupDoneHandlerRef = useRef(null)
 
   // ── Coordinate helpers ────────────────────────────────────────────────────
   const displayToImage = useCallback((dispX, dispY) => {
@@ -316,6 +323,7 @@ export default function App() {
 
   // Shared logic for loading a file path (used by dialog + drag-drop + CLI args)
   const loadFile = async (filePath, autoDetect = true) => {
+    CancelTouchup()
     setLoading(true)
     setLoadingFull(true)
     setZoom(1)
@@ -429,6 +437,27 @@ export default function App() {
     return () => window.removeEventListener('mouseup', handler)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Touch-up done event (result of async TouchUpApply goroutine) ──────────
+  // Handler is refreshed every render; the useEffect subscribes once at mount.
+  touchupDoneHandlerRef.current = (data) => {
+    setLoading(false)
+    if (data?.cancelled) return
+    if (data?.error) {
+      showStatus('')
+      const hint = touchupBackend === 'iopaint'
+        ? '\n\nPlease make sure IOPaint is running and that you have the server address configured correctly. Alternatively, try switching to the PatchMatch backend in Options.'
+        : ''
+      setErrorMessage('Failed to inpaint.' + hint + '\n\n' + data.error)
+    } else if (data?.preview) {
+      setPreview(data.preview)
+      showStatus(data.message || '')
+    }
+  }
+  useEffect(() => {
+    EventsOn('touchup-done', (data) => touchupDoneHandlerRef.current?.(data))
+    return () => EventsOff('touchup-done')
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Launch arguments ───────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
@@ -524,6 +553,7 @@ export default function App() {
     setConfirmDialog({
       message: 'Re-crop will use the current output as a new source image, resetting all crop and adjustment state. Continue?',
       onConfirm: async () => {
+        CancelTouchup()
         setConfirmDialog(null)
         setLoading(true)
         showStatus('Re-cropping…')
@@ -559,6 +589,7 @@ export default function App() {
   }
 
   const handleResetCorners = async () => {
+    CancelTouchup()
     setLoading(true)
     showStatus('Resetting corners…')
     try {
@@ -579,6 +610,7 @@ export default function App() {
   }
 
   const handleResetDisc = async () => {
+    CancelTouchup()
     setLoading(true)
     showStatus('Resetting disc…')
     try {
@@ -601,6 +633,7 @@ export default function App() {
   }
 
   const handleResetNormal = async () => {
+    CancelTouchup()
     setLoading(true)
     showStatus('Resetting normal crop…')
     try {
@@ -639,6 +672,7 @@ export default function App() {
   }
 
   const handleClearLines = async () => {
+    CancelTouchup()
     setLoading(true)
     showStatus('Resetting lines…')
     try {
@@ -1226,6 +1260,7 @@ export default function App() {
                 setUseTouchupTool(false)
                 setUseStraightEdgeTool(false)
                 if (imageLoaded) {
+                  CancelTouchup()
                   try {
                     if (mode === 'corner') {
                       setCornerState(s => ({ ...s, cornerCount: 0 }))

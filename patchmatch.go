@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"image"
 	"image/draw"
 	"math"
@@ -17,7 +18,11 @@ import (
 // PatchMatchFill fills regions marked in mask (alpha>0) in src and returns
 // a new `*image.NRGBA` with filled pixels. patchSize should be odd (e.g. 7).
 // iterations controls the number of propagation/random-search passes.
-func PatchMatchFill(src *image.NRGBA, mask *image.Alpha, patchSize, iterations int) *image.NRGBA {
+// ctx is checked between iterations; a cancellation returns (nil, ctx.Err()).
+func PatchMatchFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha, patchSize, iterations int) (*image.NRGBA, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if patchSize%2 == 0 {
 		patchSize++
 	}
@@ -51,6 +56,11 @@ func PatchMatchFill(src *image.NRGBA, mask *image.Alpha, patchSize, iterations i
 	type pt struct{ x, y int }
 	var targets []pt
 	for y := half; y < h-half; y++ {
+		if y%64 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		for x := half; x < w-half; x++ {
 			if alphaAt(mask, x, y) > 0 {
 				targets = append(targets, pt{x, y})
@@ -58,12 +68,17 @@ func PatchMatchFill(src *image.NRGBA, mask *image.Alpha, patchSize, iterations i
 		}
 	}
 	if len(targets) == 0 {
-		return dst
+		return dst, nil
 	}
 
 	// Build list of valid source centers (patches that do not overlap the mask)
 	var sources []pt
 	for y := half; y < h-half; y++ {
+		if y%64 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		for x := half; x < w-half; x++ {
 			ok := true
 			for dy := -half; dy <= half && ok; dy++ {
@@ -81,7 +96,7 @@ func PatchMatchFill(src *image.NRGBA, mask *image.Alpha, patchSize, iterations i
 	}
 	if len(sources) == 0 {
 		// no valid sources; nothing sensible to do
-		return dst
+		return dst, nil
 	}
 
 	rand.Seed(time.Now().UnixNano())
@@ -140,6 +155,11 @@ func PatchMatchFill(src *image.NRGBA, mask *image.Alpha, patchSize, iterations i
 	}
 
 	for it := 0; it < iterations; it++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err() // cancelled between iterations
+		default:
+		}
 		// Snapshot current field and cost for read-only access during this iteration.
 		srcNnf := make([]pt, len(nnf))
 		srcCost := make([]float64, len(cost))
@@ -149,6 +169,7 @@ func PatchMatchFill(src *image.NRGBA, mask *image.Alpha, patchSize, iterations i
 		newNnf := make([]pt, len(nnf))
 		newCost := make([]float64, len(cost))
 
+		done := ctx.Done() // nil for context.Background() — select default always fires
 		var wg sync.WaitGroup
 		wg.Add(workers)
 		for wi := 0; wi < workers; wi++ {
@@ -157,6 +178,11 @@ func PatchMatchFill(src *image.NRGBA, mask *image.Alpha, patchSize, iterations i
 			go func(start, end int) {
 				defer wg.Done()
 				for i := start; i < end; i++ {
+					select {
+					case <-done:
+						return
+					default:
+					}
 					t := targets[i]
 					cx, cy := t.x, t.y
 					best := srcNnf[i]
@@ -203,6 +229,9 @@ func PatchMatchFill(src *image.NRGBA, mask *image.Alpha, patchSize, iterations i
 			}(start, end)
 		}
 		wg.Wait()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 
 		// Reverse pass: process indices in reverse order but still partitioned
 		// across workers. We reuse srcNnf/srcCost for proposals and write
@@ -215,6 +244,11 @@ func PatchMatchFill(src *image.NRGBA, mask *image.Alpha, patchSize, iterations i
 			go func(start, end int) {
 				defer wg.Done()
 				for ii := end - 1; ii >= start; ii-- {
+					select {
+					case <-done:
+						return
+					default:
+					}
 					t := targets[ii]
 					cx, cy := t.x, t.y
 					best := srcNnf[ii]
@@ -259,6 +293,9 @@ func PatchMatchFill(src *image.NRGBA, mask *image.Alpha, patchSize, iterations i
 			}(start, end)
 		}
 		wg.Wait()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 
 		// swap in new arrays
 		nnf = newNnf
@@ -372,5 +409,5 @@ func PatchMatchFill(src *image.NRGBA, mask *image.Alpha, patchSize, iterations i
 		}
 	}
 
-	return dst
+	return dst, nil
 }

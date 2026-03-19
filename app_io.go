@@ -37,6 +37,7 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 		return nil, fmt.Errorf("another image is still loading — please wait")
 	}
 	defer a.loadMu.Unlock()
+	a.cancelTouchup()
 
 	a.logf("LoadImage: filePath=%q", req.FilePath)
 
@@ -225,6 +226,7 @@ func (a *App) SaveImage(req SaveRequest) (*ProcessResult, error) {
 // the result of the first one without having to save and reload the file.
 func (a *App) RecropImage() (*ImageInfo, error) {
 	a.logf("RecropImage: called")
+	a.cancelTouchup()
 	if a.warpedImage == nil {
 		return nil, fmt.Errorf("no processed image to re-crop from")
 	}

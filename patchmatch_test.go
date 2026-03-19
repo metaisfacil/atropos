@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"image/draw"
@@ -36,7 +37,10 @@ func TestPatchMatchFillRuns(t *testing.T) {
 		}
 	}
 
-	out := PatchMatchFill(src, mask, 7, 4)
+	out, err := PatchMatchFill(context.Background(), src, mask, 7, 4)
+	if err != nil {
+		t.Fatalf("PatchMatchFill returned error: %v", err)
+	}
 	if out == nil {
 		t.Fatal("PatchMatchFill returned nil")
 	}

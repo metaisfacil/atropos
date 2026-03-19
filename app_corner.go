@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"math"
@@ -89,7 +90,10 @@ func (a *App) applyWarpFill(img *image.NRGBA, oobMask *image.Alpha) *image.NRGBA
 	}
 
 	if a.warpFillMode == "outpaint" {
-		out := PatchMatchFill(img, oobMask, 9, 5)
+		out, _ := PatchMatchFill(context.Background(), img, oobMask, 9, 5)
+		if out == nil {
+			out = img
+		}
 		a.logf("applyWarpFill: outpaint OK")
 		return out
 	}
@@ -377,6 +381,7 @@ func (a *App) RestoreCornerOverlay(req RestoreCornerOverlayRequest) (*ProcessRes
 // are preserved and returned so the frontend can restore its SVG overlay.
 func (a *App) ResetCorners() (*ProcessResult, error) {
 	a.logf("ResetCorners")
+	a.cancelTouchup()
 	a.selectedCorners = nil
 	a.warpedImage = nil
 

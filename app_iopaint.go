@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -62,7 +63,8 @@ type iopaintRequest struct {
 // iopaintFill calls the IOPaint /api/v1/inpaint endpoint and returns the full
 // result image with the masked region inpainted.
 // mask: alpha > 0 marks pixels to be filled (white in the mask sent to IOPaint).
-func (a *App) iopaintFill(src *image.NRGBA, mask *image.Alpha) (*image.NRGBA, error) {
+// ctx cancels the in-flight HTTP request if the caller is aborted.
+func (a *App) iopaintFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha) (*image.NRGBA, error) {
 	// Encode source image as PNG, then base64.
 	var imgBuf bytes.Buffer
 	if err := png.Encode(&imgBuf, src); err != nil {
@@ -138,8 +140,13 @@ func (a *App) iopaintFill(src *image.NRGBA, mask *image.Alpha) (*image.NRGBA, er
 	endpoint := strings.TrimRight(a.iopaintURL, "/") + "/api/v1/inpaint"
 	a.logf("iopaintFill: POST %s (body=%d bytes)", endpoint, len(bodyBytes))
 
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("iopaint: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Post(endpoint, "application/json", bytes.NewReader(bodyBytes))
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("iopaint: POST %s: %w", endpoint, err)
 	}

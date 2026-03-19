@@ -292,6 +292,7 @@ func (a *App) SetBackgroundColor(r, g, b int) {
 // ResetDisc clears the disc selection and restores the pre-disc image.
 func (a *App) ResetDisc() (*ProcessResult, error) {
 	a.logf("ResetDisc")
+	a.cancelTouchup()
 	a.discCenter = image.Point{}
 	a.discRadius = 0
 	a.rotationAngle = 0

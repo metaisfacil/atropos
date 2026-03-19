@@ -73,6 +73,11 @@ type App struct {
 	touchupBackend string // "patchmatch" or "iopaint"
 	iopaintURL     string
 
+	// touchupCancel cancels an in-flight TouchUpApply (PatchMatch or IOPaint).
+	// Protected by touchupMu; nil when no operation is running.
+	touchupMu     sync.Mutex
+	touchupCancel context.CancelFunc
+
 	// Warp out-of-bounds fill settings
 	warpFillMode  string      // "clamp", "fill", or "outpaint"
 	warpFillColor color.NRGBA // used when warpFillMode == "fill"
