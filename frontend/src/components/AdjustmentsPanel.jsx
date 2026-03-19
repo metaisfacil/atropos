@@ -22,7 +22,7 @@ export default function AdjustmentsPanel({
   setPreview,
   useStretchPreprocess,
   setUseStretchPreprocess,
-  touchupAvailable,
+  postCropAvailable,
   useTouchupTool,
   setUseTouchupTool,
   brushSize,
@@ -84,7 +84,7 @@ export default function AdjustmentsPanel({
                   if (!useTouchupTool) setUseStraightEdgeTool(false)
                   setUseTouchupTool(!useTouchupTool)
                 }}
-                disabled={!touchupAvailable}
+                disabled={!postCropAvailable}
                 aria-pressed={useTouchupTool}
               >
                 Touch-up brush
@@ -124,7 +124,7 @@ export default function AdjustmentsPanel({
                 className="primary auto-contrast-btn"
                 style={{ minWidth: 120 }}
                 onClick={applyAutoContrast}
-                disabled={autoContrastPending || !imageLoaded || loading}
+                disabled={autoContrastPending || !imageLoaded || loading || !postCropAvailable}
               >
                 {autoContrastPending ? 'Auto-contrast…' : 'Auto-contrast'}
               </button>
@@ -150,7 +150,7 @@ export default function AdjustmentsPanel({
                 value={blackPoint}
                 onChange={(e) => setBlackPoint(Number(e.target.value))}
                 onMouseUp={(e) => applyLevels(Number(e.target.value), whitePoint)}
-                disabled={!imageLoaded}
+                disabled={!imageLoaded || !postCropAvailable}
               />
               <span className="level-value">{blackPoint}</span>
           </div>
@@ -165,7 +165,7 @@ export default function AdjustmentsPanel({
                 value={whitePoint}
                 onChange={(e) => setWhitePoint(Number(e.target.value))}
                 onMouseUp={(e) => applyLevels(blackPoint, Number(e.target.value))}
-                disabled={!imageLoaded}
+                disabled={!imageLoaded || !postCropAvailable}
               />
               <span className="level-value">{whitePoint}</span>
           </div>
