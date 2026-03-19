@@ -20,7 +20,7 @@ This document describes the complete system architecture, data flow, and operati
 | File | Responsibility |
 |------|----------------|
 | `hooks/useImageActions.js` | All Go API action handlers: `loadFile`, `handleLoadImage`, `handleDetectCorners`, `handleSkipCrop`, `handleRecrop`, `handleResetCorners/Disc/Normal`, `handleNormalCrop`, `handleClearLines`, `handleSaveImage`, `handleModeSwitch`. Also owns the `OnFileDrop` and launch-args `useEffect`s, plus internal `modeRef`, `lastDetectSettings`, and `suggestedCornerParamsRef`. |
-| `hooks/useMouseHandlers.js` | All pointer interaction: `handleMouseDown/Move/Up/ImageMouseLeave` across all modes. Owns internal `cornerMouseDownRef`, `ctrlDragBusy`, `shiftDragBusy`, `normalDragPendingRef`. Defines and returns `displayToImage` (also forwarded to `<ImageOverlays>`). |
+| `hooks/useMouseHandlers.js` | All pointer interaction: `handleMouseDown/Move/Up/ImageMouseLeave` across all modes. Owns internal `cornerMouseDownRef`, `ctrlDragBusy`, `shiftDragBusy`, `normalDragPendingRef`, `normalDragActiveRef`, `mouseUpHandledRef`. Registers a `window` `mouseup` listener (via `useEffect`) to commit or cancel Normal mode drags that end outside the canvas-area. Defines and returns `displayToImage` (also forwarded to `<ImageOverlays>`). |
 | `hooks/useKeyboardShortcuts.js` | Single `keydown` `useEffect`: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+Z` (undo), `Ctrl+S` (save), `WASDQE` (crop/rotate). WASDQE are guarded by `canSave`; if no crop result exists, `showStatus` is called instead of forwarding to Go (prevents a backend error modal). |
 | `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, window mouseup effect, `EventsOn("touchup-done")` effect. |
 | `hooks/useZoomPan.js` | Canvas viewport: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, scroll `useLayoutEffect`. |
@@ -420,6 +420,8 @@ Normal mode is the simplest mode: the user drags a rectangle on the image and cl
 - While dragging, `dragCurrent` is clamped to the image boundary — the rectangle tracks the cursor and extends to the edge, but never beyond.
 - A click (drag smaller than 5 px in either dimension) clears any existing `normalRect`.
 - `normalDragPendingRef` tracks the outside-image mousedown state; `e.preventDefault()` is called on that mousedown to suppress the browser's native drag gesture.
+- `normalDragActiveRef` is set `true` synchronously when the pending drag transitions to active (same frame as the `setDragging(true)` call). This lets subsequent `mousemove` events bypass the `if (!dragging) return` guard before React re-renders with the new state, so `dragCurrent` updates from the very first pixel inside the image.
+- `mouseUpHandledRef` is set by the canvas `handleMouseUp` whenever it processes a Normal mode event, preventing the `window` `mouseup` listener from double-committing the same gesture. The window listener covers releases outside the canvas-area (sidebar, outside browser window).
 
 ### NormalCrop — Entry Point
 
