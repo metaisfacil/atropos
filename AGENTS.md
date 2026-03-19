@@ -13,6 +13,26 @@ This document describes the complete system architecture, data flow, and operati
 
 ---
 
+## Frontend File Map
+
+`App.jsx` is a thin coordination layer (~420 lines): state declarations, hook wiring, and JSX render. All logic lives in hooks and components under `frontend/src/`.
+
+| File | Responsibility |
+|------|----------------|
+| `hooks/useImageActions.js` | All Go API action handlers: `loadFile`, `handleLoadImage`, `handleDetectCorners`, `handleSkipCrop`, `handleRecrop`, `handleResetCorners/Disc/Normal`, `handleNormalCrop`, `handleClearLines`, `handleSaveImage`, `handleModeSwitch`. Also owns the `OnFileDrop` and launch-args `useEffect`s, plus internal `modeRef` and `lastDetectSettings`. |
+| `hooks/useMouseHandlers.js` | All pointer interaction: `handleMouseDown/Move/Up/ImageMouseLeave` across all modes. Owns internal `cornerMouseDownRef`, `ctrlDragBusy`, `shiftDragBusy`. Defines and returns `displayToImage` (also forwarded to `<ImageOverlays>`). |
+| `hooks/useKeyboardShortcuts.js` | Single `keydown` `useEffect`: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+Z` (undo), `Ctrl+S` (save), `WASDQE` (crop/rotate). |
+| `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, window mouseup effect, `EventsOn("touchup-done")` effect. |
+| `hooks/useZoomPan.js` | Canvas viewport: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, scroll `useLayoutEffect`. |
+| `hooks/usePersistentSettings.js` | localStorage-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, `closeAfterSave`). Syncs to Go on startup and on every change. |
+| `hooks/useStatusMessage.js` | `imageInfo` + fade timer logic (`showStatus`). |
+| `components/ImageOverlays.jsx` | Pure render: all SVG overlays (corner dots, touch-up circles, disc guide, straight-edge line, normal crop rect, line mode lines). |
+| `components/*Panel.jsx` | Mode-specific sidebar controls. `AdjustmentsPanel` also owns the levels sliders, auto-contrast, and touch-up brush controls. |
+
+`ctrlDragRef` and `shiftDragRef` are defined in `App.jsx` (not moved to `useMouseHandlers`) because they are read by `<ImageOverlays>` at render time for the disc guide condition, in addition to being written by the mouse handlers.
+
+---
+
 ## Critical Image State Machine
 
 This is the single most important concept in the codebase. Every operation must be understood in terms of which image field it reads and writes.
@@ -40,18 +60,18 @@ originalImage  ──  immutable after LoadImage; never modified
 
 ### Fields (defined in `app.go` App struct)
 
-| Field                 | Type             | Meaning                                                                                                                                                                                                                                                                                                                                                                |
-|-----------------------|------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `originalImage`       | `*image.NRGBA`   | Full-resolution decoded source. Never modified after `LoadImage`.                                                                                                                                                                                                                                                                                                      |
-| `currentImage`        | `*image.NRGBA`   | Working image before any warp/disc operation. Pre-warp levels adjustments write here.                                                                                                                                                                                                                                                                                  |
-| `warpedImage`         | `*image.NRGBA`   | The current "committed" result. `SaveImage` reads **only** this field. If nil, `workingImage()` falls back to `currentImage`.                                                                                                                                                                                                                                          |
-| `levelsBaseImage`     | `*image.NRGBA`   | Snapshot taken on the **first** slider drag after any committing operation. All subsequent slider ticks apply levels to this base, preventing value stacking. Cleared by `saveUndo()`.                                                                                                                                                                                 |
-| `discBaseImage`       | `*image.NRGBA`   | Snapshot of `currentImage` captured at `DrawDisc` time. `redrawDisc()` **always** sources from this image, not `warpedImage`, so every re-render of the disc is deterministic.                                                                                                                                                                                         |
-| `undoStack`           | `[]undoEntry`    | LIFO stack capped at `undoLimit` (10). Each entry is an `undoEntry{image, rotationAngle}`. `rotationAngle` is non-nil only for `saveDiscRotationUndo()` snapshots (e.g. `StraightEdgeRotate`).                                                                                                                                                                         |
-| `discWorkingCrop`     | `*image.NRGBA`   | Pre-cropped sub-region of `discBaseImage` centred on the disc with a generous extra margin (`discWorkingCropShiftPadding = 500 px`). `redrawDisc` reads from this small image instead of the full `discBaseImage` to avoid cache thrashing on large images. Refreshed on `DrawDisc` and when a shift moves the disc outside the cached region. Cleared by `ResetDisc`. |
-| `discWorkingCropRect` | `image.Rectangle`| Records the rect of `discBaseImage` that `discWorkingCrop` covers (in `discBaseImage` coordinates). Used to detect when a shift has moved the disc outside the working crop.                                                                                                                                                                                           |
-| `discCenterCutout`    | `bool`           | When true, `redrawDisc` punches a circular hole at the disc centre to expose `bgColor`. Default: `true`.                                                                                                                                                                                                                                                               |
-| `discCutoutPercent`   | `int`            | Diameter of the centre cutout as a percentage of the disc diameter (1–50). Cutout radius = `discRadius * discCutoutPercent / 100`. Default: `11`.                                                                                                                                                                                                                      |
+| Field | Type | Meaning |
+|-------|------|---------|
+| `originalImage` | `*image.NRGBA` | Full-resolution decoded source. Never modified after `LoadImage`. |
+| `currentImage` | `*image.NRGBA` | Working image before any warp/disc operation. Pre-warp levels adjustments write here. |
+| `warpedImage` | `*image.NRGBA` | The current "committed" result. `SaveImage` reads **only** this field. If nil, `workingImage()` falls back to `currentImage`. |
+| `levelsBaseImage` | `*image.NRGBA` | Snapshot taken on the **first** slider drag after any committing operation. All subsequent slider ticks apply levels to this base, preventing value stacking. Cleared by `saveUndo()`. |
+| `discBaseImage` | `*image.NRGBA` | Snapshot of `currentImage` captured at `DrawDisc` time. `redrawDisc()` **always** sources from this image, not `warpedImage`, so every re-render of the disc is deterministic. |
+| `undoStack` | `[]undoEntry` | LIFO stack capped at `undoLimit` (10). Each entry is an `undoEntry{image, rotationAngle}`. `rotationAngle` is non-nil only for `saveDiscRotationUndo()` snapshots (e.g. `StraightEdgeRotate`). |
+| `discWorkingCrop` | `*image.NRGBA` | Pre-cropped sub-region of `discBaseImage` centred on the disc with a generous extra margin (`discWorkingCropShiftPadding = 500 px`). `redrawDisc` reads from this small image instead of the full `discBaseImage` to avoid cache thrashing on large images. Refreshed on `DrawDisc` and when a shift moves the disc outside the cached region. Cleared by `ResetDisc`. |
+| `discWorkingCropRect` | `image.Rectangle` | Records the rect of `discBaseImage` that `discWorkingCrop` covers (in `discBaseImage` coordinates). Used to detect when a shift has moved the disc outside the working crop. |
+| `discCenterCutout` | `bool` | When true, `redrawDisc` punches a circular hole at the disc centre to expose `bgColor`. Default: `true`. |
+| `discCutoutPercent` | `int` | Diameter of the centre cutout as a percentage of the disc diameter (1–50). Cutout radius = `discRadius * discCutoutPercent / 100`. Default: `11`. |
 
 ### `workingImage()` (in `app_adjust.go`)
 
@@ -102,19 +122,19 @@ Wails runtime
 
 **NewApp() defaults:**
 
-| Field              | Default                          |
-|--------------------|----------------------------------|
-| `undoLimit`        | 10                               |
-| `featherSize`      | 15                               |
-| `cropAmount`       | 3                                |
-| `bgColor`          | white (255,255,255,255)          |
-| `postDiscWhite`    | 255                              |
-| `touchupBackend`   | `"patchmatch"`                   |
-| `iopaintURL`       | `"http://127.0.0.1:8086/"`       |
-| `warpFillMode`     | `"clamp"`                        |
-| `warpFillColor`    | white                            |
-| `discCenterCutout` | `true`                           |
-| `discCutoutPercent`| 11                              |
+| Field | Default |
+|-------|---------|
+| `undoLimit` | 10 |
+| `featherSize` | 15 |
+| `cropAmount` | 3 |
+| `bgColor` | white (255,255,255,255) |
+| `postDiscWhite` | 255 |
+| `touchupBackend` | `"patchmatch"` |
+| `iopaintURL` | `"http://127.0.0.1:8086/"` |
+| `warpFillMode` | `"clamp"` |
+| `warpFillColor` | white |
+| `discCenterCutout` | `true` |
+| `discCutoutPercent` | 11 |
 
 **Settings persistence:** Go fields are in-memory only. The frontend persists settings to `localStorage` and re-hydrates the Go side on every startup via `SetTouchupSettings` / `SetWarpSettings`. The frontend is the source of truth.
 
@@ -248,12 +268,12 @@ SkipCrop()
 
 `SkipCrop` is available in all four modes. It is the backend half of the "Skip crop" button. The frontend sets mode-specific state to transition past the 1st phase without performing a warp:
 
-| Mode   | Frontend state change after SkipCrop              |
-|--------|---------------------------------------------------|
-| Corner | `cornerCount = 4`, clears `detectedCornerPts`     |
-| Disc   | `discActive = true`                               |
-| Line   | `linesProcessed = true`                           |
-| Normal | `normalCropApplied = true`                        |
+| Mode | Frontend state change after SkipCrop |
+|------|--------------------------------------|
+| Corner | `cornerCount = 4`, clears `detectedCornerPts` |
+| Disc | `discActive = true` |
+| Line | `linesProcessed = true` |
+| Normal | `normalCropApplied = true` |
 
 The frontend also sets `cropSkipped = true`, which disables all 1st-phase sidebar controls (Corner detection sliders and Detect button; Disc feather/cutout sliders) until Reset is clicked. Line drawing on the canvas is also blocked when `linesProcessed` is true. `cropSkipped` is cleared by every reset path: `handleResetCorners`, `handleResetDisc`, `handleClearLines`, `handleResetNormal`, `loadFile`, and all mode-switch reset branches.
 
@@ -415,10 +435,10 @@ Consistent with `ResetCorners` / `ClearLines` / `ResetDisc`: clears `warpedImage
 
 ### Frontend state
 
-| State               | Meaning                                                                                    |
-|---------------------|--------------------------------------------------------------------------------------------|
-| `normalRect`        | `{x1,y1,x2,y2}` image-space selection drawn by the user, or `null` if no pending selection |
-| `normalCropApplied` | `true` after the first crop (or Skip crop) — unlocks touch-up and marks phase 1 done       |
+| State | Meaning |
+|-------|---------|
+| `normalRect` | `{x1,y1,x2,y2}` image-space selection drawn by the user, or `null` if no pending selection |
+| `normalCropApplied` | `true` after the first crop (or Skip crop) — unlocks touch-up and marks phase 1 done |
 
 `normalRect` is purely frontend; it is never sent to Go until the user clicks **Crop**. After `NormalCrop` returns, `normalRect` is cleared to `null` and `normalCropApplied` is set to `true`. Unlike other modes, the user can draw and apply additional rectangles after the first crop without resetting — each further crop operates on the already-cropped `warpedImage`.
 
@@ -525,12 +545,12 @@ Undo()
 
 The touch-up brush button is **disabled** until the initial crop has been committed in the current mode (either by completing the normal 1st-phase operation or by clicking "Skip crop"):
 
-| Mode   | Enabled when                                                |
-|--------|-------------------------------------------------------------|
+| Mode | Enabled when |
+|------|--------------|
 | Corner | `cornerState.cornerCount === 4` (warp applied or Skip crop) |
-| Line   | `linesProcessed === true`                                   |
-| Disc   | `discActive === true`                                       |
-| Normal | `normalCropApplied === true`                                |
+| Line | `linesProcessed === true` |
+| Disc | `discActive === true` |
+| Normal | `normalCropApplied === true` |
 
 Switching modes always resets `useTouchupTool` to `false`, and so does loading a new image (`loadFile`). The rationale: both Disc and Line modes use mouse drag for their first-stage input (drawing the disc / drawing lines), which would conflict with the touch-up brush drag if it were accidentally left on.
 
@@ -550,12 +570,12 @@ An in-flight `TouchUpApply` can be aborted via two paths:
 - **Internal** (`cancelTouchup()`): called at the top of every reset and load handler in Go so that a slow fill never commits stale results after the user has moved on.
 - **External** (`CancelTouchup()`): a public Wails-bound method called **fire-and-forget** (no `await`) from the frontend immediately before any reset IPC call. This ensures the cancel signal arrives at the backend before the reset call, even though both are in-flight concurrently.
 
-| Field / method      | Location          | Purpose |
-|---------------------|-------------------|---------|
-| `touchupCancel`     | `App` struct      | `context.CancelFunc` for the current operation; `nil` when idle |
-| `touchupMu`         | `App` struct      | `sync.Mutex` protecting `touchupCancel` |
-| `cancelTouchup()`   | `app_touchup.go`  | Acquires lock, calls and nils `touchupCancel`. Safe from any goroutine. |
-| `CancelTouchup()`   | `app_touchup.go`  | Wails-bound public wrapper around `cancelTouchup()`. Called fire-and-forget from the frontend. |
+| Field / method | Location | Purpose |
+|----------------|----------|---------|
+| `touchupCancel` | `App` struct | `context.CancelFunc` for the current operation; `nil` when idle |
+| `touchupMu` | `App` struct | `sync.Mutex` protecting `touchupCancel` |
+| `cancelTouchup()` | `app_touchup.go` | Acquires lock, calls and nils `touchupCancel`. Safe from any goroutine. |
+| `CancelTouchup()` | `app_touchup.go` | Wails-bound public wrapper around `cancelTouchup()`. Called fire-and-forget from the frontend. |
 
 `cancelTouchup()` is called at the top of: `ResetCorners`, `ResetDisc`, `ClearLines`, `ResetNormal`, `LoadImage`, `RecropImage`.
 
@@ -639,7 +659,7 @@ iopaintFill(ctx, src, mask) → (*image.NRGBA, error)
 
 Corner, Disc, Line, and Normal modes are not a pipeline. Each mode operates independently on the same source scan. A user crops one object with Corners, saves, then might switch to Lines for a different object in the same scan. Switching modes always resets the warp result.
 
-### Mode Switch Handler (frontend `App.jsx`)
+### Mode Switch Handler (`useImageActions.js:handleModeSwitch`)
 
 ```
 onClick (mode button):
@@ -768,12 +788,12 @@ displayToImage(dispX, dispY) {
 
 All SVG overlays use a `viewBox="0 0 W H"` spanning the full image with `preserveAspectRatio="none"` inside a `position: relative` wrapper around the `<img>`, so they always track the image at any zoom level without DOM measurements:
 
-| Overlay                             | State                                           | Condition                                   |
-|-------------------------------------|-------------------------------------------------|---------------------------------------------|
-| Corner dots (detected)              | `detectedCornerPts` — `{X,Y}[]` image-space     | `mode === 'corner'`                         |
-| Corner dots (selected, clicks 1–3)  | `selectedCornerPts` — `{X,Y}[]` image-space     | `mode === 'corner'`                         |
-| Touch-up strokes                    | `touchupStrokes` — `{x,y}[]` image-space        | `useTouchupTool && strokes.length > 0`      |
-| Line preview                        | `lines` — `{x1,y1,x2,y2}[]` image-space         | `mode === 'line' && lines.length > 0`       |
+| Overlay | State | Condition |
+|---------|-------|-----------|
+| Corner dots (detected) | `detectedCornerPts` — `{X,Y}[]` image-space | `mode === 'corner'` |
+| Corner dots (selected, clicks 1–3) | `selectedCornerPts` — `{X,Y}[]` image-space | `mode === 'corner'` |
+| Touch-up strokes | `touchupStrokes` — `{x,y}[]` image-space | `useTouchupTool && strokes.length > 0` |
+| Line preview | `lines` — `{x1,y1,x2,y2}[]` image-space | `mode === 'line' && lines.length > 0` |
 
 Corner dots: detected corners are red circles (radius `dotRadius`); selected clicks 1–3 are green circles (radius `max(dotRadius*1.5, dotRadius+4)`).
 
@@ -801,11 +821,11 @@ The `<img>` style:
 
 Holding Space while dragging pans the canvas by directly adjusting `canvasRef.current.scrollLeft/scrollTop`. Key refs involved:
 
-| Ref/State         | Purpose                                                                                 |
-|-------------------|-----------------------------------------------------------------------------------------|
-| `spaceDownRef`    | Tracks whether Space is currently held (ref, not state — no re-render on key events).   |
-| `panDragRef`      | Active pan anchor: `{startX, startY, scrollLeft, scrollTop}`. Set on mousedown, cleared on mouseup or Space release. |
-| `spacePanMode`    | React state that drives the `grab` cursor; set in the space keydown/keyup `useEffect`.  |
+| Ref/State | Purpose |
+|-----------|---------|
+| `spaceDownRef` | Tracks whether Space is currently held (ref, not state — no re-render on key events). |
+| `panDragRef` | Active pan anchor: `{startX, startY, scrollLeft, scrollTop}`. Set on mousedown, cleared on mouseup or Space release. |
+| `spacePanMode` | React state that drives the `grab` cursor; set in the space keydown/keyup `useEffect`. |
 
 The space `keydown` handler calls `e.preventDefault()` for **every** space keydown event including repeats (to suppress the browser's native scroll-on-space), but only updates `spaceDownRef`/`spacePanMode` on the first press (`e.repeat === false`). Pan is handled at the top of `handleMouseDown/Move/Up`, before the `e.target !== imgRef.current` guard, so it works anywhere in the canvas area.
 
@@ -858,12 +878,12 @@ Complex argument/return types are defined in `frontend/wailsjs/go/models.ts`.
 
 ## Settings Storage
 
-| Setting            | Go field           | localStorage key  | Valid values                               |
-|--------------------|--------------------|-------------------|--------------------------------------------|
-| Touch-up backend   | `touchupBackend`   | `touchupBackend`  | `"patchmatch"`, `"iopaint"`                |
-| IOPaint URL        | `iopaintURL`       | `iopaintURL`      | Any URL string                             |
-| Warp fill mode     | `warpFillMode`     | `warpFillMode`    | `"clamp"`, `"fill"`, `"outpaint"`          |
-| Warp fill color    | `warpFillColor`    | `warpFillColor`   | CSS hex `"#rrggbb"`                        |
+| Setting | Go field | localStorage key | Valid values |
+|---------|----------|------------------|--------------|
+| Touch-up backend | `touchupBackend` | `touchupBackend` | `"patchmatch"`, `"iopaint"` |
+| IOPaint URL | `iopaintURL` | `iopaintURL` | Any URL string |
+| Warp fill mode | `warpFillMode` | `warpFillMode` | `"clamp"`, `"fill"`, `"outpaint"` |
+| Warp fill color | `warpFillColor` | `warpFillColor` | CSS hex `"#rrggbb"` |
 
 On every app start, the frontend reads localStorage and calls `SetTouchupSettings` + `SetWarpSettings` to synchronise the Go side.
 
