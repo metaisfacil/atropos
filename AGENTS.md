@@ -895,6 +895,8 @@ Complex argument/return types are defined in `frontend/wailsjs/go/models.ts`.
 
 On every app start, the frontend reads localStorage and calls `SetTouchupSettings` + `SetWarpSettings` + `SetDiscSettings` to synchronise the Go side. `closeAfterSave` has no Go counterpart — it is consumed entirely in the frontend `handleSaveImage` handler.
 
+CLI overrides: a `--post-save` CLI argument will be surfaced by `GetLaunchArgs()` and used to override the persisted `postSaveCommand` for that session. A CLI `--post-save-exit` boolean requests that the backend quit after launching the command; the frontend only sets `closeAfterSave` when it sees this explicit CLI request.
+
 ---
 
 ## Common Pitfalls
