@@ -11,7 +11,7 @@ export default function NormalCropPanel({ normalRect }) {
   return (
     <div className="control-section">
       <div className="info-box">
-        Drag on the image to draw a crop rectangle, then click Crop to apply.
+        Drag on the image to draw a crop rectangle, then click Crop or press Enter to apply.
       </div>
       {/* <div className="control-group">
         <div className="slider-row">
