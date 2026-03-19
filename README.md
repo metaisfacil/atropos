@@ -30,7 +30,7 @@ A standard rectangular crop. Drag to select a region and click **Crop** to apply
 
 ### Image Compositor
 
-The Tools panel houses the Image Compositor. Add two or more overlapping scan segments in order, choose an orientation (left-to-right, right-to-left, top-to-bottom, or bottom-to-top), and click **Stitch images**. Atropos automatically detects features, matches them across images, estimates the alignment homography via RANSAC, and blends the segments into a single continuous image with feathered overlap seams. Once stitched, **Load output** sends the result directly into the main editing pipeline and runs corner detection — ready for cropping and adjustment without saving an intermediate file.
+Add two or more overlapping scan segments in order, choose an orientation, and click **Stitch images** to align and blend them into a single continuous image. Once stitched, **Load output** sends the result directly into the main editing pipeline — ready for cropping and adjustment without saving an intermediate file.
 
 ---
 
