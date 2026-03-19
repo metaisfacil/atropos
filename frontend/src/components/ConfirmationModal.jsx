@@ -56,7 +56,7 @@ export default function ConfirmationModal({ message, onConfirm, onCancel }) {
         </div>
 
         <div className="options-footer" style={{ gap: '10px' }}>
-          <button className="options-ok-btn" style={{ background: '#555' }} onClick={onCancel}>Cancel</button>
+          <button className="modal-cancel-btn" onClick={onCancel}>Cancel</button>
           <button className="options-ok-btn recrop-btn" onClick={onConfirm}>Continue</button>
         </div>
       </div>

@@ -208,15 +208,6 @@ button.primary {
   background: #007acc;
 }
 
-/* Subtle Auto-contrast tint (distinct but minimal) */
-button.auto-contrast-btn {
-  background: #0b87d1; /* slightly different blue */
-}
-
-button.auto-contrast-btn:hover {
-  background: #096fae;
-}
-
 /* Touch-up brush button: distinct color and depressed appearance when active */
 button.touchup-btn {
   background: #7f5371
@@ -818,6 +809,17 @@ button.options-ok-btn:hover {
   background: #005a9e;
 }
 
+button.modal-cancel-btn {
+  width: auto;
+  padding: 6px 24px;
+  font-size: 13px;
+  background: #3e3e42;
+}
+
+button.modal-cancel-btn:hover {
+  background: #505054;
+}
+
 /* Error modal */
 .error-dialog {
   max-width: 420px;
@@ -897,29 +899,6 @@ button.options-ok-btn:hover {
 
 /* ── Compositor Modal ─────────────────────────────────────────────────────── */
 
-.compositor-file-controls button.primary {
-  background: #3a7a72;
-}
-
-.compositor-file-controls button.primary:hover {
-  background: #2f6560;
-}
-
-.compositor-file-controls button.primary:active {
-  background: #245049;
-}
-
-.compositor-footer-row button.primary {
-  background: #7a6035;
-}
-
-.compositor-footer-row button.primary:hover {
-  background: #654f2a;
-}
-
-.compositor-footer-row button.primary:active {
-  background: #503e20;
-}
 
 .compositor-dialog {
   width: 600px;
@@ -1067,9 +1046,6 @@ button.options-ok-btn:hover {
   flex: 1;
 }
 
-.compositor-footer-row button.options-ok-btn {
-  width: 33% !important;
-}
 
 /* ── Tools Panel ──────────────────────────────────────────────────────────── */
 
