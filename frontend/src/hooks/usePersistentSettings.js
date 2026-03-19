@@ -1,12 +1,22 @@
 import { useState, useEffect } from 'react'
 import { SetTouchupSettings, SetWarpSettings, SetDiscSettings } from '../../wailsjs/go/main/App'
 
+// Default values for every persisted setting. Keep in sync with NewApp() in app.go.
+const DEFAULTS = {
+  touchupBackend:   'patchmatch',
+  iopaintURL:       'http://127.0.0.1:8086/',
+  warpFillMode:     'clamp',
+  warpFillColor:    '#ffffff',
+  discCenterCutout: true,
+  discCutoutPercent: 11,
+}
+
 export function usePersistentSettings({ setPreview }) {
   const [touchupBackend, setTouchupBackendState] = useState(() =>
-    localStorage.getItem('touchupBackend') || 'patchmatch'
+    localStorage.getItem('touchupBackend') || DEFAULTS.touchupBackend
   )
   const [iopaintURL, setIopaintURLState] = useState(() =>
-    localStorage.getItem('iopaintURL') || 'http://127.0.0.1:8086/'
+    localStorage.getItem('iopaintURL') || DEFAULTS.iopaintURL
   )
 
   // Persist and push to backend whenever either setting changes.
@@ -22,10 +32,10 @@ export function usePersistentSettings({ setPreview }) {
   }
 
   const [warpFillMode, setWarpFillModeState] = useState(() =>
-    localStorage.getItem('warpFillMode') || 'clamp'
+    localStorage.getItem('warpFillMode') || DEFAULTS.warpFillMode
   )
   const [warpFillColor, setWarpFillColorState] = useState(() =>
-    localStorage.getItem('warpFillColor') || '#ffffff'
+    localStorage.getItem('warpFillColor') || DEFAULTS.warpFillColor
   )
 
   const setWarpFillMode = (v) => {
@@ -41,11 +51,11 @@ export function usePersistentSettings({ setPreview }) {
 
   const [discCenterCutout, setDiscCenterCutoutState] = useState(() => {
     const stored = localStorage.getItem('discCenterCutout')
-    return stored === null ? true : stored === 'true'
+    return stored === null ? DEFAULTS.discCenterCutout : stored === 'true'
   })
 
   const [discCutoutPercent, setDiscCutoutPercentState] = useState(() =>
-    parseInt(localStorage.getItem('discCutoutPercent') || '11', 10)
+    parseInt(localStorage.getItem('discCutoutPercent') || String(DEFAULTS.discCutoutPercent), 10)
   )
 
   const setDiscCenterCutout = (v) => {
@@ -72,17 +82,17 @@ export function usePersistentSettings({ setPreview }) {
   // Push all persisted settings to backend on startup.
   useEffect(() => {
     SetTouchupSettings({
-      backend: localStorage.getItem('touchupBackend') || 'patchmatch',
-      iopaintUrl: localStorage.getItem('iopaintURL') || 'http://127.0.0.1:8086/',
+      backend:    localStorage.getItem('touchupBackend') || DEFAULTS.touchupBackend,
+      iopaintUrl: localStorage.getItem('iopaintURL')     || DEFAULTS.iopaintURL,
     }).catch(() => {})
     SetWarpSettings({
-      fillMode:  localStorage.getItem('warpFillMode')  || 'clamp',
-      fillColor: localStorage.getItem('warpFillColor') || '#ffffff',
+      fillMode:  localStorage.getItem('warpFillMode')  || DEFAULTS.warpFillMode,
+      fillColor: localStorage.getItem('warpFillColor') || DEFAULTS.warpFillColor,
     }).catch(() => {})
-    const storedCutout = localStorage.getItem('discCenterCutout')
-    const storedPercent = parseInt(localStorage.getItem('discCutoutPercent') || '11', 10)
+    const storedCutout  = localStorage.getItem('discCenterCutout')
+    const storedPercent = parseInt(localStorage.getItem('discCutoutPercent') || String(DEFAULTS.discCutoutPercent), 10)
     SetDiscSettings({
-      centerCutout: storedCutout === null ? true : storedCutout === 'true',
+      centerCutout:  storedCutout === null ? DEFAULTS.discCenterCutout : storedCutout === 'true',
       cutoutPercent: storedPercent,
     }).catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
