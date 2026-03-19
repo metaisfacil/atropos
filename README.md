@@ -110,7 +110,7 @@ make build
 atropos [--debug] [--corners | --disc | --lines | --normal] [image_path] [--post-save "command"] [--post-save-exit]
 ```
 
-`--corners`, `--disc`, `--lines`, and `--normal` set the initial mode. Passing an image path loads it on startup. `--debug` writes a timestamped log to `debug/` in the working directory.
+`--corners`, `--disc`, `--lines`, and `--normal` set the initial mode. Passing an image path loads it on startup. `--debug` logs debug output to stderr.
 
 `--post-save "command"` instructs Atropos to launch the given command immediately after a successful save. The command string may include the placeholder `{path}` which will be replaced with the saved file path. The command is started detached — Atropos does not wait for it to finish. Example:
 
