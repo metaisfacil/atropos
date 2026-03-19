@@ -68,6 +68,11 @@ type App struct {
 	// Launch arguments (set before startup)
 	launchFilePath string
 	launchMode     string // "corner", "disc", or "line"
+	// postSaveCmd, when non-empty, overrides persisted frontend settings
+	// and will be executed after a successful save (placeholder {path} allowed).
+	postSaveCmd string
+	// If true, quit the application after launching the CLI post-save command.
+	postSaveExit bool
 
 	// Touch-up backend settings
 	touchupBackend string // "patchmatch" or "iopaint"
@@ -90,16 +95,16 @@ type App struct {
 // NewApp creates a new App application struct.
 func NewApp() *App {
 	return &App{
-		undoLimit:      10,
-		featherSize:    15,
-		cropAmount:     3,
-		undoStack:      []undoEntry{},
-		bgColor:        color.NRGBA{R: 255, G: 255, B: 255, A: 255},
-		postDiscWhite:  255,
-		touchupBackend:   "patchmatch",
-		iopaintURL:       "http://127.0.0.1:8086/",
-		warpFillMode:     "clamp",
-		warpFillColor:    color.NRGBA{R: 255, G: 255, B: 255, A: 255},
+		undoLimit:         10,
+		featherSize:       15,
+		cropAmount:        3,
+		undoStack:         []undoEntry{},
+		bgColor:           color.NRGBA{R: 255, G: 255, B: 255, A: 255},
+		postDiscWhite:     255,
+		touchupBackend:    "patchmatch",
+		iopaintURL:        "http://127.0.0.1:8086/",
+		warpFillMode:      "clamp",
+		warpFillColor:     color.NRGBA{R: 255, G: 255, B: 255, A: 255},
 		discCenterCutout:  true,
 		discCutoutPercent: 11,
 	}
@@ -131,13 +136,13 @@ func (a *App) shutdown(ctx context.Context) {
 // ProcessResult is the standard response for image processing operations,
 // carrying an optional preview, status message, and image dimensions.
 type ProcessResult struct {
-	Preview string        `json:"preview"`
-	Message string        `json:"message"`
-	Width   int           `json:"width"`
-	Height  int           `json:"height"`
+	Preview string `json:"preview"`
+	Message string `json:"message"`
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
 	// Optional numeric results (e.g. from AutoContrast)
-	Black   int           `json:"black,omitempty"`
-	White   int           `json:"white,omitempty"`
+	Black int `json:"black,omitempty"`
+	White int `json:"white,omitempty"`
 	// Corners is populated by DetectCorners and ResetCorners so the frontend
 	// can render the overlay dots via SVG instead of baking them into the image.
 	Corners []image.Point `json:"corners,omitempty"`
@@ -145,11 +150,20 @@ type ProcessResult struct {
 
 // LaunchArgs contains the initial file path and mode from CLI arguments.
 type LaunchArgs struct {
-	FilePath string `json:"filePath"`
-	Mode     string `json:"mode"`
+	FilePath        string `json:"filePath"`
+	Mode            string `json:"mode"`
+	PostSaveCommand string `json:"postSaveCommand,omitempty"`
+	PostSaveEnabled bool   `json:"postSaveEnabled,omitempty"`
+	PostSaveExit    bool   `json:"postSaveExit,omitempty"`
 }
 
 // GetLaunchArgs returns any CLI-provided file path and mode.
 func (a *App) GetLaunchArgs() LaunchArgs {
-	return LaunchArgs{FilePath: a.launchFilePath, Mode: a.launchMode}
+	return LaunchArgs{
+		FilePath:        a.launchFilePath,
+		Mode:            a.launchMode,
+		PostSaveCommand: a.postSaveCmd,
+		PostSaveEnabled: a.postSaveCmd != "",
+		PostSaveExit:    a.postSaveExit,
+	}
 }

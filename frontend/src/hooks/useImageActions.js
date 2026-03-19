@@ -17,11 +17,12 @@ import {
   ResetDisc,
   ClearLines,
   SaveImage,
+  RunPostSaveCommand,
 } from '../../wailsjs/go/main/App'
 
 export function useImageActions({
   mode, loading, imageLoaded, discActive,
-  cornerState, dotRadius, useStretchPreprocess, normalRect, closeAfterSave,
+  cornerState, dotRadius, useStretchPreprocess, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
   setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural,
   setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
   setDiscActive, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
@@ -177,6 +178,12 @@ export function useImageActions({
       try {
         const args = await GetLaunchArgs()
         if (args.mode) setMode(args.mode)
+        // CLI-provided post-save overrides persisted settings (do not force quit)
+        if (args.postSaveCommand) {
+          setPostSaveCommand(args.postSaveCommand)
+          setPostSaveEnabled(true)
+          if (args.postSaveExit) setCloseAfterSave(true)
+        }
         if (args.filePath) {
           const shouldDetect = args.mode ? (args.mode === 'corner') : (mode === 'corner')
           await loadFile(args.filePath, shouldDetect)
@@ -381,6 +388,7 @@ export function useImageActions({
       const result = await SaveImage({ outputPath: filePath })
       const savedName = filePath.split(/[\\/]/).pop()
       showStatus(result?.message || `Saved to ${savedName}`)
+      if (postSaveEnabled && postSaveCommand) RunPostSaveCommand(postSaveCommand, filePath).catch(err => console.error('Post-save command error:', err))
       if (closeAfterSave) Quit()
     } catch (err) {
       console.error('Save error:', err)
