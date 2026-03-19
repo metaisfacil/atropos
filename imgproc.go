@@ -89,14 +89,15 @@ func toNRGBA(src image.Image) *image.NRGBA {
 						si := srcOff + x*4
 						di := dstOff + x*4
 						a := uint32(s.Pix[si+3])
-						if a == 0 {
+						switch a {
+						case 0:
 							// leave dst as zero
-						} else if a == 255 {
+						case 255:
 							dst.Pix[di] = s.Pix[si]
 							dst.Pix[di+1] = s.Pix[si+1]
 							dst.Pix[di+2] = s.Pix[si+2]
 							dst.Pix[di+3] = 255
-						} else {
+						default:
 							dst.Pix[di] = uint8(uint32(s.Pix[si]) * 255 / a)
 							dst.Pix[di+1] = uint8(uint32(s.Pix[si+1]) * 255 / a)
 							dst.Pix[di+2] = uint8(uint32(s.Pix[si+2]) * 255 / a)
@@ -130,14 +131,15 @@ func toNRGBA(src image.Image) *image.NRGBA {
 					for x := 0; x < w; x++ {
 						r, g, bl, a := src.At(x+b.Min.X, y+b.Min.Y).RGBA()
 						di := dstOff + x*4
-						if a == 0 {
+						switch a {
+						case 0:
 							// leave as zero
-						} else if a == 0xffff {
+						case 0xffff:
 							dst.Pix[di] = uint8(r >> 8)
 							dst.Pix[di+1] = uint8(g >> 8)
 							dst.Pix[di+2] = uint8(bl >> 8)
 							dst.Pix[di+3] = 0xff
-						} else {
+						default:
 							dst.Pix[di] = uint8(((r * 0xffff) / a) >> 8)
 							dst.Pix[di+1] = uint8(((g * 0xffff) / a) >> 8)
 							dst.Pix[di+2] = uint8(((bl * 0xffff) / a) >> 8)
