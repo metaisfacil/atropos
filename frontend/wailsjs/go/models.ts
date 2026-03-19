@@ -297,6 +297,7 @@ export namespace main {
 	    black?: number;
 	    white?: number;
 	    corners?: image.Point[];
+	    uncropped?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProcessResult(source);
@@ -311,6 +312,7 @@ export namespace main {
 	        this.black = source["black"];
 	        this.white = source["white"];
 	        this.corners = this.convertValues(source["corners"], image.Point);
+	        this.uncropped = source["uncropped"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
