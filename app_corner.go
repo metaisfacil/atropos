@@ -7,6 +7,27 @@ import (
 	"math"
 )
 
+// suggestCornerParams returns sensible detection defaults derived from image
+// dimensions. minDistance scales with the shorter side so that corner density
+// remains proportional across images of very different sizes.
+func suggestCornerParams(w, h int) SuggestedCornerParams {
+	shortSide := w
+	if h < shortSide {
+		shortSide = h
+	}
+	minDist := shortSide / 30
+	if minDist < 10 {
+		minDist = 10
+	}
+	if minDist > 200 {
+		minDist = 200
+	}
+	return SuggestedCornerParams{
+		MinDistance: minDist,
+		MaxCorners:  500,
+	}
+}
+
 // CornerDetectRequest contains parameters for the Shi-Tomasi corner detector.
 type CornerDetectRequest struct {
 	MaxCorners     int     `json:"maxCorners"`

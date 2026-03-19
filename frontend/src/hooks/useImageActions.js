@@ -64,12 +64,14 @@ export function useImageActions({
   }
 
   // ── Core corner detector (private — used by loadFile and handleDetectCorners) ─
-  const runDetectCorners = async () => {
+  const runDetectCorners = async (overrides = {}) => {
+    const maxCorners  = overrides.maxCorners  ?? cornerState.maxCorners
+    const minDistance = overrides.minDistance ?? cornerState.minDistance
     showStatus('Detecting corners…')
     const result = await DetectCorners({
-      maxCorners:   cornerState.maxCorners,
+      maxCorners,
       qualityLevel: cornerState.qualityLevel,
-      minDistance:  cornerState.minDistance,
+      minDistance,
       accentValue:  cornerState.accent,
       dotRadius,
       useStretch:      useStretchPreprocess,
@@ -82,12 +84,12 @@ export function useImageActions({
     if (result.width && result.height) setRealImageDims({ w: result.width, h: result.height })
     setDetectedCornerPts(result.corners || [])
     setSelectedCornerPts([])
-    setCornerState(s => ({ ...s, cornerCount: 0 }))
+    setCornerState(s => ({ ...s, cornerCount: 0, maxCorners, minDistance }))
     setCornersDetected(true)
     lastDetectSettings.current = {
-      maxCorners:     cornerState.maxCorners,
+      maxCorners,
       qualityLevel:   cornerState.qualityLevel,
-      minDistance:    cornerState.minDistance,
+      minDistance,
       accent:         cornerState.accent,
       useStretch:     useStretchPreprocess,
       useEdgeEnhance: useEdgeEnhance,
@@ -114,7 +116,7 @@ export function useImageActions({
     resetImageState()
 
     if (autoDetect && mode === 'corner') {
-      await runDetectCorners()
+      await runDetectCorners(result.suggestedCornerParams || {})
     }
 
     setLoading(false)
