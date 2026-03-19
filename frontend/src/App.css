@@ -445,6 +445,10 @@ button.save-btn:hover {
   flex-shrink: 0;
 }
 
+.shortcut-item--disabled {
+  opacity: 0.35;
+}
+
 .shortcut-divider {
   border-top: 1px solid #3e3e42;
   margin: 8px 0;

@@ -320,6 +320,8 @@ export default function App() {
             shortcutsOpen={shortcutsOpen} setShortcutsOpen={setShortcutsOpen}
             mode={mode}
             discActive={discActive}
+            canSave={imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive)}
+            imageLoaded={imageLoaded}
           />
 
           <div className="file-ops">
