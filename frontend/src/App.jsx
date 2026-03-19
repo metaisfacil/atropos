@@ -323,7 +323,7 @@ export default function App() {
               </button>
             </DelayedHint>
             <DelayedHint hint="Save the currently cropped/adjusted image to disk.">
-              <button onClick={handleSaveImage} className="save-btn" disabled={loading || !imageLoaded}>
+              <button onClick={handleSaveImage} className="save-btn" disabled={loading || !(imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive))}>
                 Save image
               </button>
             </DelayedHint>
