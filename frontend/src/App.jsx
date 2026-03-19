@@ -88,6 +88,7 @@ export default function App() {
     warpFillColor, setWarpFillColor,
     discCenterCutout, setDiscCenterCutout,
     discCutoutPercent, setDiscCutoutPercent,
+    autoCornerParams, setAutoCornerParams,
     closeAfterSave, setCloseAfterSave,
     postSaveEnabled, setPostSaveEnabled,
     postSaveCommand, setPostSaveCommand,
@@ -132,7 +133,7 @@ export default function App() {
     handleModeSwitch,
   } = useImageActions({
     mode, loading, imageLoaded, discActive,
-    cornerState, dotRadius, useStretchPreprocess, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
+    cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
     setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural,
     setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
     setDiscActive, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
@@ -366,6 +367,8 @@ export default function App() {
         setWarpFillColor={setWarpFillColor}
         discCenterCutout={discCenterCutout}
         setDiscCenterCutout={setDiscCenterCutout}
+        autoCornerParams={autoCornerParams}
+        setAutoCornerParams={setAutoCornerParams}
         closeAfterSave={closeAfterSave}
         setCloseAfterSave={setCloseAfterSave}
         postSaveEnabled={postSaveEnabled}
