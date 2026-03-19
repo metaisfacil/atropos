@@ -114,6 +114,7 @@ export default function App() {
 
   const {
     loadingFull,
+    saving,
     handleLoadImage,
     handleDetectCorners,
     handleSkipCrop,
@@ -268,6 +269,7 @@ export default function App() {
                 <DelayedHint hint="Reset this mode's crop/selection and clear the current warp result.">
                   <button
                     className="reset-btn-danger"
+                    disabled={loading}
                     onClick={
                       mode === 'corner' ? handleResetCorners :
                       mode === 'disc'   ? handleResetDisc    :
@@ -319,7 +321,7 @@ export default function App() {
 
           <div className="file-ops">
             <DelayedHint hint="Open a file dialog to select and load an image into the app.">
-              <button onClick={handleLoadImage} className="load-btn" disabled={loading}>
+              <button onClick={handleLoadImage} className="load-btn" disabled={loading && !saving}>
                 Load image
               </button>
             </DelayedHint>

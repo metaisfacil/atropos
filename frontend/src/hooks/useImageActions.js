@@ -32,8 +32,11 @@ export function useImageActions({
   showStatus, showError,
 }) {
   const [loadingFull, setLoadingFull] = useState(false)
+  const [saving, setSaving]          = useState(false)
   const modeRef            = useRef(mode)
   const lastDetectSettings = useRef(null)
+  const savingRef          = useRef(false)
+  const pendingDropRef     = useRef(null)
   useEffect(() => { modeRef.current = mode }, [mode])
 
   // ── Shared mode/image state reset (used by loadFile and handleRecrop) ────────
@@ -115,17 +118,23 @@ export function useImageActions({
 
   // ── Load image (dialog) ───────────────────────────────────────────────────
   const handleLoadImage = async () => {
-    if (loading) return
+    if (loading && !savingRef.current) return
     try {
       const filePath = await OpenImageDialog()
       if (!filePath) return
+      if (savingRef.current) {
+        pendingDropRef.current = filePath
+        return
+      }
       await loadFile(filePath)
     } catch (err) {
       console.error('Load error:', err)
       showError(err)
     } finally {
-      setLoading(false)
-      setLoadingFull(false)
+      if (!savingRef.current) {
+        setLoading(false)
+        setLoadingFull(false)
+      }
     }
   }
 
@@ -140,6 +149,10 @@ export function useImageActions({
       const filePath = paths[0]
       const ext = filePath.split('.').pop().toLowerCase()
       if (!['png', 'jpg', 'jpeg', 'tif', 'tiff', 'bmp', 'gif', 'webp'].includes(ext)) return
+      if (savingRef.current) {
+        pendingDropRef.current = filePath
+        return
+      }
       try {
         await loadFile(filePath, modeRef.current === 'corner')
       } catch (err) {
@@ -359,6 +372,8 @@ export function useImageActions({
       const filePath = await OpenSaveDialog()
       if (!filePath) return
       setLoading(true)
+      savingRef.current = true
+      setSaving(true)
       showStatus('Saving…')
       const result = await SaveImage({ outputPath: filePath })
       const savedName = filePath.split(/[\\/]/).pop()
@@ -369,6 +384,20 @@ export function useImageActions({
       showError(err)
     } finally {
       setLoading(false)
+      savingRef.current = false
+      setSaving(false)
+      if (pendingDropRef.current) {
+        const pendingPath = pendingDropRef.current
+        pendingDropRef.current = null
+        try {
+          await loadFile(pendingPath, modeRef.current === 'corner')
+        } catch (err) {
+          console.error('Deferred drop load error:', err)
+          showError(err)
+          setLoading(false)
+          setLoadingFull(false)
+        }
+      }
     }
   }
 
@@ -452,6 +481,7 @@ export function useImageActions({
 
   return {
     loadingFull,
+    saving,
     handleLoadImage,
     handleDetectCorners,
     handleSkipCrop,
