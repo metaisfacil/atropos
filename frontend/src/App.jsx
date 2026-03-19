@@ -93,6 +93,9 @@ export default function App() {
     closeAfterSave, setCloseAfterSave,
     postSaveEnabled, setPostSaveEnabled,
     postSaveCommand, setPostSaveCommand,
+    touchupRemainsActive, setTouchupRemainsActive,
+    straightEdgeRemainsActive, setStraightEdgeRemainsActive,
+    autoDetectOnModeSwitch, setAutoDetectOnModeSwitch,
   } = usePersistentSettings({ setPreview })
 
   const {
@@ -117,6 +120,7 @@ export default function App() {
     setErrorMessage, setPreview,
     onDragEnd: () => { setDragging(false); setDragStart(null); setDragCurrent(null) },
     flushPendingSaveRef,
+    touchupRemainsActive, setUseTouchupTool,
   })
 
   const {
@@ -137,7 +141,7 @@ export default function App() {
     handleUndo,
   } = useImageActions({
     mode, loading, imageLoaded, discActive, linesProcessed, normalCropApplied,
-    cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
+    cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
     setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural,
     setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
     setDiscActive, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
@@ -162,6 +166,7 @@ export default function App() {
     setLoading, setZoom, setRealImageDims, setCornerState, setDetectedCornerPts,
     setSelectedCornerPts, setDiscActive, setNormalRect, setLines, setLinesDone,
     setLinesProcessed, setUseStraightEdgeTool,
+    straightEdgeRemainsActive,
     spaceDownRef, panDragRef, canvasRef, ctrlDragRef, shiftDragRef,
     touchupDraggingRef, imgRef, lastResizeRef, mousePosRef,
     commitTouchup, showStatus, showError,
@@ -380,6 +385,12 @@ export default function App() {
         setPostSaveEnabled={setPostSaveEnabled}
         postSaveCommand={postSaveCommand}
         setPostSaveCommand={setPostSaveCommand}
+        touchupRemainsActive={touchupRemainsActive}
+        setTouchupRemainsActive={setTouchupRemainsActive}
+        straightEdgeRemainsActive={straightEdgeRemainsActive}
+        setStraightEdgeRemainsActive={setStraightEdgeRemainsActive}
+        autoDetectOnModeSwitch={autoDetectOnModeSwitch}
+        setAutoDetectOnModeSwitch={setAutoDetectOnModeSwitch}
       />
 
       <main className="main-content">

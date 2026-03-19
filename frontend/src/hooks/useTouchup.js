@@ -5,6 +5,7 @@ export function useTouchup({
   imageLoaded, loading, setLoading, showStatus,
   realImageDims, touchupBackend, setErrorMessage, setPreview, onDragEnd,
   flushPendingSaveRef,
+  touchupRemainsActive, setUseTouchupTool,
 }) {
   const [touchupStrokes, setTouchupStrokes] = useState([])
   const [brushSize, setBrushSize]           = useState(40)
@@ -101,6 +102,7 @@ export function useTouchup({
     } else if (data?.preview) {
       setPreview(data.preview)
       showStatus(data.message || '')
+      if (!touchupRemainsActive) setUseTouchupTool(false)
       flushPendingSaveRef?.current?.()
     }
   }
