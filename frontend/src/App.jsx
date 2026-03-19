@@ -288,7 +288,7 @@ export default function App() {
                                           handleClearLines
                     }
                   >
-                    Reset{mode === 'corner' ? ` (${cornerState.cornerCount}/4)` : ''}
+                    Reset{mode === 'corner' && !cropSkipped ? ` (${cornerState.cornerCount}/4)` : ''}
                   </button>
                 </DelayedHint>
               </div>
