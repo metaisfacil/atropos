@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import './App.css'
-import { OnFileDrop, OnFileDropOff, Quit, EventsOn, EventsOff } from '../wailsjs/runtime/runtime'
+import { OnFileDrop, OnFileDropOff, Quit } from '../wailsjs/runtime/runtime'
 import {
   LoadImage,
   DetectCorners,
@@ -28,10 +28,6 @@ import {
   GetLaunchArgs,
   GetCleanPreview,
   RestoreCornerOverlay,
-  LogFrontend,
-  SetTouchupSettings,
-  SetWarpSettings,
-  SetDiscSettings,
   RecropImage,
   CancelTouchup,
 } from '../wailsjs/go/main/App'
@@ -46,6 +42,12 @@ import OptionsPanel     from './components/OptionsPanel'
 import ErrorModal       from './components/ErrorModal'
 import ConfirmationModal from './components/ConfirmationModal'
 import DelayedHint      from './components/DelayedHint'
+import ImageOverlays    from './components/ImageOverlays'
+
+import { useStatusMessage }      from './hooks/useStatusMessage'
+import { usePersistentSettings } from './hooks/usePersistentSettings'
+import { useZoomPan }            from './hooks/useZoomPan'
+import { useTouchup }            from './hooks/useTouchup'
 
 export default function App() {
   // ── Shared state ──────────────────────────────────────────────────────────
@@ -53,20 +55,7 @@ export default function App() {
   const modeRef = useRef(mode)
   useEffect(() => { modeRef.current = mode }, [mode])
   const [preview, setPreview]       = useState(null)
-  const [imageInfo, setImageInfo]   = useState('')
-  const [imageInfoVisible, setImageInfoVisible] = useState(true)
-  const statusFadeTimer  = useRef(null)
-  const statusClearTimer = useRef(null)
-  const showStatus = (msg) => {
-    clearTimeout(statusFadeTimer.current)
-    clearTimeout(statusClearTimer.current)
-    setImageInfo(msg)
-    setImageInfoVisible(true)
-    if (msg) {
-      statusFadeTimer.current  = setTimeout(() => setImageInfoVisible(false), 4000)
-      statusClearTimer.current = setTimeout(() => setImageInfo(''), 5000)
-    }
-  }
+  const { imageInfo, imageInfoVisible, showStatus } = useStatusMessage()
   const [imageLoaded, setImageLoaded] = useState(false)
   const [loading, setLoading]       = useState(false)
   const [loadingFull, setLoadingFull] = useState(false)
@@ -76,8 +65,6 @@ export default function App() {
 
   // Real image dimensions in Go (full resolution)
   const [realImageDims, setRealImageDims] = useState({ w: 1, h: 1 })
-  // Natural dimensions of the <img> element (may be downscaled preview)
-  const [imgNatural, setImgNatural] = useState({ w: 1, h: 1 })
   const imgRef  = useRef(null)
 
   // ── Drag / interaction state ───────────────────────────────────────────────
@@ -126,166 +113,44 @@ export default function App() {
   const [useTouchupTool, setUseTouchupTool] = useState(false)
   // Toggle to enable the straight edge rotation tool (disc mode only)
   const [useStraightEdgeTool, setUseStraightEdgeTool] = useState(false)
-  const [touchupStrokes, setTouchupStrokes] = useState([]) // array of {x,y} in image coords
-  const [brushSize, setBrushSize] = useState(40)
 
   // ── Options state ─────────────────────────────────────────────────────────
   const [optionsOpen, setOptionsOpen]         = useState(false)
-  const [touchupBackend, setTouchupBackendState] = useState(() =>
-    localStorage.getItem('touchupBackend') || 'patchmatch'
-  )
-  const [iopaintURL, setIopaintURLState] = useState(() =>
-    localStorage.getItem('iopaintURL') || 'http://127.0.0.1:8086/'
-  )
+  const {
+    touchupBackend, setTouchupBackend,
+    iopaintURL, setIopaintURL,
+    warpFillMode, setWarpFillMode,
+    warpFillColor, setWarpFillColor,
+    discCenterCutout, setDiscCenterCutout,
+    discCutoutPercent, setDiscCutoutPercent,
+    closeAfterSave, setCloseAfterSave,
+  } = usePersistentSettings({ setPreview })
 
-  // Persist and push to backend whenever either setting changes.
-  const setTouchupBackend = (v) => {
-    setTouchupBackendState(v)
-    localStorage.setItem('touchupBackend', v)
-    SetTouchupSettings({ backend: v, iopaintUrl: iopaintURL }).catch(() => {})
-  }
-  const setIopaintURL = (v) => {
-    setIopaintURLState(v)
-    localStorage.setItem('iopaintURL', v)
-    SetTouchupSettings({ backend: touchupBackend, iopaintUrl: v }).catch(() => {})
-  }
-
-  const [warpFillMode, setWarpFillModeState] = useState(() =>
-    localStorage.getItem('warpFillMode') || 'clamp'
-  )
-  const [warpFillColor, setWarpFillColorState] = useState(() =>
-    localStorage.getItem('warpFillColor') || '#ffffff'
-  )
-
-  const setWarpFillMode = (v) => {
-    setWarpFillModeState(v)
-    localStorage.setItem('warpFillMode', v)
-    SetWarpSettings({ fillMode: v, fillColor: warpFillColor }).catch(() => {})
-  }
-  const setWarpFillColor = (v) => {
-    setWarpFillColorState(v)
-    localStorage.setItem('warpFillColor', v)
-    SetWarpSettings({ fillMode: warpFillMode, fillColor: v }).catch(() => {})
-  }
-
-  const [discCenterCutout, setDiscCenterCutoutState] = useState(() => {
-    const stored = localStorage.getItem('discCenterCutout')
-    return stored === null ? true : stored === 'true'
+  // ── Touch-up ──────────────────────────────────────────────────────────────
+  const {
+    touchupStrokes, setTouchupStrokes,
+    brushSize, setBrushSize,
+    touchupDraggingRef,
+    clearTouchup, commitTouchup,
+  } = useTouchup({
+    imageLoaded, loading, setLoading, showStatus,
+    realImageDims, touchupBackend,
+    setErrorMessage, setPreview,
+    onDragEnd: () => { setDragging(false); setDragStart(null); setDragCurrent(null) },
   })
 
-  const [discCutoutPercent, setDiscCutoutPercentState] = useState(() =>
-    parseInt(localStorage.getItem('discCutoutPercent') || '11', 10)
-  )
-
-  const setDiscCenterCutout = (v) => {
-    setDiscCenterCutoutState(v)
-    localStorage.setItem('discCenterCutout', String(v))
-    SetDiscSettings({ centerCutout: v, cutoutPercent: discCutoutPercent }).then((result) => {
-      if (result?.preview) setPreview(result.preview)
-    }).catch(() => {})
-  }
-
-  const setDiscCutoutPercent = (v) => {
-    setDiscCutoutPercentState(v)
-    localStorage.setItem('discCutoutPercent', String(v))
-  }
-
-  const [closeAfterSave, setCloseAfterSaveState] = useState(() =>
-    localStorage.getItem('closeAfterSave') === 'true'
-  )
-  const setCloseAfterSave = (v) => {
-    setCloseAfterSaveState(v)
-    localStorage.setItem('closeAfterSave', String(v))
-  }
-
-  // Push all persisted settings to backend on startup.
-  useEffect(() => {
-    SetTouchupSettings({
-      backend: localStorage.getItem('touchupBackend') || 'patchmatch',
-      iopaintUrl: localStorage.getItem('iopaintURL') || 'http://127.0.0.1:8086/',
-    }).catch(() => {})
-    SetWarpSettings({
-      fillMode:  localStorage.getItem('warpFillMode')  || 'clamp',
-      fillColor: localStorage.getItem('warpFillColor') || '#ffffff',
-    }).catch(() => {})
-    const storedCutout = localStorage.getItem('discCenterCutout')
-    const storedPercent = parseInt(localStorage.getItem('discCutoutPercent') || '11', 10)
-    SetDiscSettings({
-      centerCutout: storedCutout === null ? true : storedCutout === 'true',
-      cutoutPercent: storedPercent,
-    }).catch(() => {})
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const clearTouchup = () => setTouchupStrokes([])
-
-  const commitTouchup = async () => {
-    if (!imageLoaded || touchupStrokes.length === 0) return
-    setLoading(true)
-    showStatus('Running touch-up…')
-    try {
-      const cw = realImageDims.w
-      const ch = realImageDims.h
-      const c = document.createElement('canvas')
-      c.width = cw; c.height = ch
-      const ctx = c.getContext('2d')
-      if (!ctx) throw new Error('Canvas context unavailable')
-      ctx.clearRect(0, 0, cw, ch)
-      ctx.fillStyle = 'rgba(255,255,255,1)'
-      ctx.beginPath()
-      ctx.lineJoin = 'round'
-      ctx.lineCap = 'round'
-      ctx.lineWidth = brushSize
-      for (let i = 0; i < touchupStrokes.length; i++) {
-        const p = touchupStrokes[i]
-        if (i === 0) ctx.moveTo(p.x, p.y)
-        else ctx.lineTo(p.x, p.y)
-      }
-      ctx.stroke()
-      for (const p of touchupStrokes) {
-        ctx.beginPath(); ctx.arc(p.x, p.y, brushSize/2, 0, Math.PI*2); ctx.fill()
-      }
-      const data = c.toDataURL('image/png')
-      const b64 = data.split(',')[1]
-      let patchSize = Math.max(7, Math.floor(brushSize / 3))
-      if (patchSize % 2 === 0) patchSize++
-      const iterations = 5
-      // TouchUpApply returns immediately after launching the fill goroutine.
-      // The result (preview, error, or cancellation) arrives via the
-      // "touchup-done" event handled by touchupDoneHandlerRef. setLoading(false)
-      // is therefore NOT called here — the event handler does it.
-      await window['go']['main']['App']['TouchUpApply'](b64, patchSize, iterations)
-      setTouchupStrokes([])
-    } catch (err) {
-      // Immediate errors (no image, mask decode failure, canvas issues).
-      console.error('TouchUp commit error:', err)
-      showStatus('')
-      const hint = touchupBackend === 'iopaint'
-        ? '\n\nPlease make sure IOPaint is running and that you have the server address configured correctly. Alternatively, try switching to the PatchMatch backend in Options.'
-        : ''
-      setErrorMessage('Failed to inpaint.' + hint + '\n\n' + (err?.message || String(err)))
-      setTouchupStrokes([])
-      setLoading(false)
-    }
-  }
-
   // ── Zoom / scroll state ───────────────────────────────────────────────────
-  const [zoom, setZoom]         = useState(1)
-  const [fitWidth, setFitWidth] = useState(0)
-  const [spacePanMode, setSpacePanMode] = useState(false)
-  const canvasRef        = useRef(null)
-  const pendingScrollRef = useRef(null)
-  const mousePosRef      = useRef({ x: 0, y: 0 })
-  const spaceDownRef     = useRef(false)
-  const panDragRef       = useRef(null)  // {startX, startY, scrollLeft, scrollTop} while space+dragging
   const cornerMouseDownRef  = useRef(false) // true when mousedown fired on the image in corner mode
-  const lastResizeRef       = useRef(0)     // timestamp of last window resize (to suppress post-maximize clicks)
-  const touchupDraggingRef  = useRef(false) // true while a touch-up brush drag is in progress
-  // Holds the latest touch-up commit handler for the window-level mouseup listener.
-  // Updated every render so the closure always sees fresh state.
-  const windowTouchupMouseUpRef = useRef(null)
-  // Holds the latest "touchup-done" event handler. Updated every render so the
-  // closure always sees current state (preview, error helpers, etc.).
-  const touchupDoneHandlerRef = useRef(null)
+  const {
+    zoom, setZoom,
+    fitWidth, setFitWidth,
+    spacePanMode,
+    canvasRef,
+    mousePosRef, spaceDownRef, panDragRef,
+    lastResizeRef,
+    handleImgLoad,
+    setImgNatural,
+  } = useZoomPan({ imgRef, mode, discActive, featherSize, setFeatherSize, setPreview })
 
   // ── Coordinate helpers ────────────────────────────────────────────────────
   const displayToImage = useCallback((dispX, dispY) => {
@@ -415,47 +280,6 @@ export default function App() {
       document.removeEventListener('dragover', suppressDefault)
       document.removeEventListener('drop', suppressDefault)
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Touch-up: catch mouseup outside the canvas div ────────────────────────
-  // Updated every render so the closure always sees fresh state (touchupStrokes,
-  // commitTouchup, etc.) without a dependency array.
-  windowTouchupMouseUpRef.current = async () => {
-    if (!touchupDraggingRef.current) return // already handled by the canvas-level handler
-    touchupDraggingRef.current = false
-    setDragging(false)
-    setDragStart(null); setDragCurrent(null)
-    try {
-      if (touchupStrokes.length > 0) await commitTouchup()
-    } catch (err) {
-      console.error('Auto-commit touchup error:', err)
-    }
-  }
-  useEffect(() => {
-    const handler = () => windowTouchupMouseUpRef.current()
-    window.addEventListener('mouseup', handler)
-    return () => window.removeEventListener('mouseup', handler)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Touch-up done event (result of async TouchUpApply goroutine) ──────────
-  // Handler is refreshed every render; the useEffect subscribes once at mount.
-  touchupDoneHandlerRef.current = (data) => {
-    setLoading(false)
-    if (data?.cancelled) return
-    if (data?.error) {
-      showStatus('')
-      const hint = touchupBackend === 'iopaint'
-        ? '\n\nPlease make sure IOPaint is running and that you have the server address configured correctly. Alternatively, try switching to the PatchMatch backend in Options.'
-        : ''
-      setErrorMessage('Failed to inpaint.' + hint + '\n\n' + data.error)
-    } else if (data?.preview) {
-      setPreview(data.preview)
-      showStatus(data.message || '')
-    }
-  }
-  useEffect(() => {
-    EventsOn('touchup-done', (data) => touchupDoneHandlerRef.current?.(data))
-    return () => EventsOff('touchup-done')
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Launch arguments ───────────────────────────────────────────────────────
@@ -1023,31 +847,6 @@ export default function App() {
     }
   }
 
-  // ── Image load / fit width ────────────────────────────────────────────────
-  const handleImgLoad = () => {
-    const el        = imgRef.current
-    const container = canvasRef.current
-    if (el) {
-      const natW = el.naturalWidth; const natH = el.naturalHeight
-      setImgNatural({ w: natW, h: natH })
-      if (container && natW > 0 && natH > 0) {
-        const aspect = natW / natH
-        setFitWidth(Math.min(container.clientWidth, container.clientHeight * aspect))
-      }
-    }
-  }
-
-  useEffect(() => {
-    const el = canvasRef.current
-    if (!el || imgNatural.w <= 1) return
-    const observer = new ResizeObserver(() => {
-      const aspect = imgNatural.w / imgNatural.h
-      setFitWidth(Math.min(el.clientWidth, el.clientHeight * aspect))
-    })
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [imgNatural])
-
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
   useEffect(() => {
     const handleKeyDown = async (e) => {
@@ -1135,7 +934,7 @@ export default function App() {
               ? await RotateDisc({ angle: 15 })
               : await Rotate({ flipCode: 1 })
             if (result?.preview) setPreview(result.preview); showStatus(''); setLoading(false); break
-          
+
           default:
             break
         }
@@ -1148,95 +947,6 @@ export default function App() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [imageLoaded, mode, discActive, featherSize, displayToImage]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Scroll-wheel zoom (+ Ctrl+Scroll feather in disc mode) ─────────────────
-  useEffect(() => {
-    const el  = canvasRef.current
-    if (!el) return
-    const log = (msg) => LogFrontend(msg).catch(() => {})
-
-    const handler = async (e) => {
-      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation()
-      if (e.ctrlKey && mode === 'disc' && discActive) {
-        const delta = e.deltaY < 0 ? 1 : -1
-        const newF  = Math.max(0, Math.min(100, featherSize + delta))
-        setFeatherSize(newF)
-        try {
-          const result = await SetFeatherSize({ size: newF })
-          if (result?.preview) setPreview(result.preview)
-        } catch (err) { console.error(err) }
-        return
-      }
-
-      const factor = e.deltaY < 0 ? 1.1 : 0.9
-      setZoom(z => {
-        const newZ = Math.min(5, Math.max(0.1, z * factor))
-        if (newZ === z) return z
-        const rect      = el.getBoundingClientRect()
-        const cursorX   = e.clientX - rect.left + el.scrollLeft
-        const cursorY   = e.clientY - rect.top  + el.scrollTop
-        const ratio     = newZ / z
-        pendingScrollRef.current = {
-          left: cursorX * ratio - (e.clientX - rect.left),
-          top:  cursorY * ratio - (e.clientY - rect.top),
-        }
-        return newZ
-      })
-    }
-
-    const scrollSpy = () => {
-    }
-    el.addEventListener('scroll', scrollSpy, { passive: true })
-    el.addEventListener('wheel', handler, { passive: false, capture: true })
-    return () => {
-      el.removeEventListener('wheel', handler, { capture: true })
-      el.removeEventListener('scroll', scrollSpy)
-    }
-  }, [mode, discActive, featherSize])
-
-  // ── Space-key pan mode ────────────────────────────────────────────────────
-  useEffect(() => {
-    const onKeyDown = (e) => {
-      if (e.code !== 'Space') return
-      const active = document.activeElement
-      if (active && (['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable)) return
-      e.preventDefault()  // must preventDefault for every event, including repeats, to suppress native scroll
-      if (e.repeat) return
-      spaceDownRef.current = true
-      setSpacePanMode(true)
-    }
-    const onKeyUp = (e) => {
-      if (e.code !== 'Space') return
-      spaceDownRef.current = false
-      setSpacePanMode(false)
-      panDragRef.current = null
-    }
-    window.addEventListener('keydown', onKeyDown)
-    window.addEventListener('keyup', onKeyUp)
-    return () => {
-      window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('keyup', onKeyUp)
-    }
-  }, [])
-
-  // Track window resizes so post-maximize stray clicks don't register as corners
-  useEffect(() => {
-    const onResize = () => { lastResizeRef.current = Date.now() }
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
-
-  useLayoutEffect(() => {
-    const el  = canvasRef.current
-    const log = (msg) => LogFrontend(msg).catch(() => {})
-    if (pendingScrollRef.current) {
-      if (el) {
-        el.scrollLeft = pendingScrollRef.current.left
-        el.scrollTop  = pendingScrollRef.current.top
-      }
-      pendingScrollRef.current = null
-    }
-  }, [zoom])
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -1540,120 +1250,27 @@ export default function App() {
                     : { maxWidth: `${zoom * 100}%`, maxHeight: `${zoom * 100}%` }),
                 }}
               />
-              {useTouchupTool && touchupStrokes.length > 0 && (
-                <svg
-                  viewBox={`0 0 ${realImageDims.w} ${realImageDims.h}`}
-                  preserveAspectRatio="none"
-                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6 }}
-                >
-                  {touchupStrokes.map((pt, i) => (
-                    <circle key={i} cx={pt.x} cy={pt.y} r={brushSize / 2}
-                      fill="rgba(255,0,0,0.35)" stroke="rgba(255,0,0,0.8)"
-                      vectorEffect="non-scaling-stroke" />
-                  ))}
-                </svg>
-              )}
-              {useStraightEdgeTool && dragging && dragStart && dragCurrent && (
-                <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6, overflow: 'visible' }}>
-                  <line
-                    x1={dragStart.x} y1={dragStart.y}
-                    x2={dragCurrent.x} y2={dragCurrent.y}
-                    stroke="#ffff00" strokeWidth="2"
-                  />
-                </svg>
-              )}
-              {mode === 'disc' && !useStraightEdgeTool && dragging && dragStart && dragCurrent &&
-               ctrlDragRef.current === null && shiftDragRef.current === null && (() => {
-                const guideR = Math.sqrt((dragStart.x - dragCurrent.x) ** 2 + (dragStart.y - dragCurrent.y) ** 2)
-                return (
-                  <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6, overflow: 'visible' }}>
-                    <circle
-                      cx={dragCurrent.x} cy={dragCurrent.y}
-                      r={guideR}
-                      stroke="#00ff00" strokeWidth="2" fill="none"
-                    />
-                    {discCenterCutout && discCutoutPercent > 0 && (
-                      <circle
-                        cx={dragCurrent.x} cy={dragCurrent.y}
-                        r={guideR * discCutoutPercent / 100}
-                        stroke="#00ff00" strokeWidth="2" fill="none" strokeDasharray="4 3"
-                      />
-                    )}
-                  </svg>
-                )
-               })()}
-              {mode === 'corner' && (detectedCornerPts.length > 0 || selectedCornerPts.length > 0) && (
-                <svg
-                  viewBox={`0 0 ${realImageDims.w} ${realImageDims.h}`}
-                  preserveAspectRatio="none"
-                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6 }}
-                >
-                  {detectedCornerPts.map((pt, i) => (
-                    <circle key={`d${i}`} cx={pt.X} cy={pt.Y} r={dotRadius}
-                      fill="rgba(255,0,0,0.6)" stroke="red" strokeWidth="1"
-                      vectorEffect="non-scaling-stroke" />
-                  ))}
-                  {selectedCornerPts.map((pt, i) => (
-                    <circle key={`s${i}`} cx={pt.X} cy={pt.Y} r={Math.max(dotRadius * 1.5, dotRadius + 4)}
-                      fill="rgba(0,255,0,0.6)" stroke="lime" strokeWidth="2"
-                      vectorEffect="non-scaling-stroke" />
-                  ))}
-                </svg>
-              )}
-              {mode === 'normal' && (() => {
-                // During drag: show live rect in display-space coords
-                if (dragging && dragStart && dragCurrent && !useTouchupTool) {
-                  const x = Math.min(dragStart.x, dragCurrent.x)
-                  const y = Math.min(dragStart.y, dragCurrent.y)
-                  const w = Math.abs(dragCurrent.x - dragStart.x)
-                  const h = Math.abs(dragCurrent.y - dragStart.y)
-                  return (
-                    <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6, overflow: 'visible' }}>
-                      <rect x={x} y={y} width={w} height={h}
-                        stroke="#00ff00" strokeWidth="2" fill="rgba(0,255,0,0.08)" strokeDasharray="6 3" />
-                    </svg>
-                  )
-                }
-                // Confirmed selection: use viewBox so it tracks zoom/resize
-                if (normalRect) {
-                  const x1 = Math.min(normalRect.x1, normalRect.x2)
-                  const y1 = Math.min(normalRect.y1, normalRect.y2)
-                  const x2 = Math.max(normalRect.x1, normalRect.x2)
-                  const y2 = Math.max(normalRect.y1, normalRect.y2)
-                  return (
-                    <svg
-                      viewBox={`0 0 ${realImageDims.w} ${realImageDims.h}`}
-                      preserveAspectRatio="none"
-                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6 }}
-                    >
-                      <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1}
-                        stroke="#00ff00" strokeWidth="2" fill="rgba(0,255,0,0.08)"
-                        strokeDasharray="6 3" vectorEffect="non-scaling-stroke" />
-                    </svg>
-                  )
-                }
-                return null
-              })()}
-              {mode === 'line' && (() => {
-                const allLines = [...lines] // image-space coords
-                if (dragging && dragStart && dragCurrent) {
-                  const s = displayToImage(dragStart.x, dragStart.y)
-                  const e = displayToImage(dragCurrent.x, dragCurrent.y)
-                  allLines.push({ x1: s.x, y1: s.y, x2: e.x, y2: e.y })
-                }
-                return allLines.length > 0 ? (
-                  <svg
-                    viewBox={`0 0 ${realImageDims.w} ${realImageDims.h}`}
-                    preserveAspectRatio="none"
-                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6, overflow: 'visible' }}
-                  >
-                    {allLines.map((ln, i) => (
-                      <line key={i} x1={ln.x1} y1={ln.y1} x2={ln.x2} y2={ln.y2}
-                        stroke="#00ff00" strokeWidth="2" vectorEffect="non-scaling-stroke" />
-                    ))}
-                  </svg>
-                ) : null
-              })()}
+              <ImageOverlays
+                realImageDims={realImageDims}
+                mode={mode}
+                dragging={dragging}
+                dragStart={dragStart}
+                dragCurrent={dragCurrent}
+                useTouchupTool={useTouchupTool}
+                touchupStrokes={touchupStrokes}
+                brushSize={brushSize}
+                useStraightEdgeTool={useStraightEdgeTool}
+                discCenterCutout={discCenterCutout}
+                discCutoutPercent={discCutoutPercent}
+                ctrlDragRef={ctrlDragRef}
+                shiftDragRef={shiftDragRef}
+                detectedCornerPts={detectedCornerPts}
+                selectedCornerPts={selectedCornerPts}
+                dotRadius={dotRadius}
+                normalRect={normalRect}
+                lines={lines}
+                displayToImage={displayToImage}
+              />
             </div>
           ) : !loading ? (
             <div className="placeholder">Load or drop an image to begin</div>
