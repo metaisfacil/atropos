@@ -22,7 +22,7 @@ import {
 
 export function useImageActions({
   mode, loading, imageLoaded, discActive,
-  cornerState, dotRadius, useStretchPreprocess, useEdgeEnhance, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
+  cornerState, dotRadius, useStretchPreprocess, useEdgeEnhance, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand,
   setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural,
   setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
   setDiscActive, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
@@ -116,7 +116,7 @@ export function useImageActions({
     resetImageState()
 
     if (autoDetect && mode === 'corner') {
-      await runDetectCorners(result.suggestedCornerParams || {})
+      await runDetectCorners(autoCornerParams ? (result.suggestedCornerParams || {}) : {})
     }
 
     setLoading(false)
