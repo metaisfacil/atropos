@@ -160,6 +160,7 @@ export default function App() {
     ctrlDragRef, shiftDragRef, mousePosRef,
     setPreview, setFeatherSize, setRealImageDims, setLoading,
     displayToImage, showStatus, showError, handleSaveImage,
+    canSave: imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive),
     normalRect, handleNormalCrop,
   })
 
