@@ -4,9 +4,13 @@ import React from 'react'
 // bottom of the sidebar.
 // Props:
 //   shortcutsOpen / setShortcutsOpen
-//   mode       — 'corner' | 'disc' | 'line'
-//   discActive — bool (show disc-specific shortcuts only when a disc is live)
-export default function ShortcutsPanel({ shortcutsOpen, setShortcutsOpen, mode, discActive }) {
+//   mode        — 'corner' | 'disc' | 'line'
+//   discActive  — bool (show disc-specific shortcuts only when a disc is live)
+//   canSave     — bool (a crop result exists; gates crop/rotate/undo/save shortcuts)
+//   imageLoaded — bool (an image is loaded; gates pan shortcut)
+export default function ShortcutsPanel({ shortcutsOpen, setShortcutsOpen, mode, discActive, canSave, imageLoaded }) {
+  const cls = (active) => `shortcut-item${active ? '' : ' shortcut-item--disabled'}`
+
   return (
     <div className={`keyboard-shortcuts ${shortcutsOpen ? 'expanded' : ''}`}>
       <div
@@ -18,17 +22,17 @@ export default function ShortcutsPanel({ shortcutsOpen, setShortcutsOpen, mode, 
       </div>
 
       <div className={`keyboard-shortcuts-content ${shortcutsOpen ? 'open' : 'closed'}`}>
-          <div className="shortcut-item">
+          <div className={cls(canSave)}>
             <div className="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div>
             <div className="caption">Crop edges</div>
           </div>
-          <div className="shortcut-item">
+          <div className={cls(canSave)}>
             <div className="keys"><kbd>Q</kbd><kbd>E</kbd></div>
             <div className="caption">Rotate {mode === 'disc' ? '±15°' : '±90°'}</div>
           </div>
-          <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd></div><div className="caption">Undo</div></div>
-          <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>S</kbd></div><div className="caption">Save</div></div>
-          <div className="shortcut-item"><div className="keys"><kbd>Space</kbd>+<kbd>Drag</kbd></div><div className="caption">Pan canvas</div></div>
+          <div className={cls(canSave)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd></div><div className="caption">Undo</div></div>
+          <div className={cls(canSave)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>S</kbd></div><div className="caption">Save</div></div>
+          <div className={cls(imageLoaded)}><div className="keys"><kbd>Space</kbd>+<kbd>Drag</kbd></div><div className="caption">Pan canvas</div></div>
 
           {mode === 'disc' && discActive && (
             <>
