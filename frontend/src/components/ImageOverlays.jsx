@@ -37,7 +37,7 @@ export default function ImageOverlays({
           />
         </svg>
       )}
-      {mode === 'disc' && !useStraightEdgeTool && dragging && dragStart && dragCurrent &&
+      {mode === 'disc' && !useStraightEdgeTool && !useTouchupTool && dragging && dragStart && dragCurrent &&
        ctrlDragRef.current === null && shiftDragRef.current === null && (() => {
         const guideR = Math.sqrt((dragStart.x - dragCurrent.x) ** 2 + (dragStart.y - dragCurrent.y) ** 2)
         return (
