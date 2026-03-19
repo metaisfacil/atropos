@@ -30,6 +30,7 @@ export function useImageActions({
   setConfirmDialog, setTouchupStrokes,
   touchupDraggingRef, canvasRef,
   showStatus, showError,
+  setImageMeta,
 }) {
   const [loadingFull, setLoadingFull] = useState(false)
   const [saving, setSaving]          = useState(false)
@@ -106,6 +107,7 @@ export function useImageActions({
     setImageLoaded(true)
     setRealImageDims({ w: result.width, h: result.height })
     setImgNatural({ w: result.width, h: result.height })
+    setImageMeta({ format: result.format || '', dpiX: result.dpiX || 0, dpiY: result.dpiY || 0 })
     resetImageState()
 
     if (autoDetect && mode === 'corner') {
@@ -249,6 +251,7 @@ export function useImageActions({
           setFitWidth(0)
           setPreview(result.preview)
           setRealImageDims({ w: result.width, h: result.height })
+          setImageMeta({ format: '', dpiX: 0, dpiY: 0 })
           resetImageState()
           showStatus(`Re-cropping from ${result.width}×${result.height} image`)
         } catch (err) {

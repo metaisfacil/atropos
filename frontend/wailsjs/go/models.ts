@@ -155,6 +155,9 @@ export namespace main {
 	    width: number;
 	    height: number;
 	    preview: string;
+	    format: string;
+	    dpiX: number;
+	    dpiY: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ImageInfo(source);
@@ -165,6 +168,9 @@ export namespace main {
 	        this.width = source["width"];
 	        this.height = source["height"];
 	        this.preview = source["preview"];
+	        this.format = source["format"];
+	        this.dpiX = source["dpiX"];
+	        this.dpiY = source["dpiY"];
 	    }
 	}
 	export class LaunchArgs {
