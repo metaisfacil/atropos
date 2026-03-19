@@ -222,7 +222,7 @@ export default function CompositorModal({ open, onClose, onLoad }) {
 
           <div className="compositor-file-controls">
             <DelayedHint hint="Open a file picker to add images to the sequence.">
-              <button className="primary" onClick={handleAddFiles} disabled={stitching}>
+              <button className="load-btn" onClick={handleAddFiles} disabled={stitching}>
                 Add images…
               </button>
             </DelayedHint>
@@ -280,7 +280,7 @@ export default function CompositorModal({ open, onClose, onLoad }) {
                 Load output
               </button>
             </DelayedHint>
-            <button className="options-ok-btn" onClick={onClose}>Close</button>
+            <button className="options-btn" onClick={onClose}>Close</button>
           </div>
         </div>
       </div>
