@@ -84,7 +84,7 @@ export default function DelayedHint({ children, hint, delay = 1000, offset = 12 
             borderRadius: 4,
             padding: '4px 10px',
             maxWidth: 280,
-            whiteSpace: 'normal',
+            whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
             zIndex: 9999,
             boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
