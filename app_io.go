@@ -185,8 +185,9 @@ type SaveRequest struct {
 func (a *App) SaveImage(req SaveRequest) (*ProcessResult, error) {
 	a.logf("SaveImage: outputPath=%q", req.OutputPath)
 	if a.warpedImage == nil {
-		a.logf("SaveImage: no image to save")
-		return nil, fmt.Errorf("no image to save")
+		const msg = "SaveImage: no image to save"
+		a.logf(msg)
+		return nil, fmt.Errorf(msg)
 	}
 
 	f, err := os.Create(req.OutputPath)
