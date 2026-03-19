@@ -118,8 +118,9 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	a.logf("DetectCorners: maxCorners=%d qualityLevel=%.2f minDistance=%d accentValue=%d",
 		req.MaxCorners, req.QualityLevel, req.MinDistance, req.AccentValue)
 	if !a.imageLoaded {
-		a.logf("DetectCorners: no image loaded")
-		return nil, fmt.Errorf("no image loaded")
+		const msg = "DetectCorners: no image loaded"
+		a.logf(msg)
+		return nil, fmt.Errorf(msg)
 	}
 
 	b := a.currentImage.Bounds()

@@ -110,8 +110,9 @@ func (a *App) Undo() (*ProcessResult, error) {
 func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
 	a.logf("Crop: direction=%q", req.Direction)
 	if a.warpedImage == nil {
-		a.logf("Crop: no warped image")
-		return nil, fmt.Errorf("no warped image")
+		const msg = "Crop: no warped image"
+		a.logf(msg)
+		return nil, fmt.Errorf(msg)
 	}
 	a.saveUndo()
 
@@ -154,8 +155,9 @@ func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
 func (a *App) Rotate(req RotateRequest) (*ProcessResult, error) {
 	a.logf("Rotate: flipCode=%d", req.FlipCode)
 	if a.warpedImage == nil {
-		a.logf("Rotate: no warped image")
-		return nil, fmt.Errorf("no warped image")
+		const msg = "Rotate: no warped image"
+		a.logf(msg)
+		return nil, fmt.Errorf(msg)
 	}
 	a.saveUndo()
 
