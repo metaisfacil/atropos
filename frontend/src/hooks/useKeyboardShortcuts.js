@@ -1,14 +1,14 @@
 import { useEffect } from 'react'
 import {
-  Crop, Rotate, Undo, ShiftDisc, RotateDisc, SetFeatherSize, GetPixelColor,
+  Crop, Rotate, ShiftDisc, RotateDisc, SetFeatherSize, GetPixelColor,
 } from '../../wailsjs/go/main/App'
 
 export function useKeyboardShortcuts({
   imageLoaded, mode, discActive, featherSize,
   ctrlDragRef, shiftDragRef, mousePosRef,
-  setPreview, setFeatherSize, setRealImageDims, setLoading,
+  setPreview, setFeatherSize, setLoading,
   displayToImage, showStatus, showError, handleSaveImage, canSave,
-  normalRect, handleNormalCrop,
+  normalRect, handleNormalCrop, handleUndo,
 }) {
   useEffect(() => {
     const handleKeyDown = async (e) => {
@@ -48,18 +48,7 @@ export function useKeyboardShortcuts({
           if (active && (['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable)) return
           if (ctrlDragRef.current !== null || shiftDragRef.current !== null) return
           e.preventDefault()
-          setLoading(true); showStatus('Undoing…')
-          try {
-            const res = await Undo()
-            if (res?.preview) setPreview(res.preview)
-            if (res?.width && res?.height) setRealImageDims({ w: res.width, h: res.height })
-            showStatus(res?.message || '')
-          } catch (err) {
-            console.error('Undo shortcut error:', err)
-            showError(err)
-          } finally {
-            setLoading(false)
-          }
+          await handleUndo()
           return
         }
 
@@ -114,5 +103,5 @@ export function useKeyboardShortcuts({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [imageLoaded, mode, discActive, featherSize, displayToImage, normalRect, handleNormalCrop, canSave]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imageLoaded, mode, discActive, featherSize, displayToImage, normalRect, handleNormalCrop, handleUndo, canSave]) // eslint-disable-line react-hooks/exhaustive-deps
 }

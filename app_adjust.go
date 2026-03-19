@@ -8,9 +8,13 @@ import (
 // undoEntry stores a single undo snapshot. rotationAngle is non-nil for
 // operations that also need to restore the accumulated disc rotation angle
 // (e.g. StraightEdgeRotate) so that subsequent disc re-renders stay correct.
+// preWarp is true when the entry was saved before any warp/disc/crop operation
+// had produced a warpedImage; restoring such an entry returns the app to the
+// initial cropping phase rather than a post-warp editing state.
 type undoEntry struct {
 	image         *image.NRGBA
 	rotationAngle *float64
+	preWarp       bool
 }
 
 // CropRequest specifies which edge to crop.
@@ -48,19 +52,22 @@ func (a *App) setWorkingImage(img *image.NRGBA) {
 
 // saveUndo pushes the current working image onto the undo stack and clears
 // the levels baseline so the next SetLevels session gets a fresh snapshot.
+// The entry is tagged preWarp=true when warpedImage is nil at save time so
+// that Undo() can restore the pre-crop state correctly.
 func (a *App) saveUndo() {
 	if len(a.undoStack) >= a.undoLimit {
 		a.undoStack = a.undoStack[1:]
 	}
 	// warpedImage may be nil when a committing op runs before any warp
 	// (e.g. AutoContrast in corner mode). Store currentImage in that case.
+	preWarp := a.warpedImage == nil
 	var img *image.NRGBA
 	if a.warpedImage != nil {
 		img = cloneImage(a.warpedImage)
 	} else if a.currentImage != nil {
 		img = cloneImage(a.currentImage)
 	}
-	a.undoStack = append(a.undoStack, undoEntry{image: img})
+	a.undoStack = append(a.undoStack, undoEntry{image: img, preWarp: preWarp})
 	// Any committing operation invalidates the levels baseline so that the
 	// next SetLevels call re-snapshots from the new working image.
 	a.levelsBaseImage = nil
@@ -72,6 +79,7 @@ func (a *App) saveDiscRotationUndo() {
 	if len(a.undoStack) >= a.undoLimit {
 		a.undoStack = a.undoStack[1:]
 	}
+	preWarp := a.warpedImage == nil
 	var img *image.NRGBA
 	if a.warpedImage != nil {
 		img = cloneImage(a.warpedImage)
@@ -79,11 +87,17 @@ func (a *App) saveDiscRotationUndo() {
 		img = cloneImage(a.currentImage)
 	}
 	angle := a.rotationAngle
-	a.undoStack = append(a.undoStack, undoEntry{image: img, rotationAngle: &angle})
+	a.undoStack = append(a.undoStack, undoEntry{image: img, rotationAngle: &angle, preWarp: preWarp})
 	a.levelsBaseImage = nil
 }
 
 // Undo reverts the last operation on the image.
+//
+// When the popped entry carries preWarp=true (saved before any warp/crop had
+// produced a warpedImage), Undo restores the app to the pre-crop phase:
+// currentImage is set from the entry and warpedImage is cleared to nil.  Any
+// disc state accumulated since then is also cleared.  The response carries
+// Uncropped=true so the frontend can return to the initial cropping UI.
 func (a *App) Undo() (*ProcessResult, error) {
 	a.logf("Undo: stack depth=%d", len(a.undoStack))
 	if len(a.undoStack) == 0 {
@@ -92,18 +106,44 @@ func (a *App) Undo() (*ProcessResult, error) {
 	}
 	entry := a.undoStack[len(a.undoStack)-1]
 	a.undoStack = a.undoStack[:len(a.undoStack)-1]
-	a.warpedImage = entry.image
-	if entry.rotationAngle != nil {
-		a.rotationAngle = *entry.rotationAngle
-		a.logf("Undo: restored rotationAngle=%.3f°", a.rotationAngle)
+
+	if entry.preWarp {
+		// Restore the pre-warp image state: the saved image goes back into
+		// currentImage, and warpedImage is cleared so that workingImage()
+		// returns currentImage again (pre-crop state).
+		a.currentImage = entry.image
+		a.warpedImage = nil
+		// Clear disc state that may have been built up since the save.
+		a.discCenter = image.Point{}
+		a.discRadius = 0
+		a.rotationAngle = 0
+		a.discBaseImage = nil
+		a.discWorkingCrop = nil
+		a.discWorkingCropRect = image.Rectangle{}
+		a.postDiscBlack = 0
+		a.postDiscWhite = 255
+		a.levelsBaseImage = nil
+		a.logf("Undo: restored pre-warp state")
+	} else {
+		a.warpedImage = entry.image
+		if entry.rotationAngle != nil {
+			a.rotationAngle = *entry.rotationAngle
+			a.logf("Undo: restored rotationAngle=%.3f°", a.rotationAngle)
+		}
 	}
 
-	preview, err := imageToBase64(a.warpedImage)
+	img := a.workingImage()
+	preview, err := imageToBase64(img)
 	if err != nil {
 		return nil, err
 	}
-	b := a.warpedImage.Bounds()
-	return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy()}, nil
+	b := img.Bounds()
+	return &ProcessResult{
+		Preview:   preview,
+		Width:     b.Dx(),
+		Height:    b.Dy(),
+		Uncropped: entry.preWarp,
+	}, nil
 }
 
 // Crop removes pixels from the specified edge of the warped image.
