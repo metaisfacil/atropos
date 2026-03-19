@@ -2,7 +2,7 @@
 
 ![Atropos social preview](https://github.com/metaisfacil/atropos/blob/master/preview-2.png)
 
-Atropos is a desktop image processing tool for perspective correction, circular cropping, and rectangular cropping. It is primarily intended for digitising musical materials such as CD, vinyl, and cassette inserts.
+Atropos is a desktop image processing tool for perspective correction, circular cropping, and rectangular cropping. It also includes an image compositor for stitching multiple overlapping scan segments into a single continuous image. It is primarily intended for digitising musical materials such as CD, vinyl, and cassette inserts.
 
 ---
 
@@ -23,6 +23,14 @@ Draw four lines along the edges of a document. Atropos infers the four corners f
 ### Normal mode
 
 A standard rectangular crop. Drag to select a region and click **Crop** to apply. Additional crops can be stacked without resetting.
+
+---
+
+## Tools
+
+### Image Compositor
+
+The Tools panel houses the Image Compositor. Add two or more overlapping scan segments in order, choose an orientation (left-to-right, right-to-left, top-to-bottom, or bottom-to-top), and click **Stitch images**. Atropos automatically detects features, matches them across images, estimates the alignment homography via RANSAC, and blends the segments into a single continuous image with feathered overlap seams. Once stitched, **Load output** sends the result directly into the main editing pipeline and runs corner detection — ready for cropping and adjustment without saving an intermediate file.
 
 ---
 

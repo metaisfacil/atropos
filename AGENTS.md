@@ -15,11 +15,11 @@ This document describes the complete system architecture, data flow, and operati
 
 ## Frontend File Map
 
-`App.jsx` is a thin coordination layer (~420 lines): state declarations, hook wiring, and JSX render. All logic lives in hooks and components under `frontend/src/`.
+`App.jsx` is a thin coordination layer: state declarations, hook wiring, and JSX render. All logic lives in hooks and components under `frontend/src/`.
 
 | File | Responsibility |
 |------|----------------|
-| `hooks/useImageActions.js` | All Go API action handlers: `loadFile`, `handleLoadImage`, `handleDetectCorners`, `handleSkipCrop`, `handleRecrop`, `handleResetCorners/Disc/Normal`, `handleNormalCrop`, `handleClearLines`, `handleSaveImage`, `handleModeSwitch`. Also owns the `OnFileDrop` and launch-args `useEffect`s, plus internal `modeRef`, `lastDetectSettings`, and `suggestedCornerParamsRef`. |
+| `hooks/useImageActions.js` | All Go API action handlers: `loadFile`, `handleLoadImage`, `handleDetectCorners`, `handleSkipCrop`, `handleRecrop`, `handleResetCorners/Disc/Normal`, `handleNormalCrop`, `handleClearLines`, `handleSaveImage`, `handleModeSwitch`, `handleCompositorLoad`. Also owns the `OnFileDrop` and launch-args `useEffect`s, plus internal `modeRef`, `lastDetectSettings`, and `suggestedCornerParamsRef`. |
 | `hooks/useMouseHandlers.js` | All pointer interaction: `handleMouseDown/Move/Up/ImageMouseLeave` across all modes. Owns internal `cornerMouseDownRef`, `ctrlDragBusy`, `shiftDragBusy`, `normalDragPendingRef`, `normalDragActiveRef`, `mouseUpHandledRef`. Registers a `window` `mouseup` listener (via `useEffect`) to commit or cancel Normal mode drags that end outside the canvas-area. Defines and returns `displayToImage` (also forwarded to `<ImageOverlays>`). |
 | `hooks/useKeyboardShortcuts.js` | Single `keydown` `useEffect`: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+Z` (undo), `Ctrl+S` (save), `WASDQE` (crop/rotate). WASDQE are guarded by `canSave`; if no crop result exists, `showStatus` is called instead of forwarding to Go (prevents a backend error modal). |
 | `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, window mouseup effect, `EventsOn("touchup-done")` effect. |
@@ -29,7 +29,8 @@ This document describes the complete system architecture, data flow, and operati
 | `components/ImageOverlays.jsx` | Pure render: all SVG overlays (corner dots, touch-up circles, disc guide, straight-edge line, normal crop rect, line mode lines). |
 | `components/StatusBar.jsx` | Thin bar at the bottom of the main content area. Shows file format, pixel dimensions, DPI (when known), and zoom level. Zoom is clickable — clicking resets zoom to 100%. All fields use `DelayedHint` for tooltips. |
 | `components/DelayedHint.jsx` | Portal-rendered tooltip that appears after a 1 s hover delay. Uses a two-pass `useLayoutEffect` to clamp the tooltip inside the viewport before making it visible (avoids flicker and edge clipping). |
-| `components/*Panel.jsx` | Mode-specific sidebar controls. `AdjustmentsPanel` also owns the levels sliders, auto-contrast, and touch-up brush controls. `ShortcutsPanel` accepts `canSave` and `imageLoaded` props and applies `.shortcut-item--disabled` (opacity 0.35) to shortcuts that are currently unavailable. |
+| `components/*Panel.jsx` | Mode-specific sidebar controls. `AdjustmentsPanel` also owns the levels sliders, auto-contrast, and touch-up brush controls. `ShortcutsPanel` accepts `canSave` and `imageLoaded` props and applies `.shortcut-item--disabled` (opacity 0.35) to shortcuts that are currently unavailable. `ToolsPanel` is a collapsible sidebar panel (between Adjustments and Shortcuts) that houses the Image Compositor button. |
+| `components/CompositorModal.jsx` | Modal for the image stitching feature. Manages an ordered list of image paths and an orientation selector, calls `CompositorStitch`, shows a preview, and exposes a "Load output" button that calls `CompositorLoadResult` and triggers `handleCompositorLoad`. |
 
 `ctrlDragRef` and `shiftDragRef` are defined in `App.jsx` (not moved to `useMouseHandlers`) because they are read by `<ImageOverlays>` at render time for the disc guide condition, in addition to being written by the mouse handlers.
 
@@ -202,27 +203,11 @@ setLoading(false)
 
 ```
 DetectCorners(req)
-    1. Downsample currentImage to max ~1500px on longest side (scaleFactor)
-    2. applyAccentAdjustment(currentImage, accentValue)
-    3. toGrayscale(adjusted)
-    4. Contrast stretch (one of two paths, mutually exclusive):
-         if useStretch:
-             stretched = stretchGrayPercentiles(workGray, stretchLow, stretchHigh)
-             workGray  = applyCLAHE(stretched, clipLimit=2.0, tileSize=8)
-         else if mean(workGray) < 100:   ← auto-dark detection
-             stretched = stretchGrayPercentiles(workGray, 0.01, 0.99)
-             workGray  = applyCLAHE(stretched, clipLimit=2.0, tileSize=8)
-    5. Multi-scale Shi-Tomasi detection at scales [1, 2, 4]:
-         for each scale:
-             resizeGray (box-filter averaging when downsampling)
-             goodFeaturesToTrack(scaled, perScale, quality, minDist, blockSize=7)
-               ↳ internally applies gaussianBlurGray before Sobel gradient computation
-             scale results back up to working resolution
-         accumulate all corners
-    6. Deduplicate: enforce minDistSq/4 between all retained corners
-    7. Map working-space corners → full-resolution coordinates (divide by scaleFactor)
-    8. Store in detectedCorners
-    9. Return clean (unmodified) currentImage preview + Corners array + "Detected N corners"
+    1. Downsample to ~1500px, apply accent/CLAHE contrast prep
+    2. Multi-scale Shi-Tomasi (goodFeaturesToTrack) at scales [1, 2, 4]
+    3. Deduplicate corners, map back to full-resolution coordinates
+    4. Store in detectedCorners
+    5. Return clean currentImage preview + Corners array
          Dots are rendered by the frontend as an SVG overlay — never baked into the image
 ```
 
@@ -291,22 +276,9 @@ The frontend also sets `cropSkipped = true`, which disables all 1st-phase sideba
 ```
 RecropImage()
     require warpedImage != nil
-    originalImage   = warpedImage        ← promote output to new source
-    currentImage    = cloneImage(warpedImage)
-    warpedImage     = nil
-    levelsBaseImage = nil
-    selectedCorners = nil
-    detectedCorners = nil
-    lines           = nil
-    undoStack       = nil
-    discCenter      = zero
-    discRadius      = 0
-    rotationAngle   = 0
-    discBaseImage   = nil
-    discWorkingCrop = nil
-    discWorkingCropRect = zero
-    postDiscBlack   = 0
-    postDiscWhite   = 255
+    originalImage = warpedImage     ← promote output to new source
+    currentImage  = cloneImage(warpedImage)
+    reset all transient state identically to LoadImage (see Image Loading section)
     return ImageInfo{Width, Height, Preview}
 ```
 
@@ -571,15 +543,6 @@ Switching modes always resets `useTouchupTool` to `false`, and so does loading a
 
 After a successful touch-up commit (the `"touchup-done"` event with a preview result), `useTouchupTool` is also reset to `false` unless the `touchupRemainsActive` setting is `true` (default). Similarly, `useStraightEdgeTool` is reset to `false` after a `StraightEdgeRotate` completes unless `straightEdgeRemainsActive` is `true` (default). Both settings are persisted in localStorage and exposed in the Options modal under "After use".
 
-### buildMask(maskB64)
-
-```
-1. Base64-decode PNG mask
-2. Per pixel: if alpha channel present → use alpha; else use luminance threshold (> 10 → 255)
-3. If mask dimensions != workingImage: resize mask to match
-4. Return *image.Alpha  (alpha > 0 = region to fill)
-```
-
 ### Touch-up cancellation
 
 An in-flight `TouchUpApply` can be aborted via two paths:
@@ -628,45 +591,13 @@ The frontend registers a single persistent `EventsOn("touchup-done", ...)` handl
 
 ### PatchMatchFill (patchmatch.go)
 
-```
-PatchMatchFill(ctx, src, mask, patchSize, iterations) → (*image.NRGBA, error)
-    0. ctx.Err() check at entry → return immediately if already cancelled
-    1. Collect all target patches (center pixel masked)
-         ctx.Err() check every 64 rows → return if cancelled during init
-    2. Collect all source patches (no mask overlap)
-         ctx.Err() check every 64 rows → return if cancelled during init
-    3. Randomly initialise nearest-neighbour field (NNF)
-    4. For each iteration:
-         check ctx.Done() → return nil, ctx.Err() if cancelled
-         forward pass (parallelised):
-             each worker checks ctx.Done() per target → returns early if cancelled
-         wg.Wait(); check ctx.Err() again
-         reverse pass (parallelised):
-             each worker checks ctx.Done() per target → returns early if cancelled
-         wg.Wait(); check ctx.Err() again
-    5. Reconstruct: for each target pixel, average contributions from best source patch
-    6. Return dst, nil
-```
-
-The entry-point `ctx.Err()` check is critical: `buildMask` can take ~1s on large images, so the context may already be cancelled by the time `PatchMatchFill` starts. Without the upfront check, PatchMatch would run the entire O(w×h×patchSize²) initialization (billions of ops on a 5000px image) before reaching any cancellation point. Workers check `ctx.Done()` via a non-blocking `select` at the top of every per-target loop. `ctx.Done()` is pre-fetched into a local `done` variable before the goroutines start; for `context.Background()` (used by warp outpaint) the channel is nil and the select always takes the default branch with zero overhead.
+Nearest-neighbour patch matching with forward and reverse passes (parallelised). Fully cancellable: `ctx.Err()` is checked **at entry** (critical — mask building can take ~1s on large images, so the context may already be cancelled by the time PatchMatch starts) and periodically throughout init and each iteration. Workers check `ctx.Done()` via a non-blocking `select` per target. For `context.Background()` (warp outpaint) the done channel is nil and the select takes the default branch with zero overhead.
 
 ### iopaintFill (app_iopaint.go)
 
-```
-iopaintFill(ctx, src, mask) → (*image.NRGBA, error)
-    1. Encode src as PNG → base64 data URI
-    2. Build grayscale mask PNG (white=fill, black=keep) → base64 data URI
-    3. http.NewRequestWithContext(ctx, POST, {iopaintURL}/api/v1/inpaint, body)
-       client.Do(req)   ← request is torn down immediately if ctx is cancelled
-    4. Parse response:
-         try raw image.Decode on body bytes
-         fall back to JSON {"image": "data:...;base64,..."}
-    5. return toNRGBA(decoded), nil
-```
+Posts the image and a grayscale mask to the IOPaint HTTP API (`{iopaintURL}/api/v1/inpaint`) using a context-aware request (cancelled immediately if ctx is cancelled). Errors other than `context.Canceled` propagate as hard errors; the frontend shows a modal with no fallback to PatchMatch.
 
-**Failure handling:** `iopaintFill` errors (other than `context.Canceled`) propagate to `TouchUpApply` as hard errors. The frontend displays a modal with a user-friendly message. There is **no automatic fallback** to PatchMatch for touch-up.
-
-**Outpaint (warp fill) always uses PatchMatch** — IOPaint is not used for out-of-bounds warp regions because it is an inpainting (not outpainting) model. Warp fill passes `context.Background()` to `PatchMatchFill` and is not cancellable.
+**Outpaint (warp fill) always uses PatchMatch** — IOPaint is an inpainting model and produces black for outpainting; warp fill passes `context.Background()` and is not cancellable.
 
 ---
 
@@ -746,27 +677,6 @@ If `RestoreCornerOverlay` is not applicable (settings differ, or cache is stale)
 
 ## Image Processing Kernels (`imgproc.go`)
 
-### perspectiveTransform
-
-```
-perspectiveTransform(src, srcPts[4], dstPts[4], outW, outH)
-    1. Compute homography H mapping srcPts → dstPts
-    2. Invert H → H_inv
-    3. For each output pixel (x, y):
-           (sx, sy) = H_inv * (x, y, 1)  (homogeneous)
-           bilinear interpolate src at (sx, sy), clamp to bounds
-           write to output
-    4. Return *image.NRGBA
-```
-
-### perspectiveTransformWithMask
-
-Same as above but when `(ix0, iy0)` lies outside `[sb.Min, sb.Max-2]`:
-- Set `oobMask.Pix = 255` at that output pixel
-- Leave output pixel transparent (do not clamp)
-
-Used by `warpFillMode != "clamp"` paths.
-
 ### applyWarpFill (app_corner.go)
 
 ```
@@ -845,15 +755,7 @@ The `<img>` style:
 
 ### Space+Drag Pan
 
-Holding Space while dragging pans the canvas by directly adjusting `canvasRef.current.scrollLeft/scrollTop`. Key refs involved:
-
-| Ref/State | Purpose |
-|-----------|---------|
-| `spaceDownRef` | Tracks whether Space is currently held (ref, not state — no re-render on key events). |
-| `panDragRef` | Active pan anchor: `{startX, startY, scrollLeft, scrollTop}`. Set on mousedown, cleared on mouseup or Space release. |
-| `spacePanMode` | React state that drives the `grab` cursor; set in the space keydown/keyup `useEffect`. |
-
-The space `keydown` handler calls `e.preventDefault()` for **every** space keydown event including repeats (to suppress the browser's native scroll-on-space), but only updates `spaceDownRef`/`spacePanMode` on the first press (`e.repeat === false`). Pan is handled at the top of `handleMouseDown/Move/Up`, before the `e.target !== imgRef.current` guard, so it works anywhere in the canvas area.
+Holding Space while dragging pans the canvas via `canvasRef.current.scrollLeft/scrollTop`. `e.preventDefault()` is called for **every** space keydown including repeats (suppresses native scroll), but `spaceDownRef`/`spacePanMode` only update on the first press (`e.repeat === false`). Pan is handled before the `e.target !== imgRef.current` guard so it works anywhere in the canvas area.
 
 ---
 
@@ -922,6 +824,35 @@ Complex argument/return types are defined in `frontend/wailsjs/go/models.ts`.
 On every app start, the frontend reads localStorage and calls `SetTouchupSettings` + `SetWarpSettings` + `SetDiscSettings` to synchronise the Go side. `closeAfterSave` has no Go counterpart — it is consumed entirely in the frontend `handleSaveImage` handler.
 
 CLI overrides: a `--post-save` CLI argument will be surfaced by `GetLaunchArgs()` and used to override the persisted `postSaveCommand` for that session. A CLI `--post-save-exit` boolean requests that the backend quit after launching the command; the frontend only sets `closeAfterSave` when it sees this explicit CLI request.
+
+---
+
+## Image Compositor (`compositor.go`, `app_compositor.go`)
+
+A standalone planar image stitching feature. The stitching engine (`compositor.go`) has no dependency on app state and can be read/tested independently.
+
+### App struct fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `compositorResult` | `*image.NRGBA` | Cached full-resolution stitch output. Nil until a successful `CompositorStitch` call. |
+| `compositorMu` | `sync.Mutex` | Protects `compositorResult`. |
+
+### Wails-facing methods (`app_compositor.go`)
+
+- **`CompositorOpenFilesDialog()`** — multi-file picker returning selected paths.
+- **`CompositorStitch(req)`** — decodes all images, reverses path order for `"rtl"`/`"btt"` orientations so image[0] is always the stitching anchor, runs `stitchImages`, caches result, returns a preview + dimensions.
+- **`CompositorLoadResult()`** — promotes the cached result into the main editing pipeline exactly as `LoadImage` would (full state reset, sets `originalImage`/`currentImage`, returns `ImageInfo` including `SuggestedCornerParams`). Sets window title to `[Compositor Result]`.
+- **`CompositorSave(req)`** — encodes cached result to disk (PNG/JPEG/TIFF/BMP by extension).
+- **`CompositorOpenSaveDialog()`** — save-file dialog.
+
+### Stitching pipeline (`compositor.go`)
+
+`stitchImages(imgs)` runs sequentially: detect Shi-Tomasi features on each image, match with SSD + Lowe's ratio test (threshold 0.75), estimate homography via RANSAC (2000 iterations, 15px inlier threshold) with DLT + Hartley normalisation, compose homographies so image[0] is the reference frame (`H[i] = H[i-1] × H_pair`), render all images into a single canvas with distance-to-border feathering and bilinear interpolation. Rendering is parallelised (one row per worker via a channel).
+
+### Frontend flow
+
+`handleCompositorLoad(info)` in `useImageActions.js` receives the `ImageInfo` from `CompositorLoadResult`, updates all image state (preview, dims, meta), calls `resetImageState()`, updates `suggestedCornerParamsRef.current`, then switches to Corner mode and runs corner detection. The `CompositorModal` `onLoad` callback closes the modal **before** calling `handleCompositorLoad`, so detection does not start while the modal is still visible.
 
 ---
 
