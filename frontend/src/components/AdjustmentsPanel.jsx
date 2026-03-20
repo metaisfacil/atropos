@@ -1,6 +1,7 @@
-import React from 'react'
-import { AutoContrast, SetLevels, TrimBorders } from '../../wailsjs/go/main/App'
+import React, { useState } from 'react'
+import { AutoContrast, SetLevels, TrimBorders, ResizeImage } from '../../wailsjs/go/main/App'
 import DelayedHint from './DelayedHint'
+import ResizeModal from './ResizeModal'
 
 // AdjustmentsPanel renders the collapsible Adjustments section at the bottom
 // of the sidebar: Auto Contrast button + Black/White Point sliders.
@@ -31,6 +32,8 @@ export default function AdjustmentsPanel({
   discActive,
   useStraightEdgeTool,
   setUseStraightEdgeTool,
+  realImageDims,
+  setRealImageDims,
 }) {
   const applyTrimBorders = async () => {
     if (!imageLoaded) return
@@ -65,6 +68,22 @@ export default function AdjustmentsPanel({
     }
   }
 
+  const [resizeModalOpen, setResizeModalOpen] = useState(false)
+
+  const applyResize = async (width, height) => {
+    if (!imageLoaded) return
+    setLoading(true)
+    try {
+      const result = await ResizeImage({ width, height })
+      if (result?.preview) setPreview(result.preview)
+      if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+    } catch (err) {
+      console.error('ResizeImage error:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const applyLevels = async (bp, wp) => {
     if (!imageLoaded) return
     setLoading(true)
@@ -89,7 +108,27 @@ export default function AdjustmentsPanel({
       </div>
 
       <div className={`keyboard-shortcuts-content ${adjPanelOpen ? 'open' : 'closed'}`}>
-          <div className="shortcut-item">
+          <div className="adj-btn-grid">
+            <DelayedHint hint="Resize the image by width/height or scale percentage.">
+              <button
+                className="adjustments-btn"
+                onClick={() => setResizeModalOpen(true)}
+                disabled={!imageLoaded || !postCropAvailable}
+              >
+                Resize image
+              </button>
+            </DelayedHint>
+
+            <DelayedHint hint="Detects and removes solid white or black border strips from each edge of the image.">
+              <button
+                className="adjustments-btn"
+                onClick={applyTrimBorders}
+                disabled={!imageLoaded || !postCropAvailable}
+              >
+                Trim borders
+              </button>
+            </DelayedHint>
+
             <DelayedHint hint="Toggles the touch-up brush which uses a PatchMatch-style content-aware fill. Draw strokes on the preview to build a mask, then commit to fill.">
               <button
                 className={`adjustments-btn touchup-btn ${useTouchupTool ? 'active' : ''}`}
@@ -101,6 +140,16 @@ export default function AdjustmentsPanel({
                 aria-pressed={useTouchupTool}
               >
                 Touch-up brush
+              </button>
+            </DelayedHint>
+
+            <DelayedHint hint="Clamps the image's luminance around the brightest and darkest points to enhance contrast.">
+              <button
+                className="adjustments-btn"
+                onClick={applyAutoContrast}
+                disabled={autoContrastPending || !imageLoaded || !postCropAvailable}
+              >
+                {autoContrastPending ? 'Auto-contrast…' : 'Auto-contrast'}
               </button>
             </DelayedHint>
           </div>
@@ -131,33 +180,18 @@ export default function AdjustmentsPanel({
             </div>
           )}
 
-          <div className="shortcut-item">
-            <DelayedHint hint="Detects and removes solid white or black border strips from each edge of the image.">
-              <button
-                className="adjustments-btn"
-                style={{ minWidth: 120 }}
-                onClick={applyTrimBorders}
-                disabled={!imageLoaded || !postCropAvailable}
-              >
-                Trim borders
-              </button>
-            </DelayedHint>
-          </div>
+          <ResizeModal
+            open={resizeModalOpen}
+            initialWidth={realImageDims.w}
+            initialHeight={realImageDims.h}
+            onClose={() => setResizeModalOpen(false)}
+            onApply={async ({ width, height }) => {
+              setResizeModalOpen(false)
+              await applyResize(width, height)
+            }}
+          />
 
-          <div className="shortcut-item" style={{ position: 'relative' }}>
-            <DelayedHint hint="Clamps the image's luminance around the brightest and darkest points to enhance contrast.">
-              <button
-                className="adjustments-btn"
-                style={{ minWidth: 120 }}
-                onClick={applyAutoContrast}
-                disabled={autoContrastPending || !imageLoaded || !postCropAvailable}
-              >
-                {autoContrastPending ? 'Auto-contrast…' : 'Auto-contrast'}
-              </button>
-            </DelayedHint>
-          </div>
-
-          <div className="shortcut-item">
+          <div className="shortcut-item adj-prestretch">
             <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <input type="checkbox" checked={useStretchPreprocess} onChange={e => setUseStretchPreprocess(e.target.checked)} />
               <DelayedHint hint="Remaps 1%/99% luminance to full range before corner detection. This can improve outcomes on scans with dark backgrounds.">
