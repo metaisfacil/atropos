@@ -32,6 +32,7 @@ export default function ShortcutsPanel({ shortcutsOpen, setShortcutsOpen, mode, 
           </div>
           <div className={cls(canSave)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd></div><div className="caption">Undo</div></div>
           <div className={cls(canSave)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>S</kbd></div><div className="caption">Save</div></div>
+          <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>W</kbd></div><div className="caption">Quit</div></div>
           <div className={cls(imageLoaded)}><div className="keys"><kbd>Space</kbd>+<kbd>Drag</kbd></div><div className="caption">Pan canvas</div></div>
 
           {mode === 'disc' && discActive && (
