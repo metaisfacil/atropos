@@ -5,6 +5,7 @@
 }
 
 .sidebar {
+  position: relative;
   width: 320px;
   background: #252526;
   border-right: 1px solid #3e3e42;
@@ -12,6 +13,20 @@
   display: flex;
   flex-direction: column;
   min-height: 0; /* allow children with flex:1 to shrink */
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 10;
+}
+
+.sidebar-resize-handle:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 /* Scrollable area inside the sidebar; keeps the bottom island outside
