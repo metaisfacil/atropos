@@ -21,7 +21,7 @@ This document describes the complete system architecture, data flow, and operati
 |------|----------------|
 | `hooks/useImageActions.js` | All Go API action handlers: `loadFile`, `handleLoadImage`, `handleDetectCorners`, `handleSkipCrop`, `handleRecrop`, `handleResetCorners/Disc/Normal`, `handleNormalCrop`, `handleClearLines`, `handleSaveImage`, `handleModeSwitch`, `handleCompositorLoad`. Also owns the `OnFileDrop` and launch-args `useEffect`s, plus internal `modeRef`, `lastDetectSettings`, and `suggestedCornerParamsRef`. |
 | `hooks/useMouseHandlers.js` | All pointer interaction: `handleMouseDown/Move/Up/ImageMouseLeave` across all modes. Owns internal `cornerMouseDownRef`, `ctrlDragBusy`, `shiftDragBusy`, `normalDragPendingRef`, `normalDragActiveRef`, `mouseUpHandledRef`. Registers a `window` `mouseup` listener (via `useEffect`) to commit or cancel Normal mode drags that end outside the canvas-area. Defines and returns `displayToImage` (also forwarded to `<ImageOverlays>`). |
-| `hooks/useKeyboardShortcuts.js` | Single `keydown` `useEffect`: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+Z` (undo), `Ctrl+S` (save), `WASDQE` (crop/rotate). WASDQE are guarded by `canSave`; if no crop result exists, `showStatus` is called instead of forwarding to Go (prevents a backend error modal). |
+| `hooks/useKeyboardShortcuts.js` | Single `keydown` `useEffect`: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+Z` (undo), `Ctrl+S` (save), `Ctrl+W`/`Cmd+W` (quit), `WASDQE` (crop/rotate). WASDQE are guarded by `canSave`; if no crop result exists, `showStatus` is called instead of forwarding to Go (prevents a backend error modal). |
 | `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, window mouseup effect, `EventsOn("touchup-done")` effect. |
 | `hooks/useZoomPan.js` | Canvas viewport: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, scroll `useLayoutEffect`. |
 | `hooks/usePersistentSettings.js` | localStorage-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, `autoCornerParams`, `closeAfterSave`, `touchupRemainsActive`, `straightEdgeRemainsActive`, `autoDetectOnModeSwitch`). Syncs to Go on startup and on every change. |
@@ -510,6 +510,17 @@ AutoContrast()
     return preview + black/white values
 ```
 
+### TrimBorders
+
+```
+TrimBorders(req)
+    require warpedImage != nil
+    saveUndo()              ← commits, preserving undo state
+    adjust cropTop/cropBottom/cropLeft/cropRight by req.amount (or default)
+    warpedImage = subImage(warpedImage, adjustedRect)
+    return preview
+```
+
 ### Undo
 
 ```
@@ -801,7 +812,8 @@ Complex argument/return types are defined in `frontend/wailsjs/go/models.ts`.
 - **WASDQE before crop**: guarded in `useKeyboardShortcuts` — calls `showStatus('Apply a crop first before adjusting')` instead of forwarding to Go, so no error modal is shown.
 - **Destructive confirmation** (Re-crop): displays a `ConfirmationModal` (Cancel / Continue) before calling `RecropImage`. `ConfirmationModal` is a close variant of `ErrorModal` with two buttons; it is driven by `confirmDialog` state `{ message, onConfirm }` in `App.jsx`. Use this pattern for any future action that irreversibly discards session state.
 - **Warp outpaint failure**: propagates as a hard error; there is no automatic fallback
-- **IOPaint for warp**: NOT used. Only PatchMatch is used for out-of-bounds warp fill.
+- **IOPaint for crop outpainting**: NOT used. Only PatchMatch is used for out-of-bounds fill.
+- **Ctrl+W / Cmd+W**: fires before the `imageLoaded` guard in `useKeyboardShortcuts`, so quitting works even when no image is loaded.
 
 ---
 
