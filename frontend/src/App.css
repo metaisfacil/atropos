@@ -7,6 +7,7 @@
 .sidebar {
   position: relative;
   width: 320px;
+  min-width: 220px; /* allow the sidebar to be smaller while still usable */
   background: #252526;
   border-right: 1px solid #3e3e42;
   padding: 20px;
@@ -104,7 +105,8 @@
 }
 
 .mode-btn {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   padding: 10px;
   background: #3e3e42;
   color: #e0e0e0;
@@ -112,8 +114,11 @@
   border: 2px solid transparent;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: clamp(9px, 1.5vw, 12px);
   transition: all 0.2s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
 }
 
 .mode-btn:hover {
@@ -320,6 +325,34 @@ button.save-btn:hover {
   border-bottom-right-radius: 10px;
 }
 
+.file-ops button {
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto; /* override global button 100% width in this row */
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: normal;
+  text-overflow: clip;
+  font-size: clamp(11px, 1.8vw, 14px);
+}
+
+@media (max-width: 300px) {
+  .file-ops button {
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 250px) {
+  .file-ops button {
+    font-size: 10px;
+  }
+  .mode-btn {
+    font-size: 10px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}
+
 /* Keep the section header visible while the section content scrolls */
 .keyboard-shortcuts > .shortcut-title {
   position: sticky;
@@ -422,8 +455,8 @@ button.save-btn:hover {
   flex-shrink: 0;
 }
 .level-range {
-  flex: 1 1 auto;
-  min-width: 120px;
+  flex: 1 1 0;
+  min-width: 0;
 }
 .level-value {
   width: 44px;
