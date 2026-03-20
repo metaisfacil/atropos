@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import ConfirmationModal from './ConfirmationModal'
 
 const FADE_MS = 150
+const UPSCALE_PIXEL_WARN = 2_000_000
 
 export default function ResizeModal({ open, initialWidth, initialHeight, onClose, onApply }) {
   const [mounted, setMounted] = useState(false)
@@ -12,6 +14,7 @@ export default function ResizeModal({ open, initialWidth, initialHeight, onClose
   const [height, setHeight] = useState(initialHeight)
   const [percent, setPercent] = useState(100)
   const [lockAspect, setLockAspect] = useState(true)
+  const [confirmMessage, setConfirmMessage] = useState(null)
 
   useEffect(() => {
     if (open) {
@@ -29,11 +32,21 @@ export default function ResizeModal({ open, initialWidth, initialHeight, onClose
     return () => clearTimeout(fadeOutTimer.current)
   }, [open, initialWidth, initialHeight])
 
+  const tryApply = (w, h) => {
+    const added = w * h - initialWidth * initialHeight
+    if (added > UPSCALE_PIXEL_WARN) {
+      const addedM = (added / 1_000_000).toFixed(1)
+      setConfirmMessage(`This resize adds ~${addedM}M pixels. Upscaling typically cannot improve image quality and should generally be avoided. Continue anyway?`)
+    } else {
+      onApply({ width: w, height: h })
+    }
+  }
+
   useEffect(() => {
     if (!open) return
     const handler = (e) => {
       if (e.key === 'Escape') onClose()
-      if (e.key === 'Enter' && width > 0 && height > 0) onApply({ width, height })
+      if (e.key === 'Enter' && width > 0 && height > 0) tryApply(width, height)
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -163,13 +176,19 @@ export default function ResizeModal({ open, initialWidth, initialHeight, onClose
           <button className="modal-cancel-btn" onClick={onClose}>Cancel</button>
           <button
             className="options-ok-btn recrop-btn"
-            onClick={() => onApply({ width, height })}
+            onClick={() => tryApply(width, height)}
             disabled={width <= 0 || height <= 0}
           >
             Apply
           </button>
         </div>
       </div>
+
+      <ConfirmationModal
+        message={confirmMessage}
+        onConfirm={() => { setConfirmMessage(null); onApply({ width, height }) }}
+        onCancel={() => setConfirmMessage(null)}
+      />
     </div>
   )
 
