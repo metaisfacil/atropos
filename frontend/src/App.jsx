@@ -313,6 +313,8 @@ export default function App() {
             imageLoaded={imageLoaded}
             setLoading={setLoading}
             setPreview={setPreview}
+            realImageDims={realImageDims}
+            setRealImageDims={setRealImageDims}
             useStretchPreprocess={useStretchPreprocess}
             setUseStretchPreprocess={setUseStretchPreprocess}
             postCropAvailable={

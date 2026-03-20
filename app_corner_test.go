@@ -217,6 +217,31 @@ func TestResetCorners_ReturnsDetectedCornersInResult(t *testing.T) {
 	}
 }
 
+func TestResizeImage_NoImage(t *testing.T) {
+	a := NewApp()
+	_, err := a.ResizeImage(ResizeRequest{Width: 100, Height: 100})
+	if err == nil {
+		t.Fatal("expected error when no image loaded")
+	}
+}
+
+func TestResizeImage_ResizesCurrentImage(t *testing.T) {
+	a := newLoadedTestApp(120, 80)
+	res, err := a.ResizeImage(ResizeRequest{Width: 60, Height: 40})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Width != 60 || res.Height != 40 {
+		t.Fatalf("unexpected dimensions %dx%d", res.Width, res.Height)
+	}
+	if a.warpedImage == nil {
+		t.Fatal("warpedImage should be set after ResizeImage")
+	}
+	if a.warpedImage.Bounds().Dx() != 60 || a.warpedImage.Bounds().Dy() != 40 {
+		t.Fatalf("warpedImage dimensions mismatch %dx%d", a.warpedImage.Bounds().Dx(), a.warpedImage.Bounds().Dy())
+	}
+}
+
 // ---- RestoreCornerOverlay ----
 
 func TestRestoreCornerOverlay_NoCachedCorners(t *testing.T) {
