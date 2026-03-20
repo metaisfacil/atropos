@@ -46,6 +46,10 @@ export default function App() {
     window.addEventListener('mouseup', onMouseUp)
   }
 
+  function onSidebarResizeReset() {
+    setSidebarWidth(320)
+  }
+
   // ── Shared state ──────────────────────────────────────────────────────────
   const [mode, setMode]             = useState('corner')
   const [preview, setPreview]       = useState(null)
@@ -222,7 +226,11 @@ export default function App() {
       )}
 
       <aside className="sidebar" style={{ width: sidebarWidth }}>
-        <div className="sidebar-resize-handle" onMouseDown={onSidebarResizeStart} />
+        <div
+          className="sidebar-resize-handle"
+          onMouseDown={onSidebarResizeStart}
+          onDoubleClick={onSidebarResizeReset}
+        />
         {/* Mode selector */}
         <div className="mode-selector">
           {['corner', 'disc', 'line', 'normal'].map(m => (
