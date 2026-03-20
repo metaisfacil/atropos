@@ -8,14 +8,13 @@
   "frontend:dev:serverUrl": "http://localhost:5173",
   "devServer": "localhost:34115",
   "author": {
-    "name": "Atropos Team",
+    "name": "metaisfacil",
     "email": ""
   },
   "info": {
     "productName": "Atropos",
-    "productVersion": "1.0.0",
     "companyName": "Atropos",
-    "companyWebsite": "",
+    "companyWebsite": "https://github.com/metaisfacil/atropos",
     "copyright": "Copyright (c) 2026"
   }
 }
