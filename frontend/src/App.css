@@ -208,34 +208,18 @@ button.primary {
   background: #007acc;
 }
 
-/* Touch-up brush button: distinct color and depressed appearance when active */
-button.touchup-btn {
-  background: #7f5371
+/* Adjustment panel button color: contrast hue from Detect/Crop */
+button.adjustments-btn {
+  background: #0087b8;
 }
 
-button.touchup-btn:hover {
-  background: #69445a;
+button.adjustments-btn:hover {
+  background: #006f94;
 }
 
-button.touchup-btn.active,
-button.touchup-btn:active {
-    background: #8f2f89;
-    box-shadow: inset 0 3px 1px #0004;
-    transform: translateY(1px);
-}
-
-/* Straight edge button: muted teal, distinct from mauve touch-up and blues */
-button.straight-edge-btn {
-  background: #4a6b72;
-}
-
-button.straight-edge-btn:hover {
-  background: #3a585f;
-}
-
-button.straight-edge-btn.active,
-button.straight-edge-btn:active {
-  background: #1e7a8a;
+button.adjustments-btn:active,
+button.adjustments-btn.active {
+  background: #00566f;
   box-shadow: inset 0 3px 1px #0004;
   transform: translateY(1px);
 }

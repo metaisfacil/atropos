@@ -92,7 +92,7 @@ export default function AdjustmentsPanel({
           <div className="shortcut-item">
             <DelayedHint hint="Toggles the touch-up brush which uses a PatchMatch-style content-aware fill. Draw strokes on the preview to build a mask, then commit to fill.">
               <button
-                className={`primary touchup-btn ${useTouchupTool ? 'active' : ''}`}
+                className={`adjustments-btn touchup-btn ${useTouchupTool ? 'active' : ''}`}
                 onClick={() => {
                   if (!useTouchupTool) setUseStraightEdgeTool(false)
                   setUseTouchupTool(!useTouchupTool)
@@ -117,7 +117,7 @@ export default function AdjustmentsPanel({
             <div className="shortcut-item">
               <DelayedHint hint="Draw a line along a known horizontal edge. The disc will be rotated so that edge becomes level. Available only after the disc has been cropped.">
                 <button
-                  className={`primary straight-edge-btn ${useStraightEdgeTool ? 'active' : ''}`}
+                  className={`adjustments-btn straight-edge-btn ${useStraightEdgeTool ? 'active' : ''}`}
                   onClick={() => {
                     if (!useStraightEdgeTool) setUseTouchupTool(false)
                     setUseStraightEdgeTool(!useStraightEdgeTool)
@@ -134,7 +134,7 @@ export default function AdjustmentsPanel({
           <div className="shortcut-item">
             <DelayedHint hint="Detects and removes solid white or black border strips from each edge of the image.">
               <button
-                className="primary"
+                className="adjustments-btn"
                 style={{ minWidth: 120 }}
                 onClick={applyTrimBorders}
                 disabled={!imageLoaded || !postCropAvailable}
@@ -147,7 +147,7 @@ export default function AdjustmentsPanel({
           <div className="shortcut-item" style={{ position: 'relative' }}>
             <DelayedHint hint="Clamps the image's luminance around the brightest and darkest points to enhance contrast.">
               <button
-                className="primary"
+                className="adjustments-btn"
                 style={{ minWidth: 120 }}
                 onClick={applyAutoContrast}
                 disabled={autoContrastPending || !imageLoaded || !postCropAvailable}
