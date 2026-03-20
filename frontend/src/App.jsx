@@ -26,6 +26,30 @@ import { useMouseHandlers }      from './hooks/useMouseHandlers'
 import { useKeyboardShortcuts }  from './hooks/useKeyboardShortcuts'
 
 export default function App() {
+  // ── Sidebar resize ────────────────────────────────────────────────────────
+  const [sidebarWidth, setSidebarWidth] = useState(320)
+
+  function onSidebarResizeStart(e) {
+    e.preventDefault()
+    const startX = e.clientX
+    const startWidth = sidebarWidth
+
+    function onMouseMove(e) {
+      const newWidth = Math.min(600, Math.max(200, startWidth + e.clientX - startX))
+      setSidebarWidth(newWidth)
+    }
+    function onMouseUp() {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
+
+  function onSidebarResizeReset() {
+    setSidebarWidth(320)
+  }
+
   // ── Shared state ──────────────────────────────────────────────────────────
   const [mode, setMode]             = useState('corner')
   const [preview, setPreview]       = useState(null)
@@ -201,7 +225,12 @@ export default function App() {
         </div>
       )}
 
-      <aside className="sidebar">
+      <aside className="sidebar" style={{ width: sidebarWidth }}>
+        <div
+          className="sidebar-resize-handle"
+          onMouseDown={onSidebarResizeStart}
+          onDoubleClick={onSidebarResizeReset}
+        />
         {/* Mode selector */}
         <div className="mode-selector">
           {['corner', 'disc', 'line', 'normal'].map(m => (
