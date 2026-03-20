@@ -178,6 +178,10 @@ export function TouchUpApply(arg1, arg2, arg3) {
   return window['go']['main']['App']['TouchUpApply'](arg1, arg2, arg3);
 }
 
+export function TrimBorders() {
+  return window['go']['main']['App']['TrimBorders']();
+}
+
 export function Undo() {
   return window['go']['main']['App']['Undo']();
 }

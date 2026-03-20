@@ -1,5 +1,5 @@
 import React from 'react'
-import { AutoContrast, SetLevels } from '../../wailsjs/go/main/App'
+import { AutoContrast, SetLevels, TrimBorders } from '../../wailsjs/go/main/App'
 import DelayedHint from './DelayedHint'
 
 // AdjustmentsPanel renders the collapsible Adjustments section at the bottom
@@ -32,6 +32,19 @@ export default function AdjustmentsPanel({
   useStraightEdgeTool,
   setUseStraightEdgeTool,
 }) {
+  const applyTrimBorders = async () => {
+    if (!imageLoaded) return
+    setLoading(true)
+    try {
+      const result = await TrimBorders()
+      if (result?.preview) setPreview(result.preview)
+    } catch (err) {
+      console.error('TrimBorders error:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const applyAutoContrast = async () => {
     if (!imageLoaded) return
     setAutoContrastPending(true)
@@ -117,6 +130,19 @@ export default function AdjustmentsPanel({
               </DelayedHint>
             </div>
           )}
+
+          <div className="shortcut-item">
+            <DelayedHint hint="Detects and removes solid white or black border strips from each edge of the image.">
+              <button
+                className="primary"
+                style={{ minWidth: 120 }}
+                onClick={applyTrimBorders}
+                disabled={!imageLoaded || !postCropAvailable}
+              >
+                Trim borders
+              </button>
+            </DelayedHint>
+          </div>
 
           <div className="shortcut-item" style={{ position: 'relative' }}>
             <DelayedHint hint="Clamps the image's luminance around the brightest and darkest points to enhance contrast.">
