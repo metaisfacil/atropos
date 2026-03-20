@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import {
   Crop, Rotate, ShiftDisc, RotateDisc, SetFeatherSize, GetPixelColor,
 } from '../../wailsjs/go/main/App'
+import { Quit } from '../../wailsjs/runtime/runtime'
 
 export function useKeyboardShortcuts({
   imageLoaded, mode, discActive, featherSize,
@@ -49,6 +50,12 @@ export function useKeyboardShortcuts({
           if (ctrlDragRef.current !== null || shiftDragRef.current !== null) return
           e.preventDefault()
           await handleUndo()
+          return
+        }
+
+        if ((e.ctrlKey || e.metaKey) && e.code === 'KeyW') {
+          e.preventDefault()
+          Quit()
           return
         }
 
