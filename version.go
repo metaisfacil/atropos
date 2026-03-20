@@ -13,3 +13,8 @@ var AppVersion = "dev"
 func AppBaseTitle() string {
 	return "Atropos " + AppVersion
 }
+
+// GetVersion returns the injected build version string.
+func (a *App) GetVersion() string {
+	return AppVersion
+}

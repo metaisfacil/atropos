@@ -10,6 +10,7 @@ import ShortcutsPanel   from './components/ShortcutsPanel'
 import OptionsPanel     from './components/OptionsPanel'
 import ToolsPanel       from './components/ToolsPanel'
 import CompositorModal  from './components/CompositorModal'
+import AboutModal       from './components/AboutModal'
 import ErrorModal       from './components/ErrorModal'
 import ConfirmationModal from './components/ConfirmationModal'
 import DelayedHint      from './components/DelayedHint'
@@ -82,6 +83,7 @@ export default function App() {
   const [useTouchupTool, setUseTouchupTool] = useState(false)
   const [useStraightEdgeTool, setUseStraightEdgeTool] = useState(false)
   const [optionsOpen, setOptionsOpen]         = useState(false)
+  const [aboutOpen,   setAboutOpen]           = useState(false)
   const [compositorOpen, setCompositorOpen]   = useState(false)
   const [toolsOpen, setToolsOpen]             = useState(false)
 
@@ -378,6 +380,7 @@ export default function App() {
         onLoad={async (info) => { setCompositorOpen(false); await handleCompositorLoad(info) }}
         dropRef={compositorDropRef}
       />
+      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
       <ErrorModal message={errorMessage} onClose={() => setErrorMessage(null)} />
       <ConfirmationModal
         message={confirmDialog?.message}
@@ -418,6 +421,7 @@ export default function App() {
         <header className="toolbar">
           {loading && <div className="header-spinner" />}
           <span className={imageInfoVisible ? 'toolbar-message' : 'toolbar-message toolbar-message--fading'}>{imageInfo}</span>
+          <button className="about-btn" onClick={() => setAboutOpen(true)} aria-label="About">?</button>
         </header>
         <div
           ref={canvasRef}

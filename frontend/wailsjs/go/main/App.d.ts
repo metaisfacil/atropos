@@ -38,6 +38,8 @@ export function GetPixelColor(arg1:main.PixelColorRequest):Promise<main.ProcessR
 
 export function GetTouchupSettings():Promise<main.TouchupSettings>;
 
+export function GetVersion():Promise<string>;
+
 export function GetWarpSettings():Promise<main.WarpSettings>;
 
 export function LoadImage(arg1:main.LoadImageRequest):Promise<main.ImageInfo>;

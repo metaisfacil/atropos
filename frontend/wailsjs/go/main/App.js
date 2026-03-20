@@ -74,6 +74,10 @@ export function GetTouchupSettings() {
   return window['go']['main']['App']['GetTouchupSettings']();
 }
 
+export function GetVersion() {
+  return window['go']['main']['App']['GetVersion']();
+}
+
 export function GetWarpSettings() {
   return window['go']['main']['App']['GetWarpSettings']();
 }
