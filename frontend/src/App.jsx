@@ -281,65 +281,66 @@ export default function App() {
 
         {/* Bottom section: actions, adjustments, shortcuts, file ops */}
         <div className="sidebar-bottom">
-          <div className="sidebar-actions">
-            {mode === 'corner' && (
-              <DelayedHint hint="Run corner detection, then click 4 corners to apply the perspective crop.">
-                <button className="primary" onClick={handleDetectCorners} disabled={!imageLoaded || loading || cropSkipped}>
-                  Detect
-                </button>
-              </DelayedHint>
-            )}
-            {mode === 'normal' && (
-              <DelayedHint hint="Apply a drawn rectangle as a crop to the image. You can also press Enter.">
-                <button className="primary" onClick={handleNormalCrop} disabled={!imageLoaded || loading || !normalRect}>
-                  Crop
-                </button>
-              </DelayedHint>
-            )}
-            {((mode === 'corner' && cornerState.cornerCount < 4) ||
-              (mode === 'disc'   && !discActive) ||
-              (mode === 'line'   && !linesProcessed) ||
-              (mode === 'normal' && !normalCropApplied)) && (
-              <DelayedHint hint="Skip the cropping step and proceed to adjustments/touch-up. (You can re-crop later.)">
-                <button className="skip-crop-btn" onClick={handleSkipCrop} disabled={!imageLoaded || loading}>
-                  Skip crop
-                </button>
-              </DelayedHint>
-            )}
-            {((mode === 'corner' && cornerState.cornerCount > 0) ||
-              (mode === 'disc'   && discActive) ||
-              (mode === 'line'   && (linesDone > 0 || linesProcessed)) ||
-              (mode === 'normal' && (normalRect !== null || normalCropApplied))) && (
-              <div style={{ display: 'flex', gap: '10px' }}>
-                {((mode === 'corner' && cornerState.cornerCount === 4) ||
-                  (mode === 'disc'   && discActive) ||
-                  (mode === 'line'   && linesProcessed) ||
-                  (mode === 'normal' && normalCropApplied)) && (
-                  <DelayedHint hint="Promote the current output to be the new source image and restart cropping.">
-                    <button className="recrop-btn" onClick={handleRecrop} disabled={!imageLoaded || loading}>
-                      Re-crop
-                    </button>
-                  </DelayedHint>
-                )}
-                <DelayedHint hint="Reset this mode's crop/selection and clear the current warp result.">
-                  <button
-                    className="reset-btn-danger"
-                    disabled={loading}
-                    onClick={
-                      mode === 'corner' ? handleResetCorners :
-                      mode === 'disc'   ? handleResetDisc    :
-                      mode === 'normal' ? handleResetNormal  :
-                                          handleClearLines
-                    }
-                  >
-                    Reset{mode === 'corner' && !cropSkipped ? ` (${cornerState.cornerCount}/4)` : ''}
+          <div className="sidebar-bottom-scroll">
+            <div className="sidebar-actions">
+              {mode === 'corner' && (
+                <DelayedHint hint="Run corner detection, then click 4 corners to apply the perspective crop.">
+                  <button className="primary" onClick={handleDetectCorners} disabled={!imageLoaded || loading || cropSkipped}>
+                    Detect
                   </button>
                 </DelayedHint>
-              </div>
-            )}
-          </div>
+              )}
+              {mode === 'normal' && (
+                <DelayedHint hint="Apply a drawn rectangle as a crop to the image. You can also press Enter.">
+                  <button className="primary" onClick={handleNormalCrop} disabled={!imageLoaded || loading || !normalRect}>
+                    Crop
+                  </button>
+                </DelayedHint>
+              )}
+              {((mode === 'corner' && cornerState.cornerCount < 4) ||
+                (mode === 'disc'   && !discActive) ||
+                (mode === 'line'   && !linesProcessed) ||
+                (mode === 'normal' && !normalCropApplied)) && (
+                <DelayedHint hint="Skip the cropping step and proceed to adjustments/touch-up. (You can re-crop later.)">
+                  <button className="skip-crop-btn" onClick={handleSkipCrop} disabled={!imageLoaded || loading}>
+                    Skip crop
+                  </button>
+                </DelayedHint>
+              )}
+              {((mode === 'corner' && cornerState.cornerCount > 0) ||
+                (mode === 'disc'   && discActive) ||
+                (mode === 'line'   && (linesDone > 0 || linesProcessed)) ||
+                (mode === 'normal' && (normalRect !== null || normalCropApplied))) && (
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  {((mode === 'corner' && cornerState.cornerCount === 4) ||
+                    (mode === 'disc'   && discActive) ||
+                    (mode === 'line'   && linesProcessed) ||
+                    (mode === 'normal' && normalCropApplied)) && (
+                    <DelayedHint hint="Promote the current output to be the new source image and restart cropping.">
+                      <button className="recrop-btn" onClick={handleRecrop} disabled={!imageLoaded || loading}>
+                        Re-crop
+                      </button>
+                    </DelayedHint>
+                  )}
+                  <DelayedHint hint="Reset this mode's crop/selection and clear the current warp result.">
+                    <button
+                      className="reset-btn-danger"
+                      disabled={loading}
+                      onClick={
+                        mode === 'corner' ? handleResetCorners :
+                        mode === 'disc'   ? handleResetDisc    :
+                        mode === 'normal' ? handleResetNormal  :
+                                            handleClearLines
+                      }
+                    >
+                      Reset{mode === 'corner' && !cropSkipped ? ` (${cornerState.cornerCount}/4)` : ''}
+                    </button>
+                  </DelayedHint>
+                </div>
+              )}
+            </div>
 
-          <AdjustmentsPanel
+            <AdjustmentsPanel
             adjPanelOpen={adjPanelOpen}           setAdjPanelOpen={setAdjPanelOpen}
             autoContrastPending={autoContrastPending} setAutoContrastPending={setAutoContrastPending}
             blackPoint={blackPoint}               setBlackPoint={setBlackPoint}
@@ -382,6 +383,7 @@ export default function App() {
             canSave={imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive)}
             imageLoaded={imageLoaded}
           />
+          </div>  {/* end .sidebar-bottom-scroll */}
 
           <div className="file-ops">
             <DelayedHint hint="Open a file dialog to select and load an image into the app.">

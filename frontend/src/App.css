@@ -133,7 +133,7 @@
 }
 
 .control-group {
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .control-group label {
@@ -257,8 +257,9 @@ button.save-btn:hover {
 }
 
 .sidebar-bottom {
-  /* Stick the bottom island to the bottom of the sidebar viewport so it's
-     always reachable while the rest of the sidebar can scroll. */
+  /* Stick the bottom region to the bottom of the sidebar viewport.
+     Inner scroll zone keeps controls accessible, and file operation buttons
+     remain pinned at the base. */
   position: sticky;
   bottom: 0;
   margin-top: 0;
@@ -267,14 +268,21 @@ button.save-btn:hover {
   display: flex;
   flex-direction: column;
   max-height: calc(100vh - 72px); /* keep within viewport when sidebar is tiny */
-  overflow: hidden;
+  overflow: visible; /* allow ::before fade overlay to show above scrolling content */
 }
 
 .sidebar-bottom-scroll {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
-  padding-right: 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.keyboard-shortcuts > .shortcut-title {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: #2d2d30;
 }
 
 /* Fading edge above the island so the island appears to sit on the
@@ -320,7 +328,6 @@ button.save-btn:hover {
   margin-bottom: 8px;
   /* allow the content area to expand when opened; we'll animate the
      inner `.keyboard-shortcuts-content` for a smooth ease-in. */
-  max-height: 600px;
   display: flex;
   flex-direction: column;
 }
@@ -334,6 +341,11 @@ button.save-btn:hover {
   border-top: 1px solid #3e3e42;
   border-bottom-left-radius: 10px;
   border-bottom-right-radius: 10px;
+
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  flex: 0 0 auto;
 }
 
 .file-ops button {
@@ -380,6 +392,7 @@ button.save-btn:hover {
   border-bottom: 1px solid rgba(62,62,66,0.6);
   padding-bottom: 6px;
 }
+
 .keyboard-shortcuts-content {
   flex: 1 1 auto;
   /* start collapsed: zero height, transparent, slightly lifted */
@@ -395,7 +408,8 @@ button.save-btn:hover {
 /* Open state: allow scrolling and full opacity/position */
 .keyboard-shortcuts.expanded > .keyboard-shortcuts-content,
 .keyboard-shortcuts .keyboard-shortcuts-content.open {
-  max-height: 520px;
+  min-height: 80px;
+  max-height: 2000px;
   opacity: 1;
   transform: translateY(0);
   overflow: auto;

@@ -80,8 +80,8 @@ func main() {
 		Title:     AppBaseTitle(),
 		Width:     1200,
 		Height:    900,
-		MinWidth:  800,
-		MinHeight: 600,
+		MinWidth:  1080,
+		MinHeight: 820,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
