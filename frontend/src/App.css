@@ -1101,7 +1101,7 @@ button.resize-aspect-btn:hover {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding-top: 8px;
+  padding-top: 10px;
 }
 
 .tools-panel-btn {
