@@ -22,7 +22,9 @@ const ORIENTATIONS = [
 //   onClose – called when the user clicks Close or the backdrop
 //   onLoad  – called with an ImageInfo-shaped object when the user loads the
 //             result into the main editing pipeline
-export default function CompositorModal({ open, onClose, onLoad }) {
+//   dropRef – ref whose .current is set to a callback while the modal is open;
+//             the parent's OnFileDrop handler calls it with dropped image paths
+export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
   const [mounted, setMounted]       = useState(false)
   const [shown, setShown]           = useState(false)
   const fadeTimer                   = useRef(null)
@@ -53,6 +55,23 @@ export default function CompositorModal({ open, onClose, onLoad }) {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [open, onClose])
+
+  // Register drop handler so the parent's OnFileDrop can forward paths here
+  useEffect(() => {
+    if (!dropRef) return
+    if (open) {
+      dropRef.current = (imagePaths) => {
+        setPaths(prev => {
+          const next = [...prev, ...imagePaths]
+          setStatus(`${next.length} image(s) queued`)
+          return next
+        })
+      }
+    } else {
+      dropRef.current = null
+    }
+    return () => { if (dropRef) dropRef.current = null }
+  }, [open, dropRef])
 
   if (!mounted) return null
 

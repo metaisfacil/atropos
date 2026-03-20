@@ -71,6 +71,8 @@ export default function App() {
   const [normalCropApplied, setNormalCropApplied] = useState(false)
 
   // ── UI state ──────────────────────────────────────────────────────────────
+  const compositorDropRef = useRef(null)
+
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [adjPanelOpen,  setAdjPanelOpen]  = useState(false)
   const [autoContrastPending, setAutoContrastPending] = useState(false)
@@ -156,6 +158,7 @@ export default function App() {
     touchupDraggingRef, canvasRef,
     showStatus, showError,
     setImageMeta,
+    compositorDropRef,
   })
   flushPendingSaveRef.current = flushPendingSave
 
@@ -373,6 +376,7 @@ export default function App() {
         open={compositorOpen}
         onClose={() => setCompositorOpen(false)}
         onLoad={async (info) => { setCompositorOpen(false); await handleCompositorLoad(info) }}
+        dropRef={compositorDropRef}
       />
       <ErrorModal message={errorMessage} onClose={() => setErrorMessage(null)} />
       <ConfirmationModal
