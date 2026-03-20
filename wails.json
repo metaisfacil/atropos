@@ -1,12 +1,12 @@
 {
   "name": "atropos",
   "outputfilename": "atropos",
-  "frontend": {
-    "install": "npm install",
-    "build": "npm run build",
-    "dev": "npm run dev",
-    "dir": "./frontend"
-  },
+  "frontend:dir": "./frontend",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "http://localhost:5173",
+  "devServer": "localhost:34115",
   "author": {
     "name": "Atropos Team",
     "email": ""
@@ -17,28 +17,5 @@
     "companyName": "Atropos",
     "companyWebsite": "",
     "copyright": "Copyright (c) 2026"
-  },
-  "build": {
-    "debug": "darwin",
-    "devServer": "http://localhost:34115",
-    "frontend:dev:serverUrl": "http://localhost:5173",
-    "nsis": {
-      "template": "build/windows/installer/custom.nsi",
-      "licenseFile": "",
-      "icon": "",
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Atropos"
-    },
-    "webkitPrivateMode": false,
-    "windows": {
-      "windowStartState": "maximised"
-    },
-    "mac": {
-      "universalBuild": true,
-      "codeSigningIdentity": ""
-    }
   }
 }
