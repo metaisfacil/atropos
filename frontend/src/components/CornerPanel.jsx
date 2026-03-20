@@ -104,7 +104,7 @@ export default function CornerPanel({
         </DelayedHint>
       </div>
 
-      <div className="control-group" style={{ marginTop: 40 }}>
+      <div className="control-group" style={{ marginTop: 20 }}>
         <label className="checkbox-label">
           <input
             type="checkbox"
