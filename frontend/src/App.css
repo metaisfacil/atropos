@@ -323,7 +323,6 @@ button.save-btn:hover {
   max-height: 600px;
   display: flex;
   flex-direction: column;
-  overflow: hidden; /* content scroll lives in .keyboard-shortcuts-content */
 }
 
 .file-ops {
