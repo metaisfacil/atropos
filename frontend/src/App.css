@@ -36,11 +36,10 @@
   display: flex;
   flex-direction: column; /* stack mode panels vertically */
   flex: 1 1 auto;
-  overflow-y: auto;
+  overflow-y: scroll; /* keep scrollbar stable during mode transitions */
   min-height: 0;
   padding-right: 12px; /* reserve space for scrollbar so content doesn't shift */
   padding-left: 10px; /* small left gutter so content appears centered */
-  /* Keep scrollbar gutter stable to avoid layout shift when it appears. */
   scrollbar-gutter: stable both-edges;
   align-items: stretch;
 }
@@ -51,27 +50,25 @@
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
 
 /* Mode panels: fade/slide when switching modes */
 .mode-panel {
   width: 100%;
-  transition: opacity 180ms ease-in-out, transform 180ms ease-in-out, max-height 220ms ease-in-out;
+  transition: opacity 180ms ease-in-out, transform 180ms ease-in-out;
   opacity: 0;
   transform: translateX(6px);
   pointer-events: none;
-  max-height: 0; /* collapsed */
+  visibility: hidden;
   overflow: hidden;
-  flex: 0 0 auto; /* natural content height when open */
-  align-self: stretch;
-  min-height: 0; /* allow flex children to shrink properly */
+  max-height: 0;
 }
 .mode-panel.active {
   opacity: 1;
   transform: translateX(0);
   pointer-events: auto;
-  max-height: 2000px; /* large enough to reveal content smoothly */
+  visibility: visible;
+  max-height: 2000px;
 }
 
 /* WebKit scrollbar styling for the inner scroll area */
