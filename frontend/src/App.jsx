@@ -51,7 +51,7 @@ export default function App() {
   const [cornerState, setCornerState] = useState({
     maxCorners: 500, qualityLevel: 1, minDistance: 100, accent: 20, cornerCount: 0,
   })
-  const [dotRadius, setDotRadius]         = useState(20)
+  const [dotRadius, setDotRadius]         = useState(5)
   const [customCorner, setCustomCorner]   = useState(false)
   const [cornersDetected, setCornersDetected] = useState(false)
   const [detectedCornerPts, setDetectedCornerPts] = useState([])

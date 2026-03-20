@@ -57,24 +57,32 @@ export default function ImageOverlays({
           </svg>
         )
        })()}
-      {mode === 'corner' && (detectedCornerPts.length > 0 || selectedCornerPts.length > 0) && (
-        <svg
-          viewBox={`0 0 ${realImageDims.w} ${realImageDims.h}`}
-          preserveAspectRatio="none"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6 }}
-        >
-          {detectedCornerPts.map((pt, i) => (
-            <circle key={`d${i}`} cx={pt.X} cy={pt.Y} r={dotRadius}
-              fill="rgba(255,0,0,0.6)" stroke="red" strokeWidth="1"
-              vectorEffect="non-scaling-stroke" />
-          ))}
-          {selectedCornerPts.map((pt, i) => (
-            <circle key={`s${i}`} cx={pt.X} cy={pt.Y} r={Math.max(dotRadius * 1.5, dotRadius + 4)}
-              fill="rgba(0,255,0,0.6)" stroke="lime" strokeWidth="2"
-              vectorEffect="non-scaling-stroke" />
-          ))}
-        </svg>
-      )}
+      {mode === 'corner' && (detectedCornerPts.length > 0 || selectedCornerPts.length > 0) && (() => {
+        const referenceSize = 1600 // base image size for slider values
+        const minDim = Math.min(realImageDims.w, realImageDims.h)
+        const scale = minDim > 0 ? minDim / referenceSize : 1
+        const scaledDotRadius = Math.max(2, Math.round(dotRadius * scale))
+        const scaledSelectedRadius = Math.max(scaledDotRadius * 1.5, scaledDotRadius + 4)
+
+        return (
+          <svg
+            viewBox={`0 0 ${realImageDims.w} ${realImageDims.h}`}
+            preserveAspectRatio="none"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6 }}
+          >
+            {detectedCornerPts.map((pt, i) => (
+              <circle key={`d${i}`} cx={pt.X} cy={pt.Y} r={scaledDotRadius}
+                fill="rgba(255,0,0,0.6)" stroke="red" strokeWidth="1"
+                vectorEffect="non-scaling-stroke" />
+            ))}
+            {selectedCornerPts.map((pt, i) => (
+              <circle key={`s${i}`} cx={pt.X} cy={pt.Y} r={scaledSelectedRadius}
+                fill="rgba(0,255,0,0.6)" stroke="lime" strokeWidth="2"
+                vectorEffect="non-scaling-stroke" />
+            ))}
+          </svg>
+        )
+      })()}
       {mode === 'normal' && (() => {
         // During drag: show live rect in display-space coords
         if (dragging && dragStart && dragCurrent && !useTouchupTool) {
