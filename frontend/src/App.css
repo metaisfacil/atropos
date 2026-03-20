@@ -752,7 +752,7 @@ button.options-close:hover {
   font-size: 13px;
   padding: 6px 8px;
   box-sizing: border-box;
-  font-family: monospace;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
 }
 
 .options-text-input:focus {
@@ -801,6 +801,70 @@ button.modal-cancel-btn {
 }
 
 button.modal-cancel-btn:hover {
+  background: #505054;
+}
+
+.adj-btn-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+.adj-btn-grid button {
+  width: 100%;
+  font-size: 12px;
+  padding: 7px 4px;
+}
+
+.adj-btn-grid ~ .shortcut-item {
+  margin-top: 6px;
+}
+
+.shortcut-item.adj-prestretch {
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.resize-dialog {
+  width: 260px;
+}
+
+.resize-dimensions-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.resize-dimensions-sep {
+  color: #858585;
+  font-size: 13px;
+  padding-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.resize-field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+button.resize-aspect-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #53535a;
+  background: #3e3e42;
+  color: #e0e0e0;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-bottom: 1px;
+}
+
+button.resize-aspect-btn:hover {
   background: #505054;
 }
 
