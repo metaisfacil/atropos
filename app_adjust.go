@@ -311,6 +311,91 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 	}, nil
 }
 
+// TrimBorders scans each edge of the working image and removes runs of
+// near-white (≥240 per channel) or near-black (≤15 per channel) rows/columns.
+// A row or column is treated as a border strip when at least 99% of its pixels
+// qualify as near-white or near-black.
+func (a *App) TrimBorders() (*ProcessResult, error) {
+	a.logf("TrimBorders")
+	if a.warpedImage == nil {
+		const msg = "TrimBorders: no processed image"
+		a.logf(msg)
+		return nil, fmt.Errorf(msg)
+	}
+
+	img := a.warpedImage
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+
+	// isBorderRow returns true when ≥99% of the row's pixels are near-white or near-black.
+	isBorderRow := func(y int) bool {
+		count := 0
+		for x := 0; x < w; x++ {
+			off := y*img.Stride + x*4
+			r, g, bv := img.Pix[off], img.Pix[off+1], img.Pix[off+2]
+			if (r >= 240 && g >= 240 && bv >= 240) || (r <= 15 && g <= 15 && bv <= 15) {
+				count++
+			}
+		}
+		return count*100 >= w*99
+	}
+
+	// isBorderCol returns true when ≥99% of the column's pixels are near-white or near-black.
+	isBorderCol := func(x int) bool {
+		count := 0
+		for y := 0; y < h; y++ {
+			off := y*img.Stride + x*4
+			r, g, bv := img.Pix[off], img.Pix[off+1], img.Pix[off+2]
+			if (r >= 240 && g >= 240 && bv >= 240) || (r <= 15 && g <= 15 && bv <= 15) {
+				count++
+			}
+		}
+		return count*100 >= h*99
+	}
+
+	top := 0
+	for top < h && isBorderRow(top) {
+		top++
+	}
+	bottom := h
+	for bottom > top && isBorderRow(bottom-1) {
+		bottom--
+	}
+	left := 0
+	for left < w && isBorderCol(left) {
+		left++
+	}
+	right := w
+	for right > left && isBorderCol(right-1) {
+		right--
+	}
+
+	if top == 0 && bottom == h && left == 0 && right == w {
+		a.logf("TrimBorders: no border strips detected")
+		preview, err := imageToBase64(img)
+		if err != nil {
+			return nil, err
+		}
+		return &ProcessResult{Preview: preview, Message: "No border strips detected", Width: w, Height: h}, nil
+	}
+
+	a.saveUndo()
+	a.warpedImage = subImage(img, image.Rect(left, top, right, bottom))
+
+	preview, err := imageToBase64(a.warpedImage)
+	if err != nil {
+		return nil, err
+	}
+	nb := a.warpedImage.Bounds()
+	a.logf("TrimBorders: trimmed top=%d bottom=%d left=%d right=%d → %dx%d", top, h-bottom, left, w-right, nb.Dx(), nb.Dy())
+	return &ProcessResult{
+		Preview: preview,
+		Message: fmt.Sprintf("Trimmed borders (top=%d, bottom=%d, left=%d, right=%d)", top, h-bottom, left, w-right),
+		Width:   nb.Dx(),
+		Height:  nb.Dy(),
+	}, nil
+}
+
 // SetLevels applies an explicit levels stretch to the working image.
 // Called while the user drags the Black Point / White Point sliders.
 //
