@@ -13,6 +13,11 @@ export function useKeyboardShortcuts({
 }) {
   useEffect(() => {
     const handleKeyDown = async (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyW') {
+        e.preventDefault()
+        Quit()
+        return
+      }
       if (!imageLoaded) return
       try {
         let result
@@ -50,12 +55,6 @@ export function useKeyboardShortcuts({
           if (ctrlDragRef.current !== null || shiftDragRef.current !== null) return
           e.preventDefault()
           await handleUndo()
-          return
-        }
-
-        if ((e.ctrlKey || e.metaKey) && e.code === 'KeyW') {
-          e.preventDefault()
-          Quit()
           return
         }
 
