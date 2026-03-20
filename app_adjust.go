@@ -27,6 +27,11 @@ type RotateRequest struct {
 	FlipCode int `json:"flipCode"`
 }
 
+type ResizeRequest struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
 // SetLevelsRequest carries explicit black- and white-point values.
 type SetLevelsRequest struct {
 	Black int `json:"black"`
@@ -208,6 +213,37 @@ func (a *App) Rotate(req RotateRequest) (*ProcessResult, error) {
 		return nil, err
 	}
 	return &ProcessResult{Preview: preview}, nil
+}
+
+// ResizeImage applies an explicit width/height resize against the working image.
+func (a *App) ResizeImage(req ResizeRequest) (*ProcessResult, error) {
+	a.logf("ResizeImage: %dx%d", req.Width, req.Height)
+	if a.currentImage == nil {
+		return nil, fmt.Errorf("no image loaded")
+	}
+	if req.Width <= 0 || req.Height <= 0 {
+		return nil, fmt.Errorf("invalid dimensions")
+	}
+
+	src := a.workingImage()
+	if src == nil {
+		return nil, fmt.Errorf("no working image")
+	}
+
+	a.saveUndo()
+	resized := resizeNRGBA(src, req.Width, req.Height)
+	a.setWorkingImage(resized)
+
+	preview, err := imageToBase64(resized)
+	if err != nil {
+		return nil, err
+	}
+	return &ProcessResult{
+		Preview: preview,
+		Message: fmt.Sprintf("Resized to %dx%d", req.Width, req.Height),
+		Width:   req.Width,
+		Height:  req.Height,
+	}, nil
 }
 
 // AutoContrast computes the luminance min/max of the working image, stretches

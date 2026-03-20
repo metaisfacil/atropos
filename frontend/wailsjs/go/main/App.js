@@ -118,6 +118,10 @@ export function ResetNormal() {
   return window['go']['main']['App']['ResetNormal']();
 }
 
+export function ResizeImage(arg1) {
+  return window['go']['main']['App']['ResizeImage'](arg1);
+}
+
 export function RestoreCornerOverlay(arg1) {
   return window['go']['main']['App']['RestoreCornerOverlay'](arg1);
 }

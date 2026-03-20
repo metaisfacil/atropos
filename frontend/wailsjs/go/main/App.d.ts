@@ -60,6 +60,8 @@ export function ResetDisc():Promise<main.ProcessResult>;
 
 export function ResetNormal():Promise<main.ProcessResult>;
 
+export function ResizeImage(arg1:main.ResizeRequest):Promise<main.ProcessResult>;
+
 export function RestoreCornerOverlay(arg1:main.RestoreCornerOverlayRequest):Promise<main.ProcessResult>;
 
 export function Rotate(arg1:main.RotateRequest):Promise<main.ProcessResult>;
