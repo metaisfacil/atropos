@@ -27,6 +27,7 @@ type RotateRequest struct {
 	FlipCode int `json:"flipCode"`
 }
 
+// ResizeRequest specifies the target width and height for resizing an image.
 type ResizeRequest struct {
 	Width  int `json:"width"`
 	Height int `json:"height"`
