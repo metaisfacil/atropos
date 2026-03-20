@@ -90,4 +90,6 @@ export function StraightEdgeRotate(arg1:main.StraightEdgeRotateRequest):Promise<
 
 export function TouchUpApply(arg1:string,arg2:number,arg3:number):Promise<main.ProcessResult>;
 
+export function TrimBorders():Promise<main.ProcessResult>;
+
 export function Undo():Promise<main.ProcessResult>;
