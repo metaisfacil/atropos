@@ -195,7 +195,7 @@ export function useImageActions({
   useEffect(() => {
     (async () => {
       try {
-        const args = await GetLaunchArgs()
+        const args = (await GetLaunchArgs()) || {}
         if (args.mode) setMode(args.mode)
         // CLI-provided post-save overrides persisted settings (do not force quit)
         if (args.postSaveCommand) {
