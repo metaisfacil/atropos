@@ -232,7 +232,7 @@ export default function App() {
     ctrlDragRef, shiftDragRef, mousePosRef,
     setPreview, setFeatherSize, setLoading, setRealImageDims,
     setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setDiscRotation,
-    displayToImage, showStatus, showError, handleSaveImage, flushPendingSave,
+    displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, handleLoadImage,
     canSave: imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive),
     normalRect, handleNormalCrop, handleUndo,
   })
