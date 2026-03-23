@@ -366,6 +366,7 @@ export function useImageActions({
       setDiscNoMaskPreview(null)
       setDiscCenter(null)
       setDiscRadius(0)
+      setDiscRotation(0)
       setDiscBgColor({ r: 255, g: 255, b: 255 })
       setCropSkipped(false)
       setUseTouchupTool(false)
