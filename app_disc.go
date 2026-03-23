@@ -95,6 +95,14 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 	// read from a small, cache-friendly image rather than the huge original.
 	a.refreshDiscWorkingCrop()
 
+	// Keep a no-mask preview for live drag mode (disc overlay is decoupled from
+	// content during momentum interactions).
+	if a.discBaseImage != nil {
+		if p, err := imageToBase64(a.discBaseImage); err == nil {
+			a.discNoMaskPreview = p
+		}
+	}
+
 	return a.redrawDisc()
 }
 
@@ -163,6 +171,19 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 		// Cutout radius = half the cutout diameter, which is discCutoutPercent% of the disc diameter.
 		centerCutoutRadius = int(math.Round(float64(a.discRadius) * float64(a.discCutoutPercent) / 100.0))
 	}
+
+	// Prepare the unmasked disc preview (used during live drag operations).
+	unmasked := cropped
+	if a.rotationAngle != 0 {
+		unmasked = rotateArbitrary(unmasked, a.rotationAngle, a.bgColor)
+	}
+	if a.postDiscBlack != 0 || a.postDiscWhite != 255 {
+		unmasked = applyLevels(unmasked, a.postDiscBlack, a.postDiscWhite)
+	}
+	if p, err := imageToBase64(unmasked); err == nil {
+		a.discNoMaskPreview = p
+	}
+
 	feathered := applyCircularMaskWithFeather(cropped, localCenter, a.discRadius, a.featherSize, centerCutoutRadius, a.bgColor)
 
 	// Re-apply accumulated rotation so that ShiftDisc / SetFeatherSize / etc.
@@ -187,7 +208,17 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ProcessResult{Preview: preview}, nil
+
+	return &ProcessResult{
+		Preview:         preview,
+		UnmaskedPreview: a.discNoMaskPreview,
+		DiscCenterX:     a.discCenter.X,
+		DiscCenterY:     a.discCenter.Y,
+		DiscRadius:      a.discRadius,
+		DiscBgR:         int(a.bgColor.R),
+		DiscBgG:         int(a.bgColor.G),
+		DiscBgB:         int(a.bgColor.B),
+	}, nil
 }
 
 // StraightEdgeRotateRequest carries the angle (in degrees) of the reference
@@ -262,8 +293,33 @@ func (a *App) ShiftDisc(req ShiftDiscRequest) (*ProcessResult, error) {
 	if a.discRadius <= 0 {
 		return nil, fmt.Errorf("no disc defined")
 	}
+	if a.discBaseImage == nil && a.currentImage != nil {
+		a.discBaseImage = cloneImage(a.currentImage)
+	}
+	imgBounds := image.Rect(0, 0, 0, 0)
+	if a.discBaseImage != nil {
+		imgBounds = a.discBaseImage.Bounds()
+	} else if a.currentImage != nil {
+		imgBounds = a.currentImage.Bounds()
+	}
 	a.discCenter.X += req.DX
 	a.discCenter.Y += req.DY
+
+	minX := imgBounds.Min.X + a.discRadius
+	maxX := imgBounds.Max.X - a.discRadius
+	minY := imgBounds.Min.Y + a.discRadius
+	maxY := imgBounds.Max.Y - a.discRadius
+	if minX > maxX {
+		minX = imgBounds.Min.X
+		maxX = imgBounds.Max.X
+	}
+	if minY > maxY {
+		minY = imgBounds.Min.Y
+		maxY = imgBounds.Max.Y
+	}
+	a.discCenter.X = clamp(a.discCenter.X, minX, maxX)
+	a.discCenter.Y = clamp(a.discCenter.Y, minY, maxY)
+
 	a.logf("ShiftDisc: new center=(%d,%d)", a.discCenter.X, a.discCenter.Y)
 	return a.redrawDisc()
 }
@@ -299,6 +355,7 @@ func (a *App) ResetDisc() (*ProcessResult, error) {
 	a.discBaseImage = nil
 	a.discWorkingCrop = nil
 	a.discWorkingCropRect = image.Rectangle{}
+	a.discNoMaskPreview = ""
 	a.postDiscBlack = 0
 	a.postDiscWhite = 255
 	a.warpedImage = nil

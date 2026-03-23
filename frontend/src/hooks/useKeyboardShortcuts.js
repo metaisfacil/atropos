@@ -8,6 +8,7 @@ export function useKeyboardShortcuts({
   imageLoaded, mode, discActive, featherSize,
   ctrlDragRef, shiftDragRef, mousePosRef,
   setPreview, setFeatherSize, setLoading, setRealImageDims,
+  setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor,
   displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, canSave,
   normalRect, handleNormalCrop, handleUndo,
 }) {
@@ -91,13 +92,25 @@ export function useKeyboardShortcuts({
             result = mode === 'disc' && discActive
               ? await RotateDisc({ angle: -15 })
               : await Rotate({ flipCode: 2 })
-            if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); showStatus(''); setLoading(false); await flushPendingSave(); break
+            if (result?.preview) setPreview(result.preview)
+            if (result?.unmaskedPreview) setDiscNoMaskPreview(result.unmaskedPreview)
+            if (result?.discCenterX !== undefined && result?.discCenterY !== undefined) setDiscCenter({ x: result.discCenterX, y: result.discCenterY })
+            if (result?.discRadius !== undefined) setDiscRadius(result.discRadius)
+            if (result?.discBgR !== undefined) setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
+            if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+            showStatus(''); setLoading(false); await flushPendingSave(); break
           case 'e':
             setLoading(true); showStatus('Rotating…')
             result = mode === 'disc' && discActive
               ? await RotateDisc({ angle: 15 })
               : await Rotate({ flipCode: 1 })
-            if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); showStatus(''); setLoading(false); await flushPendingSave(); break
+            if (result?.preview) setPreview(result.preview)
+            if (result?.unmaskedPreview) setDiscNoMaskPreview(result.unmaskedPreview)
+            if (result?.discCenterX !== undefined && result?.discCenterY !== undefined) setDiscCenter({ x: result.discCenterX, y: result.discCenterY })
+            if (result?.discRadius !== undefined) setDiscRadius(result.discRadius)
+            if (result?.discBgR !== undefined) setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
+            if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+            showStatus(''); setLoading(false); await flushPendingSave(); break
           default:
             break
         }

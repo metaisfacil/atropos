@@ -380,6 +380,13 @@ export namespace main {
 	    white?: number;
 	    corners?: image.Point[];
 	    uncropped?: boolean;
+	    unmaskedPreview?: string;
+	    discCenterX?: number;
+	    discCenterY?: number;
+	    discRadius?: number;
+	    discBgR?: number;
+	    discBgG?: number;
+	    discBgB?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProcessResult(source);
@@ -395,6 +402,13 @@ export namespace main {
 	        this.white = source["white"];
 	        this.corners = this.convertValues(source["corners"], image.Point);
 	        this.uncropped = source["uncropped"];
+	        this.unmaskedPreview = source["unmaskedPreview"];
+	        this.discCenterX = source["discCenterX"];
+	        this.discCenterY = source["discCenterY"];
+	        this.discRadius = source["discRadius"];
+	        this.discBgR = source["discBgR"];
+	        this.discBgG = source["discBgG"];
+	        this.discBgB = source["discBgB"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

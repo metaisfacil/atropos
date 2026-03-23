@@ -8,11 +8,14 @@ export function useMouseHandlers({
   useTouchupTool, useStraightEdgeTool, discActive, linesProcessed,
   touchupStrokes, cornerState, dotRadius, cornersDetected, customCorner, linesDone,
   realImageDims,
+  discNoMaskPreview,
+  discCenter,
+  discRadius,
   setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setPreview,
   setLoading, setZoom, setRealImageDims, setCornerState, setDetectedCornerPts,
-  setSelectedCornerPts, setDiscActive, setNormalRect, setLines, setLinesDone,
-  setLinesProcessed, setUseStraightEdgeTool,
+  setSelectedCornerPts, setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setLines, setLinesDone,
   discLiveActive, setDiscLiveActive, discLiveTransform, setDiscLiveTransform,
+  setLinesProcessed, setUseStraightEdgeTool,
   straightEdgeRemainsActive,
   spaceDownRef, panDragRef, canvasRef, ctrlDragRef, shiftDragRef,
   touchupDraggingRef, imgRef, lastResizeRef, mousePosRef,
@@ -41,6 +44,8 @@ export function useMouseHandlers({
   const normalDragPendingRef = useRef(false) // mousedown outside image in Normal mode — waiting to enter bounds
   const normalDragActiveRef  = useRef(false) // drag started this frame; bridges the gap before React re-renders dragging=true
   const mouseUpHandledRef    = useRef(false) // set by canvas handler to suppress window handler double-fire
+
+  const clamp = (value, min, max) => Math.min(Math.max(value, min), max)
 
   // Refs that shadow state/callback values so the window mouseup listener
   // can read current values without being re-registered on every render.
@@ -116,6 +121,7 @@ export function useMouseHandlers({
       setDragging(true); setDragStart(pos); setDragCurrent(pos)
       setDiscLiveActive(true)
       setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })
+      if (discNoMaskPreview) setPreview(discNoMaskPreview)
       return
     }
     if (mode === 'disc' && e.ctrlKey && discActive) {
@@ -125,11 +131,13 @@ export function useMouseHandlers({
         startImg: point,
         startClientX: e.clientX,
         startClientY: e.clientY,
+        startCenter: discCenter,
       }
       ctrlDragBusy.current = false
       setDragging(true); setDragStart(pos); setDragCurrent(pos)
       setDiscLiveActive(true)
       setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })
+      if (discNoMaskPreview) setPreview(discNoMaskPreview)
       return
     }
     if (mode === 'disc' && discActive) return
@@ -200,10 +208,38 @@ export function useMouseHandlers({
       return
     }
 
-    if (pos && ctrlDragRef.current) {
-      const dx = e.clientX - ctrlDragRef.current.startClientX
-      const dy = e.clientY - ctrlDragRef.current.startClientY
-      setDiscLiveTransform(prev => ({ ...prev, dx, dy }))
+    if (ctrlDragRef.current) {
+      const screenDx = e.clientX - ctrlDragRef.current.startClientX
+      const screenDy = e.clientY - ctrlDragRef.current.startClientY
+
+      const bounds = imgRef.current ? imgRef.current.getBoundingClientRect() : null
+      const scaleX = (bounds && realImageDims.w > 0) ? realImageDims.w / bounds.width : 0
+      const scaleY = (bounds && realImageDims.h > 0) ? realImageDims.h / bounds.height : 0
+
+      let liveDx = screenDx
+      let liveDy = screenDy
+
+      if (bounds && realImageDims.w > 0 && realImageDims.h > 0 && discRadius > 0) {
+        const desiredImgDx = -Math.round(screenDx * scaleX)
+        const desiredImgDy = -Math.round(screenDy * scaleY)
+
+        const startCenter = ctrlDragRef.current.startCenter || discCenter
+        const minCenterX = discRadius
+        const maxCenterX = Math.max(discRadius, realImageDims.w - discRadius)
+        const minCenterY = discRadius
+        const maxCenterY = Math.max(discRadius, realImageDims.h - discRadius)
+
+        const clampedCenterX = clamp(startCenter.x + desiredImgDx, minCenterX, maxCenterX)
+        const clampedCenterY = clamp(startCenter.y + desiredImgDy, minCenterY, maxCenterY)
+
+        const appliedImgDx = clampedCenterX - startCenter.x
+        const appliedImgDy = clampedCenterY - startCenter.y
+
+        liveDx = -Math.round(appliedImgDx / scaleX)
+        liveDy = -Math.round(appliedImgDy / scaleY)
+      }
+
+      setDiscLiveTransform(prev => ({ ...prev, dx: liveDx, dy: liveDy }))
       return
     }
   }
@@ -313,31 +349,68 @@ export function useMouseHandlers({
       const dx = e.clientX - shiftDragRef.current.startX
       const totalAngle = dx * 0.3
       shiftDragRef.current = null; shiftDragBusy.current = false
-      setDiscLiveActive(false)
-      setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })
-      if (Math.abs(totalAngle) >= 0.5) {
-        try {
+      setLoading(true)
+      showStatus('Applying disc rotation…')
+      try {
+        if (Math.abs(totalAngle) >= 0.5) {
           const result = await RotateDisc({ angle: totalAngle })
           if (result?.preview) setPreview(result.preview)
-        } catch (err) { console.error('RotateDisc drag error:', err) }
+          if (result?.unmaskedPreview) setDiscNoMaskPreview(result.unmaskedPreview)
+          if (result?.discCenterX !== undefined && result?.discCenterY !== undefined) {
+            setDiscCenter({ x: result.discCenterX, y: result.discCenterY })
+          }
+          if (result?.discRadius !== undefined) setDiscRadius(result.discRadius)
+          if (result?.discBgR !== undefined) {
+            setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
+          }
+        }
+      } catch (err) {
+        console.error('RotateDisc drag error:', err)
+      } finally {
+        setDiscLiveActive(false)
+        setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })
+        setLoading(false)
+        showStatus('')
       }
       setDragStart(null); setDragCurrent(null)
+      mouseUpHandledRef.current = true
       return
     }
 
     if (mode === 'disc' && ctrlDragRef.current && discActive) {
-      const startImg = ctrlDragRef.current.startImg
-      const endImg = displayToImage(pos.x, pos.y)
-      const dx = endImg.x - startImg.x
-      const dy = endImg.y - startImg.y
+      mouseUpHandledRef.current = true
+      const screenDx = e.clientX - ctrlDragRef.current.startClientX
+      const screenDy = e.clientY - ctrlDragRef.current.startClientY
+      let dx = 0
+      let dy = 0
+      if (imgRef.current && realImageDims.w > 0 && realImageDims.h > 0) {
+        const bounds = imgRef.current.getBoundingClientRect()
+        dx = -Math.round(screenDx * (realImageDims.w / bounds.width))
+        dy = -Math.round(screenDy * (realImageDims.h / bounds.height))
+      }
       ctrlDragRef.current = null; ctrlDragBusy.current = false
-      setDiscLiveActive(false)
-      setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })
-      if (Math.abs(dx) >= 1 || Math.abs(dy) >= 1) {
-        try {
+      setLoading(true)
+      showStatus('Applying disc shift…')
+      try {
+        if (Math.abs(dx) >= 1 || Math.abs(dy) >= 1) {
           const result = await ShiftDisc({ dx, dy })
           if (result?.preview) setPreview(result.preview)
-        } catch (err) { console.error('ShiftDisc drag error:', err) }
+          if (result?.unmaskedPreview) setDiscNoMaskPreview(result.unmaskedPreview)
+          if (result?.discCenterX !== undefined && result?.discCenterY !== undefined) {
+            setDiscCenter({ x: result.discCenterX, y: result.discCenterY })
+          }
+          if (result?.discRadius !== undefined) setDiscRadius(result.discRadius)
+          if (result?.discBgR !== undefined) {
+            setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
+          }
+        }
+      } catch (err) {
+        console.error('ShiftDisc drag error:', err)
+      } finally {
+        setDiscLiveActive(false)
+        setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })
+        setLoading(false)
+        showStatus('')
       }
       setDragStart(null); setDragCurrent(null)
       return
@@ -354,6 +427,12 @@ export function useMouseHandlers({
       try {
         const result = await DrawDisc({ centerX: end.x, centerY: end.y, radius })
         setPreview(result.preview)
+        if (result?.unmaskedPreview) setDiscNoMaskPreview(result.unmaskedPreview)
+        setDiscCenter({ x: end.x, y: end.y })
+        setDiscRadius(radius)
+        if (result?.discBgR !== undefined) {
+          setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
+        }
         showStatus(`Disc: center=(${end.x},${end.y}) r=${radius} — Y=eyedrop, Arrows=shift, +/-=feather`)
         setDiscActive(true)
       } catch (err) {
@@ -402,6 +481,20 @@ export function useMouseHandlers({
       if (normalDragPendingRef.current) {
         normalDragPendingRef.current = false
         setNormalRect(null)
+        return
+      }
+      if (mode === 'disc') {
+        // If mouseup happened outside the image, ensure drag state is cleared.
+        if (ctrlDragRef.current || shiftDragRef.current) {
+          ctrlDragRef.current = null
+          shiftDragRef.current = null
+        }
+        setDragging(false)
+        normalDragActiveRef.current = false
+        setDiscLiveActive(false)
+        setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })
+        setDragStart(null)
+        setDragCurrent(null)
         return
       }
       if (!draggingRef.current) {

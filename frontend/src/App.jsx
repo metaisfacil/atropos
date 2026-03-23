@@ -95,6 +95,10 @@ export default function App() {
   // ── Disc mode ─────────────────────────────────────────────────────────────
   const [featherSize, setFeatherSize] = useState(15)
   const [discActive, setDiscActive]   = useState(false)
+  const [discNoMaskPreview, setDiscNoMaskPreview] = useState(null)
+  const [discCenter, setDiscCenter] = useState(null)
+  const [discRadius, setDiscRadius] = useState(0)
+  const [discBgColor, setDiscBgColor] = useState({ r: 255, g: 255, b: 255 })
 
   // Live drag preview state for disc translation/rotation
   const [discLiveActive, setDiscLiveActive] = useState(false)
@@ -190,7 +194,7 @@ export default function App() {
     cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
     setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setInputImageDims, setImgNatural,
     setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
-    setDiscActive, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
+    setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
     setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
     setUseTouchupTool, setUseStraightEdgeTool, setDragging, setDragStart, setDragCurrent,
     setConfirmDialog, setTouchupStrokes,
@@ -208,10 +212,10 @@ export default function App() {
     imageLoaded, loading, mode, dragging, dragStart, dragCurrent,
     useTouchupTool, useStraightEdgeTool, discActive, linesProcessed,
     touchupStrokes, cornerState, dotRadius, cornersDetected, customCorner, linesDone,
-    realImageDims,
+    realImageDims, discNoMaskPreview, discCenter, discRadius,
     setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setPreview,
     setLoading, setZoom, setRealImageDims, setCornerState, setDetectedCornerPts,
-    setSelectedCornerPts, setDiscActive, setNormalRect, setLines, setLinesDone,
+    setSelectedCornerPts, setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setLines, setLinesDone,
     discLiveActive, setDiscLiveActive, discLiveTransform, setDiscLiveTransform,
     setLinesProcessed, setUseStraightEdgeTool,
     straightEdgeRemainsActive,
@@ -224,6 +228,7 @@ export default function App() {
     imageLoaded, mode, discActive, featherSize,
     ctrlDragRef, shiftDragRef, mousePosRef,
     setPreview, setFeatherSize, setLoading, setRealImageDims,
+    setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor,
     displayToImage, showStatus, showError, handleSaveImage, flushPendingSave,
     canSave: imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive),
     normalRect, handleNormalCrop, handleUndo,
@@ -477,10 +482,10 @@ export default function App() {
           style={spacePanMode ? { cursor: 'grab' } : undefined}
         >
           {preview ? (
-            <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0, margin: 'auto' }}>
+            <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0, margin: 'auto', overflow: 'hidden' }}>
               <img
                 ref={imgRef}
-                src={preview}
+                src={discLiveActive && discNoMaskPreview ? discNoMaskPreview : preview}
                 alt="preview"
                 draggable={false}
                 onLoad={handleImgLoad}
@@ -507,6 +512,11 @@ export default function App() {
                 touchupStrokes={touchupStrokes}
                 brushSize={brushSize}
                 useStraightEdgeTool={useStraightEdgeTool}
+                discActive={discActive}
+                discLiveActive={discLiveActive}
+                discCenter={discCenter}
+                discRadius={discRadius}
+                discBgColor={discBgColor}
                 discCenterCutout={discCenterCutout}
                 discCutoutPercent={discCutoutPercent}
                 ctrlDragRef={ctrlDragRef}
