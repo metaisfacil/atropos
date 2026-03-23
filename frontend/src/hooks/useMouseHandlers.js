@@ -15,6 +15,7 @@ export function useMouseHandlers({
   setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setPreview,
   setLoading, setZoom, setRealImageDims, setCornerState, setDetectedCornerPts,
   setSelectedCornerPts, setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscRotation, setDiscBgColor, setNormalRect, setLines, setLinesDone,
+  setUnsavedChanges,
   discLiveActive, setDiscLiveActive, discLiveTransform, setDiscLiveTransform,
   setLinesProcessed, setUseStraightEdgeTool,
   straightEdgeRemainsActive,
@@ -470,6 +471,7 @@ export function useMouseHandlers({
         }
         showStatus(`Disc: center=(${end.x},${end.y}) r=${radius} — Y=eyedrop, Arrows=shift, +/-=feather`)
         setDiscActive(true)
+        if (setUnsavedChanges) setUnsavedChanges(true)
       } catch (err) {
         console.error('DrawDisc error:', err)
       } finally {
