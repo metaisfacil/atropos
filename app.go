@@ -187,12 +187,13 @@ type ProcessResult struct {
 	// above it, used during live preview drag operations.
 	UnmaskedPreview string `json:"unmaskedPreview,omitempty"`
 	// Disc preview metadata (returned for mode sync)
-	DiscCenterX int `json:"discCenterX,omitempty"`
-	DiscCenterY int `json:"discCenterY,omitempty"`
-	DiscRadius  int `json:"discRadius,omitempty"`
-	DiscBgR     int `json:"discBgR,omitempty"`
-	DiscBgG     int `json:"discBgG,omitempty"`
-	DiscBgB     int `json:"discBgB,omitempty"`
+	DiscCenterX  int     `json:"discCenterX,omitempty"`
+	DiscCenterY  int     `json:"discCenterY,omitempty"`
+	DiscRadius   int     `json:"discRadius,omitempty"`
+	DiscRotation float64 `json:"discRotation,omitempty"`
+	DiscBgR      int     `json:"discBgR,omitempty"`
+	DiscBgG      int     `json:"discBgG,omitempty"`
+	DiscBgB      int     `json:"discBgB,omitempty"`
 }
 
 // LaunchArgs contains the initial file path and mode from CLI arguments.
