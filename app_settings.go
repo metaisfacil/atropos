@@ -86,8 +86,31 @@ func (a *App) GetAllSettings() AllSettings {
 		a.logf("GetAllSettings: parse error: %v", err)
 		return defaults
 	}
+	s = sanitizeSettings(s)
 	s.Initialized = true
 	a.logf("GetAllSettings: loaded from %s", path)
+	return s
+}
+
+// sanitizeSettings replaces any field that fails validation with its default
+// value.  This is run both when reading from disk and before writing, so
+// neither the frontend nor the file ever contains an invalid value.
+func sanitizeSettings(s AllSettings) AllSettings {
+	if s.TouchupBackend != "iopaint" && s.TouchupBackend != "patchmatch" {
+		s.TouchupBackend = "patchmatch"
+	}
+	if s.IOPaintURL == "" {
+		s.IOPaintURL = "http://127.0.0.1:8086/"
+	}
+	if s.WarpFillMode != "clamp" && s.WarpFillMode != "fill" && s.WarpFillMode != "outpaint" {
+		s.WarpFillMode = "clamp"
+	}
+	if _, err := parseHexColor(s.WarpFillColor); err != nil {
+		s.WarpFillColor = "#ffffff"
+	}
+	if s.DiscCutoutPercent < 0 || s.DiscCutoutPercent > 50 {
+		s.DiscCutoutPercent = 11
+	}
 	return s
 }
 
@@ -95,25 +118,17 @@ func (a *App) GetAllSettings() AllSettings {
 // also applies the backend-relevant fields to the in-memory App state so they
 // take effect immediately in this instance.
 func (a *App) SaveAllSettings(s AllSettings) error {
+	s = sanitizeSettings(s)
+
 	// Apply backend-relevant fields immediately.
-	if s.TouchupBackend == "iopaint" || s.TouchupBackend == "patchmatch" {
-		a.touchupBackend = s.TouchupBackend
-	}
-	if s.IOPaintURL != "" {
-		a.iopaintURL = s.IOPaintURL
-	}
-	if s.WarpFillMode == "clamp" || s.WarpFillMode == "fill" || s.WarpFillMode == "outpaint" {
-		a.warpFillMode = s.WarpFillMode
-	}
-	if s.WarpFillColor != "" {
-		if c, err := parseHexColor(s.WarpFillColor); err == nil {
-			a.warpFillColor = c
-		}
+	a.touchupBackend = s.TouchupBackend
+	a.iopaintURL = s.IOPaintURL
+	a.warpFillMode = s.WarpFillMode
+	if c, err := parseHexColor(s.WarpFillColor); err == nil {
+		a.warpFillColor = c
 	}
 	a.discCenterCutout = s.DiscCenterCutout
-	if s.DiscCutoutPercent >= 0 && s.DiscCutoutPercent <= 50 {
-		a.discCutoutPercent = s.DiscCutoutPercent
-	}
+	a.discCutoutPercent = s.DiscCutoutPercent
 
 	// Persist to file.
 	path, err := settingsFilePath()
