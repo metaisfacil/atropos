@@ -6,6 +6,24 @@ import (
 	"math"
 )
 
+// Line mode overview:
+//
+// The user draws four lines (each defined by two image-space points). The
+// backend collects intersections between line pairs, filters to reasonable
+// image-space candidates, chooses the best four corners (farthest-from-centroid
+// if more than 4), orders them into a quadrilateral, computes output
+// dimensions from edge lengths, and applies a perspective transform.
+//
+// ProcessLines pseudocode (high level):
+//  - require len(lines) == 4
+//  - compute all pairwise intersections
+//  - filter intersections to those not absurdly far outside bounds
+//  - if >4 intersections: pick 4 farthest from centroid
+//  - order corners TL,TR,BR,BL
+//  - compute output width/height from edge lengths
+//  - apply perspective transform; if warp fill required, call applyWarpFill
+//  - saveUndo(); set warpedImage to result
+
 // LineAddRequest defines start and end coordinates for a user-drawn line
 // used in 4-line perspective correction mode.
 type LineAddRequest struct {

@@ -17,6 +17,23 @@ export function useMouseHandlers({
   touchupDraggingRef, imgRef, lastResizeRef, mousePosRef,
   commitTouchup, showStatus, showError,
 }) {
+
+  // Frontend -> image coordinate mapping and Normal-mode drag rules
+  //
+  // `displayToImage(dispX, dispY)` maps display-space coordinates (pixels
+  // relative to the <img> element) into full-resolution image-space using
+  // `realImageDims` supplied by the backend. Formula:
+  //   imgRect = imgRef.current.getBoundingClientRect()
+  //   imageX = round(dispX * (realImageDims.w / imgRect.width))
+  //   imageY = round(dispY * (realImageDims.h / imgRect.height))
+  //
+  // Normal-mode drag behaviour:
+  // - Mousedown outside the image (on canvas wrapper) sets `normalDragPendingRef`.
+  //   The pending state transitions to an active drag when the cursor first
+  //   enters the image, at which point the first mousemove inside the image
+  //   updates the selection immediately. This prevents the browser's native
+  //   drag gesture from interfering and ensures the selection rectangle snaps
+  //   precisely to the pixel where the cursor entered.
   const cornerMouseDownRef   = useRef(false)
   const ctrlDragBusy         = useRef(false)
   const shiftDragBusy        = useRef(false)
