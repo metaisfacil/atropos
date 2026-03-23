@@ -15,12 +15,37 @@ type App struct {
 	loadMu sync.Mutex
 
 	// Image state
-	originalImage   *image.NRGBA
-	currentImage    *image.NRGBA
-	warpedImage     *image.NRGBA
-	levelsBaseImage *image.NRGBA // snapshot taken before slider dragging begins; always the source for SetLevels
-	imageLoaded     bool
-	undoStack       []undoEntry
+	// ----------------
+	// `originalImage`:
+	//   The full-resolution decoded source image loaded from disk. This image
+	//   is treated as immutable after `LoadImage()` — it is never modified in
+	//   place. Use this when you need the unmodified source pixels.
+	originalImage *image.NRGBA
+
+	// `currentImage`:
+	//   A working copy of the source image that holds pre-warp adjustments
+	//   (levels, auto-contrast, etc.). This is the image used for most
+	//   transient, non-committing edits. When no crop/warp/disc has been
+	//   committed, `workingImage()` will return `currentImage`.
+	currentImage *image.NRGBA
+
+	// `warpedImage`:
+	//   The committed output image after a warp/crop/disc operation. Once a
+	//   cropping/warp operation completes this field is set and becomes the
+	//   authoritative image for subsequent adjustments and for `SaveImage()`.
+	//   If `warpedImage` is nil, the app falls back to `currentImage`.
+	warpedImage *image.NRGBA
+
+	// `levelsBaseImage`:
+	//   A snapshot captured the first time the user starts dragging the
+	//   levels sliders after a committing operation. Slider ticks apply levels
+	//   relative to this base so continuous slider motion doesn't stack
+	//   repeatedly. This snapshot is cleared by `saveUndo()` so the next
+	//   adjustment session starts from the current pixels.
+	levelsBaseImage *image.NRGBA
+
+	imageLoaded bool
+	undoStack   []undoEntry
 
 	// Processing state
 	detectedCorners []image.Point

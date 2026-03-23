@@ -59,7 +59,16 @@ export default function App() {
   const showError = (err) => setErrorMessage(err?.message || String(err))
   const [confirmDialog, setConfirmDialog] = useState(null)
 
+  // `realImageDims` is the current working/output image size (width, height)
+  // as reported by the Go backend. It reflects committed or previewed
+  // modifications (crops, warps, disc renders, trims) and is used for
+  // coordinate mapping and overlays.
   const [realImageDims, setRealImageDims] = useState({ w: 1, h: 1 })
+
+  // `inputImageDims` is the original source image dimensions as loaded
+  // from disk (the input file). It remains the file's native size even if
+  // `realImageDims` changes after edits. The UI shows both when they differ.
+  const [inputImageDims, setInputImageDims] = useState({ w: 1, h: 1 })
   const [imageMeta, setImageMeta] = useState({ format: '', dpiX: 0, dpiY: 0 })
   const imgRef     = useRef(null)
   const ctrlDragRef  = useRef(null)

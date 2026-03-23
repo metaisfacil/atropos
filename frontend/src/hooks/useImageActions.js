@@ -115,6 +115,10 @@ export function useImageActions({
     setFitWidth(0)
     setPreview(result.preview)
     setImageLoaded(true)
+    // `realImageDims` = working/output size reported by Go (used for
+    // overlays & coordinate mapping). Initially equal to the input file size
+    // but may change after edits. `inputImageDims` retains the original
+    // file dimensions as loaded from disk.
     setRealImageDims({ w: result.width, h: result.height })
     setImgNatural({ w: result.width, h: result.height })
     setImageMeta({ format: result.format || '', dpiX: result.dpiX || 0, dpiY: result.dpiY || 0 })
@@ -230,6 +234,9 @@ export function useImageActions({
       setZoom(1)
       setPreview(info.preview)
       setImageLoaded(true)
+      // Compositor gives a generated image; treat both dims like a fresh
+      // load: `inputImageDims` records the compositor result size and
+      // `realImageDims` is set to the same value initially.
       setRealImageDims({ w: info.width, h: info.height })
       setImgNatural({ w: info.width, h: info.height })
       setImageMeta({ format: '', dpiX: 0, dpiY: 0 })
