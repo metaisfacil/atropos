@@ -228,7 +228,7 @@ export default function App() {
   })
 
   useKeyboardShortcuts({
-    imageLoaded, mode, discActive, featherSize,
+    imageLoaded, mode, discActive, featherSize, discRotation,
     ctrlDragRef, shiftDragRef, mousePosRef,
     setPreview, setFeatherSize, setLoading, setRealImageDims,
     setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setDiscRotation,
