@@ -184,7 +184,7 @@ export default function App() {
   } = useImageActions({
     mode, loading, imageLoaded, discActive, linesProcessed, normalCropApplied,
     cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
-    setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural,
+    setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setInputImageDims, setImgNatural,
     setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
     setDiscActive, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
     setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
@@ -218,7 +218,7 @@ export default function App() {
   useKeyboardShortcuts({
     imageLoaded, mode, discActive, featherSize,
     ctrlDragRef, shiftDragRef, mousePosRef,
-    setPreview, setFeatherSize, setLoading,
+    setPreview, setFeatherSize, setLoading, setRealImageDims,
     displayToImage, showStatus, showError, handleSaveImage, flushPendingSave,
     canSave: imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive),
     normalRect, handleNormalCrop, handleUndo,
@@ -517,6 +517,7 @@ export default function App() {
         <StatusBar
           imageLoaded={imageLoaded}
           imageMeta={imageMeta}
+          inputImageDims={inputImageDims}
           realImageDims={realImageDims}
           inputImageDims={inputImageDims}
           zoom={zoom}
