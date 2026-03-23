@@ -138,4 +138,4 @@ This particular example would require oxipng.exe to be exposed through your PATH
 
 ## For AI agents
 
-[AGENTS.md](AGENTS.md) contains a detailed reference covering the image state machine, data flow, operation ordering, and common pitfalls. Read it before making changes.
+[AGENTS.md](AGENTS.md) and [ARCHITECTURE.md](ARCHITECTURE.md) contain detailed references covering the image state machine, data flow, operation ordering, and common pitfalls. Read them before making changes.
