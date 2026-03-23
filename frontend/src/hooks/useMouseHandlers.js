@@ -12,6 +12,7 @@ export function useMouseHandlers({
   setLoading, setZoom, setRealImageDims, setCornerState, setDetectedCornerPts,
   setSelectedCornerPts, setDiscActive, setNormalRect, setLines, setLinesDone,
   setLinesProcessed, setUseStraightEdgeTool,
+  discLiveActive, setDiscLiveActive, discLiveTransform, setDiscLiveTransform,
   straightEdgeRemainsActive,
   spaceDownRef, panDragRef, canvasRef, ctrlDragRef, shiftDragRef,
   touchupDraggingRef, imgRef, lastResizeRef, mousePosRef,
@@ -113,13 +114,22 @@ export function useMouseHandlers({
       shiftDragRef.current = { startX: e.clientX, appliedAngle: 0 }
       shiftDragBusy.current = false
       setDragging(true); setDragStart(pos); setDragCurrent(pos)
+      setDiscLiveActive(true)
+      setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })
       return
     }
     if (mode === 'disc' && e.ctrlKey && discActive) {
       shiftDragRef.current = null
-      ctrlDragRef.current = { lastImg: displayToImage(pos.x, pos.y) }
+      const point = displayToImage(pos.x, pos.y)
+      ctrlDragRef.current = {
+        startImg: point,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+      }
       ctrlDragBusy.current = false
       setDragging(true); setDragStart(pos); setDragCurrent(pos)
+      setDiscLiveActive(true)
+      setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })
       return
     }
     if (mode === 'disc' && discActive) return
@@ -183,34 +193,18 @@ export function useMouseHandlers({
 
     if (useStraightEdgeTool) return
 
-    if (pos && shiftDragRef.current && !shiftDragBusy.current) {
+    if (pos && shiftDragRef.current) {
       const dx = e.clientX - shiftDragRef.current.startX
       const totalAngle = dx * 0.3
-      const delta = totalAngle - shiftDragRef.current.appliedAngle
-      if (Math.abs(delta) < 0.5) return
-      shiftDragRef.current.appliedAngle = totalAngle
-      shiftDragBusy.current = true
-      try {
-        const result = await RotateDisc({ angle: delta })
-        if (result?.preview) setPreview(result.preview)
-      } catch (_) {}
-      shiftDragBusy.current = false
+      setDiscLiveTransform(prev => ({ ...prev, angle: totalAngle }))
       return
     }
 
-    if (pos && ctrlDragRef.current && !ctrlDragBusy.current) {
-      const imgPt = displayToImage(pos.x, pos.y)
-      const last  = ctrlDragRef.current.lastImg
-      const dx = last.x - imgPt.x
-      const dy = last.y - imgPt.y
-      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return
-      ctrlDragRef.current.lastImg = imgPt
-      ctrlDragBusy.current = true
-      try {
-        const result = await ShiftDisc({ dx, dy })
-        if (result?.preview) setPreview(result.preview)
-      } catch (_) {}
-      ctrlDragBusy.current = false
+    if (pos && ctrlDragRef.current) {
+      const dx = e.clientX - ctrlDragRef.current.startClientX
+      const dy = e.clientY - ctrlDragRef.current.startClientY
+      setDiscLiveTransform(prev => ({ ...prev, dx, dy }))
+      return
     }
   }
 
@@ -318,11 +312,12 @@ export function useMouseHandlers({
     if (mode === 'disc' && shiftDragRef.current && discActive) {
       const dx = e.clientX - shiftDragRef.current.startX
       const totalAngle = dx * 0.3
-      const delta = totalAngle - shiftDragRef.current.appliedAngle
       shiftDragRef.current = null; shiftDragBusy.current = false
-      if (Math.abs(delta) >= 0.5) {
+      setDiscLiveActive(false)
+      setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })
+      if (Math.abs(totalAngle) >= 0.5) {
         try {
-          const result = await RotateDisc({ angle: delta })
+          const result = await RotateDisc({ angle: totalAngle })
           if (result?.preview) setPreview(result.preview)
         } catch (err) { console.error('RotateDisc drag error:', err) }
       }
@@ -331,10 +326,13 @@ export function useMouseHandlers({
     }
 
     if (mode === 'disc' && ctrlDragRef.current && discActive) {
-      const last  = ctrlDragRef.current.lastImg
-      const imgPt = displayToImage(pos.x, pos.y)
-      const dx = last.x - imgPt.x; const dy = last.y - imgPt.y
+      const startImg = ctrlDragRef.current.startImg
+      const endImg = displayToImage(pos.x, pos.y)
+      const dx = endImg.x - startImg.x
+      const dy = endImg.y - startImg.y
       ctrlDragRef.current = null; ctrlDragBusy.current = false
+      setDiscLiveActive(false)
+      setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })
       if (Math.abs(dx) >= 1 || Math.abs(dy) >= 1) {
         try {
           const result = await ShiftDisc({ dx, dy })
@@ -406,9 +404,15 @@ export function useMouseHandlers({
         setNormalRect(null)
         return
       }
-      if (!draggingRef.current) return
+      if (!draggingRef.current) {
+        setDiscLiveActive(false)
+        setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })
+        return
+      }
       normalDragActiveRef.current = false
       setDragging(false)
+      setDiscLiveActive(false)
+      setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })
       const ds = dragStartRef.current
       const dc = dragCurrentRef.current
       if (ds && dc) {
