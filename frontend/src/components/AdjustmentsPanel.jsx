@@ -41,6 +41,7 @@ export default function AdjustmentsPanel({
     try {
       const result = await TrimBorders()
       if (result?.preview) setPreview(result.preview)
+      if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
     } catch (err) {
       console.error('TrimBorders error:', err)
     } finally {
