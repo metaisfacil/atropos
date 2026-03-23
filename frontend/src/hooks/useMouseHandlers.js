@@ -49,11 +49,19 @@ export function useMouseHandlers({
   const clamp = (value, min, max) => Math.min(Math.max(value, min), max)
 
   const computeDiscShift = (screenDx, screenDy) => {
-    const bounds = imgRef.current ? imgRef.current.getBoundingClientRect() : null
+    const el = imgRef.current
+    const bounds = el ? el.getBoundingClientRect() : null
     if (!bounds || realImageDims.w <= 0 || realImageDims.h <= 0 || discRadius <= 0) return null
 
-    const scaleX = realImageDims.w / bounds.width
-    const scaleY = realImageDims.h / bounds.height
+    // Use the <img> element's natural (intrinsic) pixel dimensions for the
+    // scale factor.  After DrawDisc the displayed image is the disc crop
+    // (much smaller than the source), while realImageDims still holds the
+    // source dimensions.  naturalWidth/Height always matches the currently
+    // displayed image, so the display-to-image scale is correct.
+    const natW = el.naturalWidth  || realImageDims.w
+    const natH = el.naturalHeight || realImageDims.h
+    const scaleX = natW / bounds.width
+    const scaleY = natH / bounds.height
 
     // Map the pointer movement from display space into (possibly rotated)
     // disc-local image space, with inverted drag direction for working output.
