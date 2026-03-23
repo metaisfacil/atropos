@@ -74,6 +74,7 @@ Ctrl/⌘ + S or the **Save image** button. Output format is determined by the fi
 | Q | Rotate CCW 90° (or disc −15°) |
 | E | Rotate CW 90° (or disc +15°) |
 | Ctrl/⌘ + Z | Undo |
+| Ctrl/⌘ + O | Load |
 | Ctrl/⌘ + S | Save |
 | Y | Eyedropper — set background colour (disc mode) |
 | Arrow keys | Shift disc 5 px (20 px with Shift) |
