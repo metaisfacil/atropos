@@ -107,6 +107,9 @@ type App struct {
 	touchupBackend string // "patchmatch" or "iopaint"
 	iopaintURL     string
 
+	// close flow state
+	closeConfirmed bool
+
 	// touchupCancel cancels an in-flight TouchUpApply (PatchMatch or IOPaint).
 	// Protected by touchupMu; nil when no operation is running.
 	touchupMu     sync.Mutex
@@ -153,6 +156,11 @@ func (a *App) logf(format string, args ...interface{}) {
 // LogFrontend writes a message from the frontend into the debug log file.
 func (a *App) LogFrontend(msg string) {
 	a.logf("[FE] %s", msg)
+}
+
+// ConfirmClose allows the JS close handler to permit the next OnBeforeClose.
+func (a *App) ConfirmClose() {
+	a.closeConfirmed = true
 }
 
 // startup is called when the app starts.

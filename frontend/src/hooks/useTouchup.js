@@ -6,10 +6,12 @@ export function useTouchup({
   realImageDims, touchupBackend, setErrorMessage, setPreview, onDragEnd,
   flushPendingSaveRef,
   touchupRemainsActive, setUseTouchupTool,
+  setUnsavedChanges,
+  touchupDraggingRef,
 }) {
   const [touchupStrokes, setTouchupStrokes] = useState([])
   const [brushSize, setBrushSize]           = useState(40)
-  const touchupDraggingRef      = useRef(false) // true while a touch-up brush drag is in progress
+  const touchupDraggingRefLocal = touchupDraggingRef || useRef(false) // true while a touch-up brush drag is in progress
   // Holds the latest touch-up commit handler for the window-level mouseup listener.
   // Updated every render so the closure always sees fresh state.
   const windowTouchupMouseUpRef = useRef(null)
@@ -73,8 +75,8 @@ export function useTouchup({
   // Updated every render so the closure always sees fresh state (touchupStrokes,
   // commitTouchup, etc.) without a dependency array.
   windowTouchupMouseUpRef.current = async () => {
-    if (!touchupDraggingRef.current) return // already handled by the canvas-level handler
-    touchupDraggingRef.current = false
+    if (!touchupDraggingRefLocal.current) return // already handled by the canvas-level handler
+    touchupDraggingRefLocal.current = false
     onDragEnd()
     try {
       if (touchupStrokes.length > 0) await commitTouchup()
@@ -101,6 +103,7 @@ export function useTouchup({
       setErrorMessage('Failed to inpaint.' + hint + '\n\n' + data.error)
     } else if (data?.preview) {
       setPreview(data.preview)
+      if (setUnsavedChanges) setUnsavedChanges(true)
       showStatus(data.message || '')
       if (!touchupRemainsActive) setUseTouchupTool(false)
       flushPendingSaveRef?.current?.()
@@ -114,7 +117,7 @@ export function useTouchup({
   return {
     touchupStrokes, setTouchupStrokes,
     brushSize, setBrushSize,
-    touchupDraggingRef,
+    touchupDraggingRef: touchupDraggingRefLocal,
     clearTouchup, commitTouchup,
   }
 }
