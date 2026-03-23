@@ -42,6 +42,10 @@ export function CompositorStitch(arg1) {
   return window['go']['main']['App']['CompositorStitch'](arg1);
 }
 
+export function ConfirmClose() {
+  return window['go']['main']['App']['ConfirmClose']();
+}
+
 export function Crop(arg1) {
   return window['go']['main']['App']['Crop'](arg1);
 }

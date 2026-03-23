@@ -22,6 +22,8 @@ export function CompositorSave(arg1:main.CompositorSaveRequest):Promise<string>;
 
 export function CompositorStitch(arg1:main.CompositorStitchRequest):Promise<main.CompositorResult>;
 
+export function ConfirmClose():Promise<void>;
+
 export function Crop(arg1:main.CropRequest):Promise<main.ProcessResult>;
 
 export function DetectCorners(arg1:main.CornerDetectRequest):Promise<main.ProcessResult>;
