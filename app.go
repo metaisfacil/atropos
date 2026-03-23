@@ -62,6 +62,10 @@ type App struct {
 	// shift / rotate / feather operation.
 	discBaseImage *image.NRGBA
 
+	// discNoMaskPreview keeps a base preview image for disc mode that does not
+	// include the masking/fill overlay; used by real-time translate/rotate drags.
+	discNoMaskPreview string
+
 	// discWorkingCrop is a pre-cropped sub-region of discBaseImage centred on
 	// the disc with a generous extra margin. redrawDisc crops from this small
 	// image instead of the full discBaseImage, avoiding the cache thrashing
@@ -179,6 +183,16 @@ type ProcessResult struct {
 	// had produced a warpedImage — i.e. undoing the initial crop itself.  The
 	// frontend uses this to return the UI to the cropping phase.
 	Uncropped bool `json:"uncropped,omitempty"`
+	// UnmaskedPreview is the preview of disc source image without the disc mask
+	// above it, used during live preview drag operations.
+	UnmaskedPreview string `json:"unmaskedPreview,omitempty"`
+	// Disc preview metadata (returned for mode sync)
+	DiscCenterX int `json:"discCenterX,omitempty"`
+	DiscCenterY int `json:"discCenterY,omitempty"`
+	DiscRadius  int `json:"discRadius,omitempty"`
+	DiscBgR     int `json:"discBgR,omitempty"`
+	DiscBgG     int `json:"discBgG,omitempty"`
+	DiscBgB     int `json:"discBgB,omitempty"`
 }
 
 // LaunchArgs contains the initial file path and mode from CLI arguments.

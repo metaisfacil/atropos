@@ -6,6 +6,11 @@ export default function ImageOverlays({
   dragging, dragStart, dragCurrent,
   useTouchupTool, touchupStrokes, brushSize,
   useStraightEdgeTool,
+  discActive,
+  discLiveActive,
+  discCenter,
+  discRadius,
+  discBgColor,
   discCenterCutout, discCutoutPercent,
   ctrlDragRef, shiftDragRef,
   detectedCornerPts, selectedCornerPts, dotRadius,
@@ -37,6 +42,8 @@ export default function ImageOverlays({
           />
         </svg>
       )}
+
+
       {mode === 'disc' && !useStraightEdgeTool && !useTouchupTool && dragging && dragStart && dragCurrent &&
        ctrlDragRef.current === null && shiftDragRef.current === null && (() => {
         const guideR = Math.sqrt((dragStart.x - dragCurrent.x) ** 2 + (dragStart.y - dragCurrent.y) ** 2)
