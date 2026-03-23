@@ -346,10 +346,9 @@ func (a *App) SetBackgroundColor(r, g, b int) {
 	a.bgColor = color.NRGBA{R: uint8(r), G: uint8(g), B: uint8(b), A: 255}
 }
 
-// ResetDisc clears the disc selection and restores the pre-disc image.
-func (a *App) ResetDisc() (*ProcessResult, error) {
-	a.logf("ResetDisc")
-	a.cancelTouchup()
+// resetDiscFields zeros all disc-related state. It is safe to call at any time
+// (no image required) and is used both by ResetDisc and by the load helpers.
+func (a *App) resetDiscFields() {
 	a.discCenter = image.Point{}
 	a.discRadius = 0
 	a.rotationAngle = 0
@@ -359,6 +358,13 @@ func (a *App) ResetDisc() (*ProcessResult, error) {
 	a.discNoMaskPreview = ""
 	a.postDiscBlack = 0
 	a.postDiscWhite = 255
+}
+
+// ResetDisc clears the disc selection and restores the pre-disc image.
+func (a *App) ResetDisc() (*ProcessResult, error) {
+	a.logf("ResetDisc")
+	a.cancelTouchup()
+	a.resetDiscFields()
 	a.warpedImage = nil
 	a.levelsBaseImage = nil
 
