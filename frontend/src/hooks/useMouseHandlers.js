@@ -377,16 +377,7 @@ export function useMouseHandlers({
     setDragStart(null); setDragCurrent(null)
   }
 
-  const handleImageMouseLeave = () => {
-    if (!dragging) return
-    if (mode === 'line' && !linesProcessed) {
-      setDragging(false); setDragStart(null); setDragCurrent(null)
-    } else if (mode === 'disc' && !discActive) {
-      setDragging(false); setDragStart(null); setDragCurrent(null)
-    } else if (useStraightEdgeTool && mode === 'disc' && discActive) {
-      setDragging(false); setDragStart(null); setDragCurrent(null)
-    }
-  }
+  const handleImageMouseLeave = () => {}
 
   // Catch mouseup events that fire outside the canvas-area (sidebar, outside window, etc.)
   // so that a Normal mode drag is never left stuck in an active state.
@@ -420,8 +411,19 @@ export function useMouseHandlers({
       setDragStart(null)
       setDragCurrent(null)
     }
+    const onWindowMouseMove = (e) => {
+      if (!draggingRef.current) return
+      const el = imgRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      setDragCurrent({ x: e.clientX - rect.left, y: e.clientY - rect.top })
+    }
     window.addEventListener('mouseup', onWindowMouseUp)
-    return () => window.removeEventListener('mouseup', onWindowMouseUp)
+    window.addEventListener('mousemove', onWindowMouseMove)
+    return () => {
+      window.removeEventListener('mouseup', onWindowMouseUp)
+      window.removeEventListener('mousemove', onWindowMouseMove)
+    }
   }, [mode, useTouchupTool]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return { handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave, displayToImage }
