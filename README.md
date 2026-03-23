@@ -14,7 +14,7 @@ Automatically detects corners in the loaded image. Click four corners to apply a
 
 ### Disc mode
 
-Crop a circular region with a feathered edge — designed for vinyl records, coins, or similar subjects. Drag to place and size the circle, then refine with arrow keys, rotation, and feather controls.
+Crop a circular region with a feathered edge — designed with CD's in mind, but can be used with vinyl records or similar subjects. Drag to place and size the circle, then refine with arrow keys, rotation, and feather controls.
 
 ### Line mode
 
