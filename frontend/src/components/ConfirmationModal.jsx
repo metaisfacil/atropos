@@ -4,17 +4,34 @@ const FADE_MS = 150
 
 // ConfirmationModal renders a modal dialog asking the user to confirm an action.
 // Props:
-//   message   – string to display (falsy = closed)
-//   onConfirm – called when the user confirms
-//   onCancel  – called when the user cancels or dismisses
-export default function ConfirmationModal({ message, onConfirm, onCancel }) {
+//   open       – bool to show the dialog
+//   message    – string to display
+//   onYes      – called when the user chooses 'Yes'
+//   onNo       – called when the user chooses 'No'
+//   onCancel   – called when the user cancels/dismisses
+//   yesText    – label for Yes button (default: 'Yes')
+//   noText     – label for No button (default: 'No')
+//   cancelText – label for Cancel button (default: 'Cancel')
+export default function ConfirmationModal({
+  open,
+  message,
+  onYes,
+  onNo,
+  onCancel,
+  yesText = 'Yes',
+  noText = 'No',
+  cancelText = 'Cancel',
+  onConfirm,
+}) {
+  const actualOpen = open || Boolean(message)
+  const onYesAction = onYes || onConfirm
+  const onNoAction = onNo || onCancel
   const [mounted, setMounted] = useState(false)
   const [shown, setShown]     = useState(false)
   const fadeOutTimer = useRef(null)
-  const open = Boolean(message)
 
   useEffect(() => {
-    if (open) {
+    if (actualOpen) {
       clearTimeout(fadeOutTimer.current)
       setMounted(true)
       requestAnimationFrame(() => requestAnimationFrame(() => setShown(true)))
@@ -26,19 +43,19 @@ export default function ConfirmationModal({ message, onConfirm, onCancel }) {
   }, [open])
 
   useEffect(() => {
-    if (!open) return
+    if (!actualOpen) return
     const handler = (e) => {
-      if (e.key === 'Escape') onCancel()
-      if (e.key === 'Enter')  onConfirm()
+      if (e.key === 'Escape') onCancel?.()
+      if (e.key === 'Enter')  onYesAction?.()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [open, onConfirm, onCancel])
+  }, [actualOpen, onYesAction, onCancel])
 
   if (!mounted) return null
 
   return (
-    <div className={`options-backdrop ${shown ? 'visible' : ''}`} onClick={onCancel}>
+    <div className={`options-backdrop ${shown ? 'visible' : ''}`} onClick={onCancel}> 
       <div
         className="options-dialog"
         onClick={(e) => e.stopPropagation()}
@@ -56,8 +73,9 @@ export default function ConfirmationModal({ message, onConfirm, onCancel }) {
         </div>
 
         <div className="options-footer" style={{ gap: '10px' }}>
-          <button className="modal-cancel-btn" onClick={onCancel}>Cancel</button>
-          <button className="options-ok-btn recrop-btn" onClick={onConfirm}>Continue</button>
+          <button className="modal-cancel-btn" onClick={onCancel}>{cancelText}</button>
+          <button className="options-ok-btn recrop-btn" onClick={onNoAction}>{noText}</button>
+          <button className="options-ok-btn recrop-btn" onClick={onYesAction}>{yesText}</button>
         </div>
       </div>
     </div>
