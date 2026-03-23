@@ -24,7 +24,7 @@ This document describes the complete system architecture, data flow, and operati
 | `hooks/useKeyboardShortcuts.js` | Single `keydown` `useEffect`: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+Z` (undo), `Ctrl+S` (save), `Ctrl+W`/`Cmd+W` (quit), `WASDQE` (crop/rotate). WASDQE are guarded by `canSave`; if no crop result exists, `showStatus` is called instead of forwarding to Go (prevents a backend error modal). |
 | `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, window mouseup effect, `EventsOn("touchup-done")` effect. |
 | `hooks/useZoomPan.js` | Canvas viewport: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, scroll `useLayoutEffect`. |
-| `hooks/usePersistentSettings.js` | localStorage-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, `autoCornerParams`, `closeAfterSave`, `touchupRemainsActive`, `straightEdgeRemainsActive`, `autoDetectOnModeSwitch`). Syncs to Go on startup and on every change. |
+| `hooks/usePersistentSettings.js` | File-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, `autoCornerParams`, `closeAfterSave`, `touchupRemainsActive`, `straightEdgeRemainsActive`, `autoDetectOnModeSwitch`). Loads from Go (`GetAllSettings`) on mount; persists via `SaveAllSettings` on every change. Performs a one-time migration from `localStorage` on first launch of the file-backed version. |
 | `hooks/useStatusMessage.js` | `imageInfo` + fade timer logic (`showStatus`). |
 | `components/ImageOverlays.jsx` | Pure render: all SVG overlays (corner dots, touch-up circles, disc guide, straight-edge line, normal crop rect, line mode lines). |
 | `components/StatusBar.jsx` | Thin bar at the bottom of the main content area. Shows file format, pixel dimensions, DPI (when known), and zoom level. Zoom is clickable — clicking resets zoom to 100%. All fields use `DelayedHint` for tooltips. |
@@ -116,8 +116,7 @@ Wails runtime
     └── Wails injects JS bridge
     └── React mounts
     └── useEffect (mount)
-        ├── SetTouchupSettings({ localStorage values })  // push persisted settings to Go
-        ├── SetWarpSettings({ localStorage values })
+        ├── GetAllSettings()   // load shared settings file; migrate localStorage on first run
         └── GetLaunchArgs()
             ├── if filePath → loadFile(filePath, autoDetect)
             └── else        → showStatus('No image loaded')
@@ -139,7 +138,7 @@ Wails runtime
 | `discCenterCutout` | `true` |
 | `discCutoutPercent` | 11 |
 
-**Settings persistence:** Go fields are in-memory only. The frontend persists settings to `localStorage` and re-hydrates the Go side on every startup via `SetTouchupSettings` / `SetWarpSettings`. The frontend is the source of truth.
+**Settings persistence:** Settings are stored in `%AppData%\atropos\settings.json` (Windows) / `~/.config/atropos/settings.json` (other platforms) as JSON, written by the Go backend via `SaveAllSettings`. The file is the source of truth and is shared across all simultaneously running instances. Go applies backend-relevant fields to its in-memory state inside `SaveAllSettings`; it never reads `localStorage`. On first launch after upgrading from an older version, `usePersistentSettings` detects that the file does not yet exist (`Initialized=false`) and performs a one-time migration from `localStorage`.
 
 ---
 
@@ -552,7 +551,7 @@ The touch-up brush button is **disabled** until the initial crop has been commit
 
 Switching modes always resets `useTouchupTool` to `false`, and so does loading a new image (`loadFile`). The rationale: both Disc and Line modes use mouse drag for their first-stage input (drawing the disc / drawing lines), which would conflict with the touch-up brush drag if it were accidentally left on.
 
-After a successful touch-up commit (the `"touchup-done"` event with a preview result), `useTouchupTool` is also reset to `false` unless the `touchupRemainsActive` setting is `true` (default). Similarly, `useStraightEdgeTool` is reset to `false` after a `StraightEdgeRotate` completes unless `straightEdgeRemainsActive` is `true` (default). Both settings are persisted in localStorage and exposed in the Options modal under "After use".
+After a successful touch-up commit (the `"touchup-done"` event with a preview result), `useTouchupTool` is also reset to `false` unless the `touchupRemainsActive` setting is `true` (default). Similarly, `useStraightEdgeTool` is reset to `false` after a `StraightEdgeRotate` completes unless `straightEdgeRemainsActive` is `true` (default). Both settings are persisted via `SaveAllSettings` and exposed in the Options modal under "After use".
 
 ### Touch-up cancellation
 
@@ -819,21 +818,25 @@ Complex argument/return types are defined in `frontend/wailsjs/go/models.ts`.
 
 ## Settings Storage
 
-| Setting | Go field | localStorage key | Valid values |
-|---------|----------|------------------|--------------|
+Settings are persisted to `%AppData%\atropos\settings.json` (Windows) / `~/.config/atropos/settings.json` (other platforms) by the Go backend. All running instances share this file. Invalid values are sanitised to their defaults by `sanitizeSettings` in `app_settings.go`, which is called on every read and every write. The file also records `appVersion` (the build version of the last instance that wrote it) for troubleshooting.
+
+| Setting | `AllSettings` JSON key | Go field | Valid values |
+|---------|------------------------|----------|--------------|
 | Touch-up backend | `touchupBackend` | `touchupBackend` | `"patchmatch"`, `"iopaint"` |
-| IOPaint URL | `iopaintURL` | `iopaintURL` | Any URL string |
+| IOPaint URL | `iopaintUrl` | `iopaintURL` | Any non-empty URL string |
 | Warp fill mode | `warpFillMode` | `warpFillMode` | `"clamp"`, `"fill"`, `"outpaint"` |
 | Warp fill color | `warpFillColor` | `warpFillColor` | CSS hex `"#rrggbb"` |
-| Disc centre cutout | `discCenterCutout` | `discCenterCutout` | `"true"`, `"false"` (default `true`) |
+| Disc centre cutout | `discCenterCutout` | `discCenterCutout` | `true` / `false` (default `true`) |
 | Disc cutout size | `discCutoutPercent` | `discCutoutPercent` | Integer 0–50 (default `11`) |
-| Auto-adjust corner params | *(frontend-only)* | `autoCornerParams` | `"true"`, `"false"` (default `true`) |
-| Close after save | *(frontend-only)* | `closeAfterSave` | `"true"`, `"false"` (default `false`) |
-| Touch-up brush remains active | *(frontend-only)* | `touchupRemainsActive` | `"true"`, `"false"` (default `true`) |
-| Straight edge remains active | *(frontend-only)* | `straightEdgeRemainsActive` | `"true"`, `"false"` (default `true`) |
-| Auto-detect corners on mode switch | *(frontend-only)* | `autoDetectOnModeSwitch` | `"true"`, `"false"` (default `true`) |
+| Auto-adjust corner params | `autoCornerParams` | *(frontend-only)* | `true` / `false` (default `true`) |
+| Close after save | `closeAfterSave` | *(frontend-only)* | `true` / `false` (default `false`) |
+| Post-save enabled | `postSaveEnabled` | *(frontend-only)* | `true` / `false` (default `false`) |
+| Post-save command | `postSaveCommand` | *(frontend-only)* | Any string |
+| Touch-up brush remains active | `touchupRemainsActive` | *(frontend-only)* | `true` / `false` (default `true`) |
+| Straight edge remains active | `straightEdgeRemainsActive` | *(frontend-only)* | `true` / `false` (default `true`) |
+| Auto-detect corners on mode switch | `autoDetectOnModeSwitch` | *(frontend-only)* | `true` / `false` (default `true`) |
 
-On every app start, the frontend reads localStorage and calls `SetTouchupSettings` + `SetWarpSettings` + `SetDiscSettings` to synchronise the Go side. `closeAfterSave` has no Go counterpart — it is consumed entirely in the frontend `handleSaveImage` handler.
+`closeAfterSave` has no Go counterpart — it is consumed entirely in the frontend `handleSaveImage` handler.
 
 CLI overrides: a `--post-save` CLI argument will be surfaced by `GetLaunchArgs()` and used to override the persisted `postSaveCommand` for that session. A CLI `--post-save-exit` boolean requests that the backend quit after launching the command; the frontend only sets `closeAfterSave` when it sees this explicit CLI request.
 
