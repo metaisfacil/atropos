@@ -5,9 +5,10 @@ import {
 import { Quit } from '../../wailsjs/runtime/runtime'
 
 export function useKeyboardShortcuts({
-  imageLoaded, mode, discActive, featherSize,
+  imageLoaded, mode, discActive, featherSize, discRotation,
   ctrlDragRef, shiftDragRef, mousePosRef,
   setPreview, setFeatherSize, setLoading, setRealImageDims,
+  setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setDiscRotation,
   displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, canSave,
   normalRect, handleNormalCrop, handleUndo,
 }) {
@@ -24,11 +25,27 @@ export function useKeyboardShortcuts({
 
         if (mode === 'disc' && discActive) {
           const shiftStep = e.shiftKey ? 20 : 5
+          // Rotate the visual arrow direction into image space so that
+          // nudging honours the current disc rotation.
+          const applyShift = async (visualDx, visualDy) => {
+            const rad = (discRotation || 0) * Math.PI / 180
+            const cos = Math.cos(rad)
+            const sin = Math.sin(rad)
+            const dx = Math.round(cos * visualDx + sin * visualDy)
+            const dy = Math.round(-sin * visualDx + cos * visualDy)
+            const r = await ShiftDisc({ dx, dy })
+            if (r?.preview) setPreview(r.preview)
+            if (r?.unmaskedPreview) setDiscNoMaskPreview(r.unmaskedPreview)
+            if (r?.discCenterX !== undefined && r?.discCenterY !== undefined) setDiscCenter({ x: r.discCenterX, y: r.discCenterY })
+            if (r?.discRadius !== undefined) setDiscRadius(r.discRadius)
+            if (r?.discRotation !== undefined) setDiscRotation(r.discRotation)
+            if (r?.discBgR !== undefined) setDiscBgColor({ r: r.discBgR, g: r.discBgG, b: r.discBgB })
+          }
           switch (e.key) {
-            case 'ArrowUp':    e.preventDefault(); result = await ShiftDisc({ dx: 0, dy: -shiftStep }); if (result?.preview) setPreview(result.preview); return
-            case 'ArrowDown':  e.preventDefault(); result = await ShiftDisc({ dx: 0, dy:  shiftStep }); if (result?.preview) setPreview(result.preview); return
-            case 'ArrowLeft':  e.preventDefault(); result = await ShiftDisc({ dx: -shiftStep, dy: 0 }); if (result?.preview) setPreview(result.preview); return
-            case 'ArrowRight': e.preventDefault(); result = await ShiftDisc({ dx:  shiftStep, dy: 0 }); if (result?.preview) setPreview(result.preview); return
+            case 'ArrowUp':    e.preventDefault(); await applyShift(0, -shiftStep); return
+            case 'ArrowDown':  e.preventDefault(); await applyShift(0,  shiftStep); return
+            case 'ArrowLeft':  e.preventDefault(); await applyShift(-shiftStep, 0); return
+            case 'ArrowRight': e.preventDefault(); await applyShift( shiftStep, 0); return
             case '+': case '=': {
               const newF = Math.min(100, featherSize + 1); setFeatherSize(newF)
               result = await SetFeatherSize({ size: newF }); if (result?.preview) setPreview(result.preview); return
@@ -91,13 +108,27 @@ export function useKeyboardShortcuts({
             result = mode === 'disc' && discActive
               ? await RotateDisc({ angle: -15 })
               : await Rotate({ flipCode: 2 })
-            if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); showStatus(''); setLoading(false); await flushPendingSave(); break
+            if (result?.preview) setPreview(result.preview)
+            if (result?.unmaskedPreview) setDiscNoMaskPreview(result.unmaskedPreview)
+            if (result?.discCenterX !== undefined && result?.discCenterY !== undefined) setDiscCenter({ x: result.discCenterX, y: result.discCenterY })
+            if (result?.discRadius !== undefined) setDiscRadius(result.discRadius)
+            if (result?.discRotation !== undefined) setDiscRotation(result.discRotation)
+            if (result?.discBgR !== undefined) setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
+            if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+            showStatus(''); setLoading(false); await flushPendingSave(); break
           case 'e':
             setLoading(true); showStatus('Rotating…')
             result = mode === 'disc' && discActive
               ? await RotateDisc({ angle: 15 })
               : await Rotate({ flipCode: 1 })
-            if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); showStatus(''); setLoading(false); await flushPendingSave(); break
+            if (result?.preview) setPreview(result.preview)
+            if (result?.unmaskedPreview) setDiscNoMaskPreview(result.unmaskedPreview)
+            if (result?.discCenterX !== undefined && result?.discCenterY !== undefined) setDiscCenter({ x: result.discCenterX, y: result.discCenterY })
+            if (result?.discRadius !== undefined) setDiscRadius(result.discRadius)
+            if (result?.discRotation !== undefined) setDiscRotation(result.discRotation)
+            if (result?.discBgR !== undefined) setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
+            if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+            showStatus(''); setLoading(false); await flushPendingSave(); break
           default:
             break
         }
@@ -109,5 +140,5 @@ export function useKeyboardShortcuts({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [imageLoaded, mode, discActive, featherSize, displayToImage, normalRect, handleNormalCrop, handleUndo, canSave]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, canSave]) // eslint-disable-line react-hooks/exhaustive-deps
 }
