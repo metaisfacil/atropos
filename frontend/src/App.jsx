@@ -96,6 +96,10 @@ export default function App() {
   const [featherSize, setFeatherSize] = useState(15)
   const [discActive, setDiscActive]   = useState(false)
 
+  // Live drag preview state for disc translation/rotation
+  const [discLiveActive, setDiscLiveActive] = useState(false)
+  const [discLiveTransform, setDiscLiveTransform] = useState({ dx: 0, dy: 0, angle: 0 })
+
   // ── Line mode ─────────────────────────────────────────────────────────────
   const [linesDone, setLinesDone]         = useState(0)
   const [linesProcessed, setLinesProcessed] = useState(false)
@@ -208,6 +212,7 @@ export default function App() {
     setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setPreview,
     setLoading, setZoom, setRealImageDims, setCornerState, setDetectedCornerPts,
     setSelectedCornerPts, setDiscActive, setNormalRect, setLines, setLinesDone,
+    discLiveActive, setDiscLiveActive, discLiveTransform, setDiscLiveTransform,
     setLinesProcessed, setUseStraightEdgeTool,
     straightEdgeRemainsActive,
     spaceDownRef, panDragRef, canvasRef, ctrlDragRef, shiftDragRef,
@@ -483,6 +488,10 @@ export default function App() {
                 style={{
                   cursor: spacePanMode ? 'grab' : 'crosshair',
                   display: 'block',
+                  transform: discLiveActive
+                    ? `translate(${discLiveTransform.dx}px, ${discLiveTransform.dy}px) rotate(${discLiveTransform.angle}deg)`
+                    : 'none',
+                  transformOrigin: 'center center',
                   ...(fitWidth > 0
                     ? { width: `${fitWidth * zoom}px`, height: 'auto', maxWidth: 'none', maxHeight: 'none' }
                     : { maxWidth: `${zoom * 100}%`, maxHeight: `${zoom * 100}%` }),
