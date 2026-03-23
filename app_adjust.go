@@ -194,7 +194,8 @@ func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ProcessResult{Preview: preview}, nil
+	nb := a.warpedImage.Bounds()
+	return &ProcessResult{Preview: preview, Width: nb.Dx(), Height: nb.Dy()}, nil
 }
 
 // Rotate applies a 90-degree rotation to the warped image.
@@ -213,7 +214,8 @@ func (a *App) Rotate(req RotateRequest) (*ProcessResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ProcessResult{Preview: preview}, nil
+	rb := a.warpedImage.Bounds()
+	return &ProcessResult{Preview: preview, Width: rb.Dx(), Height: rb.Dy()}, nil
 }
 
 // ResizeImage applies an explicit width/height resize against the working image.
