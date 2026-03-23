@@ -21,9 +21,28 @@ import (
 	"golang.org/x/image/tiff"
 )
 
+// resetPipelineState clears all derived/processing state after a new image is
+// loaded. It does NOT touch originalImage, currentImage, imageLoaded, or
+// loadedFilePath — the caller is responsible for those.
+func (a *App) resetPipelineState() {
+	a.warpedImage = nil
+	a.levelsBaseImage = nil
+	a.selectedCorners = nil
+	a.detectedCorners = nil
+	a.lines = nil
+	a.undoStack = nil
+	a.resetDiscFields()
+}
+
 // LoadImageRequest contains the file path for loading an image.
 type LoadImageRequest struct {
 	FilePath string `json:"filePath"`
+}
+
+// LoadImageBytesRequest contains image bytes for loading an image from clipboard/drag drop.
+type LoadImageBytesRequest struct {
+	Data []byte `json:"data"`
+	Name string `json:"name,omitempty"`
 }
 
 // SuggestedCornerParams holds auto-computed corner detection defaults derived
@@ -74,22 +93,9 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	t2 := time.Now()
 	a.originalImage = nrgba            // reuse — toNRGBA already made a fresh copy
 	a.currentImage = cloneImage(nrgba) // one clone instead of two
-	a.warpedImage = nil
-	a.levelsBaseImage = nil
 	a.imageLoaded = true
 	a.loadedFilePath = req.FilePath
-	a.selectedCorners = nil
-	a.detectedCorners = nil
-	a.lines = nil
-	a.undoStack = nil
-	a.discCenter = image.Point{}
-	a.discRadius = 0
-	a.rotationAngle = 0
-	a.discBaseImage = nil
-	a.discWorkingCrop = nil
-	a.discWorkingCropRect = image.Rectangle{}
-	a.postDiscBlack = 0
-	a.postDiscWhite = 255
+	a.resetPipelineState()
 	a.logf("LoadImage: clone took %v", time.Since(t2))
 
 	t3 := time.Now()
@@ -157,6 +163,32 @@ func (a *App) decodeImageFile(path string) (image.Image, error) {
 		return nil, fmt.Errorf("standard decode failed: %w; ImageMagick also failed: %v", stdErr, magickErr)
 	}
 	return img, nil
+}
+
+func (a *App) decodeImageData(data []byte) (image.Image, string, error) {
+	src, format, err := image.Decode(bytes.NewReader(data))
+	if err == nil {
+		return src, format, nil
+	}
+
+	// Try ImageMagick fallback when the standard decoder fails.
+	tmp, tmpErr := os.CreateTemp("", "atropos-image-*")
+	if tmpErr != nil {
+		return nil, "", fmt.Errorf("standard decode failed: %w; failed to create temp file: %v", err, tmpErr)
+	}
+	defer os.Remove(tmp.Name())
+
+	if _, tmpErr = tmp.Write(data); tmpErr != nil {
+		tmp.Close()
+		return nil, "", fmt.Errorf("failed to write temp image file for decode: %v", tmpErr)
+	}
+	tmp.Close()
+
+	img, magickErr := a.decodeViaMagick(tmp.Name(), "bmp3")
+	if magickErr != nil {
+		return nil, "", fmt.Errorf("standard decode failed: %w; ImageMagick also failed: %v", err, magickErr)
+	}
+	return img, "BMP", nil
 }
 
 // decodeViaMagick shells out to ImageMagick to decode an image file.
@@ -265,6 +297,70 @@ func (a *App) SaveImage(req SaveRequest) (*ProcessResult, error) {
 	}, nil
 }
 
+// LoadImageBytes loads an image directly from raw bytes (clipboard or browser drop).
+func (a *App) LoadImageBytes(req LoadImageBytesRequest) (*ImageInfo, error) {
+	if !a.loadMu.TryLock() {
+		const msg = "LoadImageBytes: rejected, another load is already in progress"
+		a.logf(msg)
+		return nil, fmt.Errorf(msg)
+	}
+	defer a.loadMu.Unlock()
+	a.cancelTouchup()
+
+	a.logf("LoadImageBytes: name=%q size=%d", req.Name, len(req.Data))
+
+	t0 := time.Now()
+	src, format, err := a.decodeImageData(req.Data)
+	if err != nil {
+		msg := fmt.Sprintf("LoadImageBytes: decode error: %v", err)
+		a.logf(msg)
+		return nil, fmt.Errorf(msg)
+	}
+	a.logf("LoadImageBytes: decode took %v", time.Since(t0))
+
+	t1 := time.Now()
+	nrgba := toNRGBA(src)
+	src = nil
+	a.logf("LoadImageBytes: toNRGBA took %v", time.Since(t1))
+
+	t2 := time.Now()
+	a.originalImage = nrgba
+	a.currentImage = cloneImage(nrgba)
+	a.imageLoaded = true
+	a.loadedFilePath = ""
+	a.resetPipelineState()
+	a.logf("LoadImageBytes: clone took %v", time.Since(t2))
+
+	t3 := time.Now()
+	preview, err := imageToBase64(a.currentImage)
+	if err != nil {
+		msg := fmt.Sprintf("LoadImageBytes: base64 error: %v", err)
+		a.logf(msg)
+		return nil, fmt.Errorf(msg)
+	}
+	a.logf("LoadImageBytes: preview took %v", time.Since(t3))
+
+	b := nrgba.Bounds()
+	a.logf("LoadImageBytes: total %v, returning %dx%d, preview len=%d", time.Since(t0), b.Dx(), b.Dy(), len(preview))
+
+	runtime.WindowSetTitle(a.ctx, AppBaseTitle()+" — "+func() string {
+		if req.Name != "" {
+			return req.Name
+		}
+		return "Clipboard"
+	}())
+
+	return &ImageInfo{
+		Width:                 b.Dx(),
+		Height:                b.Dy(),
+		Preview:               preview,
+		Format:                strings.ToUpper(format),
+		DPIX:                  0,
+		DPIY:                  0,
+		SuggestedCornerParams: suggestCornerParams(b.Dx(), b.Dy()),
+	}, nil
+}
+
 // RecropImage promotes the current warpedImage to be the new source image,
 // resetting all processing state so the user can apply a second crop mode on
 // the result of the first one without having to save and reload the file.
@@ -278,20 +374,7 @@ func (a *App) RecropImage() (*ImageInfo, error) {
 	src := a.warpedImage
 	a.originalImage = src
 	a.currentImage = cloneImage(src)
-	a.warpedImage = nil
-	a.levelsBaseImage = nil
-	a.selectedCorners = nil
-	a.detectedCorners = nil
-	a.lines = nil
-	a.undoStack = nil
-	a.discCenter = image.Point{}
-	a.discRadius = 0
-	a.rotationAngle = 0
-	a.discBaseImage = nil
-	a.discWorkingCrop = nil
-	a.discWorkingCropRect = image.Rectangle{}
-	a.postDiscBlack = 0
-	a.postDiscWhite = 255
+	a.resetPipelineState()
 
 	preview, err := imageToBase64(a.currentImage)
 	if err != nil {

@@ -327,6 +327,20 @@ export namespace main {
 	        this.y2 = source["y2"];
 	    }
 	}
+	export class LoadImageBytesRequest {
+	    data: number[];
+	    name?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LoadImageBytesRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.data = source["data"];
+	        this.name = source["name"];
+	    }
+	}
 	export class LoadImageRequest {
 	    filePath: string;
 	
