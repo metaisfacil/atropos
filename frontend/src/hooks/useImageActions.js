@@ -546,6 +546,48 @@ export function useImageActions({
   //   falls back to `GetCleanPreview` to refresh the preview and `realImageDims`.
   // - Always cancels any in-flight touchup and disables transient tools.
   // See the function implementation below for exact ordering and guards.
+  /*
+    Pseudocode summary — onClick (mode button):
+
+    if leaving 'corner':
+      ResetCorners()              ← clears selectedCorners + warpedImage
+      setCornersDetected(false)
+      setCornerState({...cornerCount: 0})
+      setCropSkipped(false)
+
+    if leaving 'disc' && discActive:
+      ResetDisc()                 ← clears all disc state + warpedImage
+      setDiscActive(false)
+      setCropSkipped(false)
+
+    if leaving 'line':
+      ClearLines()                ← clears lines + warpedImage
+      setLinesDone(0), setLines([]), setLinesProcessed(false)
+      setCropSkipped(false)
+
+    if leaving 'normal':
+      ResetNormal()               ← clears warpedImage
+      setNormalRect(null), setNormalCropApplied(false)
+      setCropSkipped(false)
+
+    if arriving at 'corner' && lastDetectSettings matches current settings:
+      RestoreCornerOverlay({dotRadius})   ← re-render cached corners
+      setFitWidth(min(container.w, container.h * res.w/res.h))
+      setPreview, setRealImageDims
+      setCornersDetected(true)
+      setMode('corner'); return           ← early return, skip detection / GetCleanPreview
+
+    if arriving at 'corner' && autoDetectOnModeSwitch:
+      setLoading(true)
+      DetectCorners(autoCornerParams ? suggestedCornerParams : {})
+      setLoading(false)
+      setMode('corner'); return           ← early return, skip GetCleanPreview
+
+    setFitWidth(min(container.w, container.h * res.w/res.h))
+    GetCleanPreview()                       ← returns currentImage (warpedImage now nil)
+    setPreview, setRealImageDims
+    setMode(m)
+  */
   const handleModeSwitch = async (m) => {
     if (m === mode) return
     setUseTouchupTool(false)

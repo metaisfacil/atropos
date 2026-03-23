@@ -5,6 +5,34 @@ import (
 	"image"
 )
 
+// Normal mode notes:
+//
+// Drag interaction rules (implemented in frontend/hooks/useMouseHandlers.js):
+// - A drag may begin on the canvas area outside image bounds; the selection
+//   starts when the cursor first enters the image (entry point becomes
+//   `dragStart`).
+// - While dragging, `dragCurrent` is clamped to the image boundary — the
+//   rectangle tracks the cursor and extends to the edge, but never beyond.
+// - A click (drag smaller than 5 px in either dimension) clears any existing
+//   `normalRect` instead of creating a tiny crop.
+// - `normalDragPendingRef` tracks the outside-image mousedown state;
+//   `e.preventDefault()` is called on that mousedown to suppress the
+//   browser's native drag gesture. When the cursor enters the image the
+//   pending drag transitions to active and `normalDragActiveRef` is set true
+//   synchronously so the very first `mousemove` inside the image updates the
+//   selection immediately.
+//
+// NormalCrop (server-side pseudocode):
+//   img = workingImage()
+//   normalise coordinates (swap if x1>x2 or y1>y2)
+//   clamp to img.Bounds()
+//   if region is empty → error
+//   saveUndo()
+//   warpedImage = subImage(img, rect)
+//   return preview + width + height + "Cropped to W×H"
+//
+// ResetNormal clears `warpedImage` so that GetCleanPreview returns `currentImage`.
+
 // NormalCropRequest holds the image-space bounding box for a rectangle crop.
 type NormalCropRequest struct {
 	X1 int `json:"x1"`

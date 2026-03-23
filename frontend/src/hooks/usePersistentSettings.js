@@ -3,6 +3,11 @@ import { GetAllSettings, SaveAllSettings, SetDiscSettings } from '../../wailsjs/
 
 // Compiled-in defaults — must stay in sync with NewApp() in app.go and
 // AllSettings defaults in GetAllSettings().
+// Note: the persisted JSON key for the IOPaint URL is `iopaintUrl` (see
+// Go `AllSettings.IOPaintURL` JSON tag). The frontend API surface exposes
+// this setting as `iopaintURL` when returning values from this hook; the
+// internal defaults and persistence keys use `iopaintUrl` to match the
+// generated Wails models and Go JSON fields.
 const DEFAULTS = {
   touchupBackend:            'patchmatch',
   iopaintUrl:                'http://127.0.0.1:8086/',
