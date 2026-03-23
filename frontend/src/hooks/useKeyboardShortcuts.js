@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import {
-  Crop, Rotate, ShiftDisc, RotateDisc, SetFeatherSize, GetPixelColor,
+  Crop, Rotate, ShiftDisc, RotateDisc, SetFeatherSize, GetPixelColor, ConfirmClose,
 } from '../../wailsjs/go/main/App'
 import { Quit } from '../../wailsjs/runtime/runtime'
 
@@ -11,11 +11,30 @@ export function useKeyboardShortcuts({
   setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setDiscRotation,
   displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, handleLoadImage, canSave,
   normalRect, handleNormalCrop, handleUndo,
+  unsavedChanges, setUnsavedChanges, confirmClose,
 }) {
   useEffect(() => {
     const handleKeyDown = async (e) => {
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyW') {
         e.preventDefault()
+        if (unsavedChanges) {
+          const saveFirst = window.confirm('You have unsaved changes. Save before quitting?')
+          if (saveFirst) {
+            const saved = await handleSaveImage()
+            if (saved) {
+              await confirmClose();
+              Quit()
+            }
+            return
+          }
+          const exitWithoutSave = window.confirm('Quit without saving your changes?')
+          if (exitWithoutSave) {
+            await confirmClose();
+            Quit()
+          }
+          return
+        }
+        await confirmClose();
         Quit()
         return
       }
@@ -109,10 +128,10 @@ export function useKeyboardShortcuts({
         }
 
         switch (key) {
-          case 'w': result = await Crop({ direction: 'top'    }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); await flushPendingSave(); break
-          case 's': result = await Crop({ direction: 'bottom' }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); await flushPendingSave(); break
-          case 'a': result = await Crop({ direction: 'left'   }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); await flushPendingSave(); break
-          case 'd': result = await Crop({ direction: 'right'  }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); await flushPendingSave(); break
+          case 'w': result = await Crop({ direction: 'top'    }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); setUnsavedChanges(true); await flushPendingSave(); break
+          case 's': result = await Crop({ direction: 'bottom' }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); setUnsavedChanges(true); await flushPendingSave(); break
+          case 'a': result = await Crop({ direction: 'left'   }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); setUnsavedChanges(true); await flushPendingSave(); break
+          case 'd': result = await Crop({ direction: 'right'  }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); setUnsavedChanges(true); await flushPendingSave(); break
           case 'q':
             setLoading(true); showStatus('Rotating…')
             result = mode === 'disc' && discActive
@@ -125,6 +144,7 @@ export function useKeyboardShortcuts({
             if (result?.discRotation !== undefined) setDiscRotation(result.discRotation)
             if (result?.discBgR !== undefined) setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
             if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+            setUnsavedChanges(true)
             showStatus(''); setLoading(false); await flushPendingSave(); break
           case 'e':
             setLoading(true); showStatus('Rotating…')
@@ -138,6 +158,7 @@ export function useKeyboardShortcuts({
             if (result?.discRotation !== undefined) setDiscRotation(result.discRotation)
             if (result?.discBgR !== undefined) setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
             if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+            setUnsavedChanges(true)
             showStatus(''); setLoading(false); await flushPendingSave(); break
           default:
             break

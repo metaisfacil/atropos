@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import './App.css'
 
 import NormalCropPanel  from './components/NormalCropPanel'
@@ -70,9 +70,11 @@ export default function App() {
   // `realImageDims` changes after edits. The UI shows both when they differ.
   const [inputImageDims, setInputImageDims] = useState({ w: 1, h: 1 })
   const [imageMeta, setImageMeta] = useState({ format: '', dpiX: 0, dpiY: 0 })
+  const [unsavedChanges, setUnsavedChanges] = useState(false)
   const imgRef     = useRef(null)
   const ctrlDragRef  = useRef(null)
   const shiftDragRef = useRef(null)
+  const touchupDraggingRef = useRef(false)
   const flushPendingSaveRef = useRef(null)
 
   // ── Drag / interaction state ───────────────────────────────────────────────
@@ -162,7 +164,6 @@ export default function App() {
   const {
     touchupStrokes, setTouchupStrokes,
     brushSize, setBrushSize,
-    touchupDraggingRef,
     clearTouchup, commitTouchup,
   } = useTouchup({
     imageLoaded, loading, setLoading, showStatus,
@@ -171,6 +172,8 @@ export default function App() {
     onDragEnd: () => { setDragging(false); setDragStart(null); setDragCurrent(null) },
     flushPendingSaveRef,
     touchupRemainsActive, setUseTouchupTool,
+    setUnsavedChanges,
+    touchupDraggingRef,
   })
 
   const {
@@ -204,6 +207,7 @@ export default function App() {
     setImageMeta,
     compositorDropRef,
     setDiscRotation,
+    unsavedChanges, setUnsavedChanges,
   })
   flushPendingSaveRef.current = flushPendingSave
 
@@ -225,6 +229,7 @@ export default function App() {
     spaceDownRef, panDragRef, canvasRef, ctrlDragRef, shiftDragRef,
     touchupDraggingRef, imgRef, lastResizeRef, mousePosRef,
     commitTouchup, showStatus, showError,
+    setUnsavedChanges,
   })
 
   useKeyboardShortcuts({
@@ -235,7 +240,24 @@ export default function App() {
     displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, handleLoadImage,
     canSave: imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive),
     normalRect, handleNormalCrop, handleUndo,
+    unsavedChanges, setUnsavedChanges,
+    confirmClose: async () => {
+      await window.go.main.App.ConfirmClose()
+    },
   })
+
+  React.useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (!unsavedChanges) return
+      e.preventDefault()
+      e.returnValue = ''
+      return ''
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [unsavedChanges])
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -436,9 +458,14 @@ export default function App() {
       <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
       <ErrorModal message={errorMessage} onClose={() => setErrorMessage(null)} />
       <ConfirmationModal
+        open={!!confirmDialog}
         message={confirmDialog?.message}
-        onConfirm={confirmDialog?.onConfirm ?? (() => {})}
-        onCancel={() => setConfirmDialog(null)}
+        onYes={confirmDialog?.onYes ?? confirmDialog?.onConfirm}
+        onNo={confirmDialog?.onNo ?? confirmDialog?.onCancel}
+        onCancel={confirmDialog?.onCancel ?? (() => setConfirmDialog(null))}
+        yesText={confirmDialog?.yesText ?? 'Yes'}
+        noText={confirmDialog?.noText ?? 'No'}
+        cancelText={confirmDialog?.cancelText ?? 'Cancel'}
       />
 
       <OptionsPanel

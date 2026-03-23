@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { OnFileDrop, OnFileDropOff, Quit } from '../../wailsjs/runtime/runtime'
+import { OnFileDrop, OnFileDropOff, EventsOn, EventsOff, Quit } from '../../wailsjs/runtime/runtime'
 import {
   LoadImage,
   DetectCorners,
@@ -10,6 +10,7 @@ import {
   OpenImageDialog,
   OpenSaveDialog,
   GetLaunchArgs,
+  ConfirmClose,
   GetCleanPreview,
   RestoreCornerOverlay,
   RecropImage,
@@ -36,12 +37,20 @@ export function useImageActions({
   showStatus, showError,
   setImageMeta,
   compositorDropRef,
+  unsavedChanges, setUnsavedChanges,
 }) {
   const [loadingFull, setLoadingFull] = useState(false)
   const [saving, setSaving]          = useState(false)
   const modeRef            = useRef(mode)
   const lastDetectSettings      = useRef(null)
   const suggestedCornerParamsRef = useRef({})
+
+  const markUnsavedChanges = () => {
+    if (setUnsavedChanges) setUnsavedChanges(true)
+  }
+  const clearUnsavedChanges = () => {
+    if (setUnsavedChanges) setUnsavedChanges(false)
+  }
   const savingRef          = useRef(false)
   const pendingDropRef     = useRef(null)
   const pendingSaveRef     = useRef(false)
@@ -122,6 +131,7 @@ export function useImageActions({
     suggestedCornerParamsRef.current = result.suggestedCornerParams || {}
 
     setLoadingFull(false)
+    clearUnsavedChanges()
 
     if (autoDetect && modeRef.current === 'corner') {
       await runDetectCorners(autoCornerParams ? suggestedCornerParamsRef.current : {})
@@ -372,6 +382,7 @@ export function useImageActions({
         setNormalRect(null)
       }
       setCropSkipped(true)
+      markUnsavedChanges()
       showStatus(result?.message || 'Crop skipped')
     } catch (err) {
       console.error('SkipCrop error:', err)
@@ -398,6 +409,7 @@ export function useImageActions({
           if (setInputImageDims) setInputImageDims({ w: result.width, h: result.height })
           setImageMeta({ format: '', dpiX: 0, dpiY: 0 })
           resetImageState()
+          markUnsavedChanges()
           showStatus(`Re-cropping from ${result.width}×${result.height} image`)
         } catch (err) {
           console.error('RecropImage error:', err)
@@ -424,6 +436,7 @@ export function useImageActions({
       setCornerState(s => ({ ...s, cornerCount: 0 }))
       setCropSkipped(false)
       setUseTouchupTool(false)
+      markUnsavedChanges()
     } catch (err) {
       console.error('ResetCorners error:', err)
     } finally {
@@ -451,6 +464,7 @@ export function useImageActions({
       setDragging(false)
       setDragStart(null)
       setDragCurrent(null)
+      markUnsavedChanges()
       showStatus(result?.message || 'Disc selection reset')
     } catch (err) {
       console.error('ResetDisc error:', err)
@@ -471,6 +485,7 @@ export function useImageActions({
       setNormalCropApplied(false)
       setCropSkipped(false)
       setUseTouchupTool(false)
+      markUnsavedChanges()
       showStatus(result?.message || 'Normal crop reset')
     } catch (err) {
       console.error('ResetNormal error:', err)
@@ -490,6 +505,7 @@ export function useImageActions({
       showStatus(result?.message || 'Crop applied')
       setNormalRect(null)
       setNormalCropApplied(true)
+      markUnsavedChanges()
     } catch (err) {
       console.error('NormalCrop error:', err)
       showError(err)
@@ -509,6 +525,7 @@ export function useImageActions({
       setLinesProcessed(false)
       setCropSkipped(false)
       setUseTouchupTool(false)
+      markUnsavedChanges()
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
       showStatus(result?.message || 'Lines cleared')
@@ -559,6 +576,7 @@ export function useImageActions({
         setBlackPoint(0)
         setWhitePoint(255)
       }
+      markUnsavedChanges()
     } catch (err) {
       console.error('Undo error:', err)
       showError(err)
@@ -572,9 +590,10 @@ export function useImageActions({
   // flushPendingSave (deferred, after an operation completes).
   const _performSave = async () => {
     pendingSaveRef.current = false
+    let saved = false
     try {
       const filePath = await OpenSaveDialog()
-      if (!filePath) return
+      if (!filePath) return false
       setLoading(true)
       savingRef.current = true
       setSaving(true)
@@ -582,6 +601,8 @@ export function useImageActions({
       const result = await SaveImage({ outputPath: filePath })
       const savedName = filePath.split(/[\\/]/).pop()
       showStatus(result?.message || `Saved to ${savedName}`)
+      clearUnsavedChanges()
+      saved = true
       if (postSaveEnabled && postSaveCommand) RunPostSaveCommand(postSaveCommand, filePath).catch(err => console.error('Post-save command error:', err))
       if (closeAfterSave) Quit()
     } catch (err) {
@@ -604,6 +625,7 @@ export function useImageActions({
         }
       }
     }
+    return saved
   }
 
   // If an operation is active, queue the save; otherwise save immediately.
@@ -611,9 +633,9 @@ export function useImageActions({
     if (loadingRef.current || touchupDraggingRef.current) {
       pendingSaveRef.current = true
       showStatus('Save queued…')
-      return
+      return false
     }
-    await _performSave()
+    return await _performSave()
   }
 
   // Called by useKeyboardShortcuts and useTouchup once their operation finishes.
@@ -621,6 +643,41 @@ export function useImageActions({
     if (!pendingSaveRef.current) return
     await _performSave()
   }
+
+  // ── Close request event (Wails OnBeforeClose) ─────────────────────────────
+  useEffect(() => {
+    const closeRequestHandler = async () => {
+      if (!unsavedChanges) {
+        await ConfirmClose()
+        Quit()
+        return
+      }
+
+      setConfirmDialog({
+        message: 'You have unsaved changes. Save before quitting?',
+        onYes: async () => {
+          setConfirmDialog(null)
+          const saved = await handleSaveImage()
+          if (saved) {
+            await ConfirmClose()
+            Quit()
+          }
+        },
+        onNo: async () => {
+          setConfirmDialog(null)
+          await ConfirmClose()
+          Quit()
+        },
+        onCancel: () => setConfirmDialog(null),
+        yesText: 'Yes',
+        noText: 'No',
+        cancelText: 'Cancel',
+      })
+    }
+
+    EventsOn('app-close-requested', closeRequestHandler)
+    return () => EventsOff('app-close-requested')
+  }, [unsavedChanges, handleSaveImage])
 
   // ── Mode switch ───────────────────────────────────────────────────────────
   // Mode switch behaviour:
