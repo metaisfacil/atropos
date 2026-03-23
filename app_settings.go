@@ -1,10 +1,139 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"image/color"
+	"os"
+	"path/filepath"
 	"strings"
 )
+
+// AllSettings is the complete set of user-facing persistent settings.
+// It is serialised to / deserialised from the per-user settings file so that
+// every application instance shares the same values regardless of which
+// WebView2 user data directory it is using.
+type AllSettings struct {
+	// Touch-up
+	TouchupBackend string `json:"touchupBackend"`
+	IOPaintURL     string `json:"iopaintUrl"`
+	// Warp fill
+	WarpFillMode  string `json:"warpFillMode"`
+	WarpFillColor string `json:"warpFillColor"`
+	// Disc
+	DiscCenterCutout  bool `json:"discCenterCutout"`
+	DiscCutoutPercent int  `json:"discCutoutPercent"`
+	// Behaviour flags (frontend-only values persisted here for sharing)
+	AutoCornerParams          bool   `json:"autoCornerParams"`
+	CloseAfterSave            bool   `json:"closeAfterSave"`
+	PostSaveEnabled           bool   `json:"postSaveEnabled"`
+	PostSaveCommand           string `json:"postSaveCommand"`
+	TouchupRemainsActive      bool   `json:"touchupRemainsActive"`
+	StraightEdgeRemainsActive bool   `json:"straightEdgeRemainsActive"`
+	AutoDetectOnModeSwitch    bool   `json:"autoDetectOnModeSwitch"`
+	// AppVersion is the build version string of the last app instance that
+	// successfully wrote this file.  Useful for troubleshooting.
+	AppVersion string `json:"appVersion"`
+	// Initialized is false when the settings file did not exist on disk,
+	// meaning this is the first launch of a version that uses file-based
+	// settings.  The frontend uses this flag to migrate any values it finds
+	// in localStorage (written by older versions) before they are lost.
+	// The field is never written to the JSON file itself (json:"-").
+	Initialized bool `json:"-"`
+}
+
+// settingsFilePath returns the path to the shared settings JSON file.
+func settingsFilePath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "atropos", "settings.json"), nil
+}
+
+// GetAllSettings reads the settings file and returns its contents.
+// If the file does not exist the compiled-in defaults are returned with
+// Initialized=false so the frontend can migrate any legacy localStorage
+// values before they are lost.
+func (a *App) GetAllSettings() AllSettings {
+	defaults := AllSettings{
+		TouchupBackend:            a.touchupBackend,
+		IOPaintURL:                a.iopaintURL,
+		WarpFillMode:              a.warpFillMode,
+		WarpFillColor:             fmt.Sprintf("#%02x%02x%02x", a.warpFillColor.R, a.warpFillColor.G, a.warpFillColor.B),
+		DiscCenterCutout:          a.discCenterCutout,
+		DiscCutoutPercent:         a.discCutoutPercent,
+		AutoCornerParams:          true,
+		CloseAfterSave:            false,
+		PostSaveEnabled:           false,
+		PostSaveCommand:           "",
+		TouchupRemainsActive:      true,
+		StraightEdgeRemainsActive: true,
+		AutoDetectOnModeSwitch:    true,
+		Initialized:               false,
+	}
+
+	path, err := settingsFilePath()
+	if err != nil {
+		return defaults
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return defaults // file not yet created; Initialized stays false
+	}
+	var s AllSettings
+	if err := json.Unmarshal(data, &s); err != nil {
+		a.logf("GetAllSettings: parse error: %v", err)
+		return defaults
+	}
+	s.Initialized = true
+	a.logf("GetAllSettings: loaded from %s", path)
+	return s
+}
+
+// SaveAllSettings writes the provided settings to the shared JSON file and
+// also applies the backend-relevant fields to the in-memory App state so they
+// take effect immediately in this instance.
+func (a *App) SaveAllSettings(s AllSettings) error {
+	// Apply backend-relevant fields immediately.
+	if s.TouchupBackend == "iopaint" || s.TouchupBackend == "patchmatch" {
+		a.touchupBackend = s.TouchupBackend
+	}
+	if s.IOPaintURL != "" {
+		a.iopaintURL = s.IOPaintURL
+	}
+	if s.WarpFillMode == "clamp" || s.WarpFillMode == "fill" || s.WarpFillMode == "outpaint" {
+		a.warpFillMode = s.WarpFillMode
+	}
+	if s.WarpFillColor != "" {
+		if c, err := parseHexColor(s.WarpFillColor); err == nil {
+			a.warpFillColor = c
+		}
+	}
+	a.discCenterCutout = s.DiscCenterCutout
+	if s.DiscCutoutPercent >= 0 && s.DiscCutoutPercent <= 50 {
+		a.discCutoutPercent = s.DiscCutoutPercent
+	}
+
+	// Persist to file.
+	path, err := settingsFilePath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	s.AppVersion = AppVersion
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return err
+	}
+	a.logf("SaveAllSettings: written to %s", path)
+	return nil
+}
 
 // TouchupSettings holds the configuration for the touch-up backend.
 type TouchupSettings struct {
