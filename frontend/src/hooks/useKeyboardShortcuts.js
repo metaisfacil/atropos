@@ -9,7 +9,7 @@ export function useKeyboardShortcuts({
   ctrlDragRef, shiftDragRef, mousePosRef,
   setPreview, setFeatherSize, setLoading, setRealImageDims,
   setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setDiscRotation,
-  displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, canSave,
+  displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, handleLoadImage, canSave,
   normalRect, handleNormalCrop, handleUndo,
 }) {
   useEffect(() => {
@@ -17,6 +17,16 @@ export function useKeyboardShortcuts({
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyW') {
         e.preventDefault()
         Quit()
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyO') {
+        e.preventDefault()
+        try {
+          await handleLoadImage()
+        } catch (err) {
+          console.error('Open shortcut error:', err)
+          showError(err)
+        }
         return
       }
       if (!imageLoaded) return
@@ -140,5 +150,5 @@ export function useKeyboardShortcuts({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, canSave]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, canSave, handleLoadImage]) // eslint-disable-line react-hooks/exhaustive-deps
 }
