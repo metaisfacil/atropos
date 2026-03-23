@@ -46,6 +46,8 @@ export function GetWarpSettings():Promise<main.WarpSettings>;
 
 export function LoadImage(arg1:main.LoadImageRequest):Promise<main.ImageInfo>;
 
+export function LoadImageBytes(arg1:main.LoadImageBytesRequest):Promise<main.ImageInfo>;
+
 export function LogFrontend(arg1:string):Promise<void>;
 
 export function NormalCrop(arg1:main.NormalCropRequest):Promise<main.ProcessResult>;

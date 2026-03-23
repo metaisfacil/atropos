@@ -90,6 +90,10 @@ export function LoadImage(arg1) {
   return window['go']['main']['App']['LoadImage'](arg1);
 }
 
+export function LoadImageBytes(arg1) {
+  return window['go']['main']['App']['LoadImageBytes'](arg1);
+}
+
 export function LogFrontend(arg1) {
   return window['go']['main']['App']['LogFrontend'](arg1);
 }
