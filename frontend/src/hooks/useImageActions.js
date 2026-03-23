@@ -25,7 +25,7 @@ import {
 export function useImageActions({
   mode, loading, imageLoaded, discActive, linesProcessed, normalCropApplied,
   cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
-  setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural,
+  setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setInputImageDims, setImgNatural,
   setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
   setDiscActive, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
   setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
@@ -116,6 +116,7 @@ export function useImageActions({
     setPreview(result.preview)
     setImageLoaded(true)
     setRealImageDims({ w: result.width, h: result.height })
+    setInputImageDims({ w: result.width, h: result.height })
     setImgNatural({ w: result.width, h: result.height })
     setImageMeta({ format: result.format || '', dpiX: result.dpiX || 0, dpiY: result.dpiY || 0 })
     resetImageState()
@@ -231,6 +232,7 @@ export function useImageActions({
       setPreview(info.preview)
       setImageLoaded(true)
       setRealImageDims({ w: info.width, h: info.height })
+      setInputImageDims({ w: info.width, h: info.height })
       setImgNatural({ w: info.width, h: info.height })
       setImageMeta({ format: '', dpiX: 0, dpiY: 0 })
       resetImageState()

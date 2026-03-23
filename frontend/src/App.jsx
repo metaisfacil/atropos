@@ -60,6 +60,7 @@ export default function App() {
   const [confirmDialog, setConfirmDialog] = useState(null)
 
   const [realImageDims, setRealImageDims] = useState({ w: 1, h: 1 })
+  const [inputImageDims, setInputImageDims] = useState({ w: 1, h: 1 })
   const [imageMeta, setImageMeta] = useState({ format: '', dpiX: 0, dpiY: 0 })
   const imgRef     = useRef(null)
   const ctrlDragRef  = useRef(null)
@@ -175,7 +176,7 @@ export default function App() {
   } = useImageActions({
     mode, loading, imageLoaded, discActive, linesProcessed, normalCropApplied,
     cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
-    setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural,
+    setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setInputImageDims, setImgNatural,
     setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
     setDiscActive, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
     setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
@@ -209,7 +210,7 @@ export default function App() {
   useKeyboardShortcuts({
     imageLoaded, mode, discActive, featherSize,
     ctrlDragRef, shiftDragRef, mousePosRef,
-    setPreview, setFeatherSize, setLoading,
+    setPreview, setFeatherSize, setLoading, setRealImageDims,
     displayToImage, showStatus, showError, handleSaveImage, flushPendingSave,
     canSave: imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive),
     normalRect, handleNormalCrop, handleUndo,
@@ -508,6 +509,7 @@ export default function App() {
         <StatusBar
           imageLoaded={imageLoaded}
           imageMeta={imageMeta}
+          inputImageDims={inputImageDims}
           realImageDims={realImageDims}
           zoom={zoom}
           onResetZoom={() => setZoom(1)}

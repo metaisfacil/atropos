@@ -1,7 +1,7 @@
 import React from 'react'
 import DelayedHint from './DelayedHint'
 
-export default function StatusBar({ imageLoaded, imageMeta, realImageDims, zoom, onResetZoom }) {
+export default function StatusBar({ imageLoaded, imageMeta, inputImageDims, realImageDims, zoom, onResetZoom }) {
   // Each item: { text, hint, onClick? }
   const items = []
 
@@ -10,7 +10,20 @@ export default function StatusBar({ imageLoaded, imageMeta, realImageDims, zoom,
       items.push({ text: imageMeta.format, hint: 'Image file format' })
     }
 
-    items.push({ text: `${realImageDims.w} × ${realImageDims.h}`, hint: 'Image dimensions in pixels (width × height)' })
+    const inputChanged = inputImageDims &&
+      (inputImageDims.w !== realImageDims.w || inputImageDims.h !== realImageDims.h)
+
+    items.push({
+      text: `${inputImageDims?.w ?? realImageDims.w} × ${inputImageDims?.h ?? realImageDims.h}`,
+      hint: 'Input image dimensions in pixels (width × height)',
+    })
+
+    if (inputChanged) {
+      items.push({
+        text: `${realImageDims.w} × ${realImageDims.h}`,
+        hint: 'Output image dimensions in pixels (width × height) based on current modifications',
+      })
+    }
 
     const { dpiX = 0, dpiY = 0 } = imageMeta || {}
     if (dpiX > 0 && dpiY > 0) {
