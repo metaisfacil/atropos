@@ -14,6 +14,7 @@ import {
   RestoreCornerOverlay,
   RecropImage,
   CancelTouchup,
+  LoadImageBytes,
   ResetDisc,
   ClearLines,
   SaveImage,
@@ -105,24 +106,12 @@ export function useImageActions({
     }
   }
 
-  // ── Core file loader (private — used by dialog, drag-drop, and launch args) ─
-  const loadFile = async (filePath, autoDetect = true) => {
-    CancelTouchup()
-    setLoading(true)
-    setLoadingFull(true)
-    setZoom(1)
-    const name = filePath.split(/[\\/]/).pop()
-    showStatus(`Loading ${name}…`)
-
-    const result = await LoadImage({ filePath })
+  // ── Core image result applier (shared for LoadImage/LoadImageBytes) ─
+  const applyLoadedImage = async (result, autoDetect = true) => {
     showStatus(`Loaded: ${result.width}x${result.height}`)
     setFitWidth(0)
     setPreview(result.preview)
     setImageLoaded(true)
-    // `realImageDims` = working/output size reported by Go (used for
-    // overlays & coordinate mapping). Initially equal to the input file size
-    // but may change after edits. `inputImageDims` retains the original
-    // file dimensions as loaded from disk.
     setRealImageDims({ w: result.width, h: result.height })
     setInputImageDims({ w: result.width, h: result.height })
     setImgNatural({ w: result.width, h: result.height })
@@ -134,11 +123,36 @@ export function useImageActions({
 
     setLoadingFull(false)
 
-    if (autoDetect && mode === 'corner') {
+    if (autoDetect && modeRef.current === 'corner') {
       await runDetectCorners(autoCornerParams ? suggestedCornerParamsRef.current : {})
     }
 
     setLoading(false)
+  }
+
+  // ── Core file loader (private — used by dialog, drag-drop, and launch args) ─
+  const loadFile = async (filePath, autoDetect = true) => {
+    CancelTouchup()
+    setLoading(true)
+    setLoadingFull(true)
+    setZoom(1)
+    const name = filePath.split(/[\/]/).pop()
+    showStatus(`Loading ${name}…`)
+
+    const result = await LoadImage({ filePath })
+    await applyLoadedImage(result, autoDetect)
+  }
+
+  const loadImageFromBytes = async (arrayBuffer, sourceName = 'clipboard') => {
+    CancelTouchup()
+    setLoading(true)
+    setLoadingFull(true)
+    setZoom(1)
+    showStatus(`Loading ${sourceName}…`)
+
+    const bytes = Array.from(new Uint8Array(arrayBuffer))
+    const result = await LoadImageBytes({ data: bytes, name: sourceName })
+    await applyLoadedImage(result, true)
   }
 
   // ── Load image (dialog) ───────────────────────────────────────────────────
@@ -200,6 +214,69 @@ export function useImageActions({
       document.removeEventListener('drop', suppressDefault)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Clipboard paste / browser URL drop image loading ─────────────────────────
+  useEffect(() => {
+    const onPaste = async (e) => {
+      const items = e.clipboardData?.items
+      if (!items || items.length === 0) return
+
+      const imageItem = Array.from(items).find(i => i.type.startsWith('image/'))
+      if (!imageItem) return
+
+      e.preventDefault()
+      const file = imageItem.getAsFile()
+      if (!file) return
+
+      try {
+        const buffer = await file.arrayBuffer()
+        await loadImageFromBytes(buffer, file.name || 'clipboard')
+      } catch (err) {
+        console.error('Clipboard image load error:', err)
+        showError(err)
+      }
+    }
+
+    const onDrop = async (e) => {
+      if (!e.dataTransfer) return
+      const file = e.dataTransfer.files?.[0]
+
+      if (file && file.type.startsWith('image/') && !file.path) {
+        e.preventDefault()
+        try {
+          const buffer = await file.arrayBuffer()
+          await loadImageFromBytes(buffer, file.name || 'dropped-image')
+          return
+        } catch (err) {
+          console.error('Drop image load error:', err)
+          showError(err)
+        }
+      }
+
+      const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')
+      if (url && /^https?:\/\//.test(url)) {
+        e.preventDefault()
+        try {
+          const resp = await fetch(url)
+          if (!resp.ok) throw new Error(`Failed to fetch image from URL: ${resp.status}`)
+          const buffer = await resp.arrayBuffer()
+          await loadImageFromBytes(buffer, url)
+          return
+        } catch (err) {
+          console.error('URL drop image load error:', err)
+          showError(err)
+        }
+      }
+    }
+
+    window.addEventListener('paste', onPaste)
+    window.addEventListener('drop', onDrop)
+
+    return () => {
+      window.removeEventListener('paste', onPaste)
+      window.removeEventListener('drop', onDrop)
+    }
+  }, [])
 
   // ── Launch arguments ───────────────────────────────────────────────────────
   useEffect(() => {
