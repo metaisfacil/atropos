@@ -19,6 +19,44 @@ export namespace image {
 
 export namespace main {
 	
+	export class AllSettings {
+	    touchupBackend: string;
+	    iopaintUrl: string;
+	    warpFillMode: string;
+	    warpFillColor: string;
+	    discCenterCutout: boolean;
+	    discCutoutPercent: number;
+	    autoCornerParams: boolean;
+	    closeAfterSave: boolean;
+	    postSaveEnabled: boolean;
+	    postSaveCommand: string;
+	    touchupRemainsActive: boolean;
+	    straightEdgeRemainsActive: boolean;
+	    autoDetectOnModeSwitch: boolean;
+	    appVersion: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AllSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.touchupBackend = source["touchupBackend"];
+	        this.iopaintUrl = source["iopaintUrl"];
+	        this.warpFillMode = source["warpFillMode"];
+	        this.warpFillColor = source["warpFillColor"];
+	        this.discCenterCutout = source["discCenterCutout"];
+	        this.discCutoutPercent = source["discCutoutPercent"];
+	        this.autoCornerParams = source["autoCornerParams"];
+	        this.closeAfterSave = source["closeAfterSave"];
+	        this.postSaveEnabled = source["postSaveEnabled"];
+	        this.postSaveCommand = source["postSaveCommand"];
+	        this.touchupRemainsActive = source["touchupRemainsActive"];
+	        this.straightEdgeRemainsActive = source["straightEdgeRemainsActive"];
+	        this.autoDetectOnModeSwitch = source["autoDetectOnModeSwitch"];
+	        this.appVersion = source["appVersion"];
+	    }
+	}
 	export class ClickCornerRequest {
 	    x: number;
 	    y: number;

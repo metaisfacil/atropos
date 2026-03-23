@@ -28,6 +28,8 @@ export function DetectCorners(arg1:main.CornerDetectRequest):Promise<main.Proces
 
 export function DrawDisc(arg1:main.DiscDrawRequest):Promise<main.ProcessResult>;
 
+export function GetAllSettings():Promise<main.AllSettings>;
+
 export function GetCleanPreview():Promise<main.ProcessResult>;
 
 export function GetDiscSettings():Promise<main.DiscSettings>;
@@ -71,6 +73,8 @@ export function Rotate(arg1:main.RotateRequest):Promise<main.ProcessResult>;
 export function RotateDisc(arg1:main.DiscRotateRequest):Promise<main.ProcessResult>;
 
 export function RunPostSaveCommand(arg1:string,arg2:string):Promise<void>;
+
+export function SaveAllSettings(arg1:main.AllSettings):Promise<void>;
 
 export function SaveImage(arg1:main.SaveRequest):Promise<main.ProcessResult>;
 

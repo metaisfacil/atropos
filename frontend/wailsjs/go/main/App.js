@@ -54,6 +54,10 @@ export function DrawDisc(arg1) {
   return window['go']['main']['App']['DrawDisc'](arg1);
 }
 
+export function GetAllSettings() {
+  return window['go']['main']['App']['GetAllSettings']();
+}
+
 export function GetCleanPreview() {
   return window['go']['main']['App']['GetCleanPreview']();
 }
@@ -140,6 +144,10 @@ export function RotateDisc(arg1) {
 
 export function RunPostSaveCommand(arg1, arg2) {
   return window['go']['main']['App']['RunPostSaveCommand'](arg1, arg2);
+}
+
+export function SaveAllSettings(arg1) {
+  return window['go']['main']['App']['SaveAllSettings'](arg1);
 }
 
 export function SaveImage(arg1) {
