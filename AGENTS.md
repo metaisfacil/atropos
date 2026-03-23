@@ -73,10 +73,6 @@ Understand the image fields before editing anything:
 12. Forgetting to reset tool toggles in `loadFile` leaves tools visually active on the new image.
 13. Forgetting `cancelTouchup()` in a new reset or load path allows an in-flight touch-up to mutate cleared state.
 
-Notes:
-- CancelTouchup naming: the frontend bridge/export is `CancelTouchup()` while backend/internal methods may be named `cancelTouchup()` or `a.cancelTouchup()`; when documenting, prefer the bridge name for frontend/API examples and the internal name for Go implementation notes.
-- Settings key naming: the persisted settings JSON uses the key `iopaintUrl` (see Go `AllSettings`), while the frontend exposes the setting as `iopaintURL` on its public hooks; mention both forms when discussing persisted vs runtime names.
-
 ## Where to Look
 
 - `app.go` — top-level state, startup, orchestration
