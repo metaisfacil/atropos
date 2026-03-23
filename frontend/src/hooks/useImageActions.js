@@ -25,7 +25,7 @@ import {
 export function useImageActions({
   mode, loading, imageLoaded, discActive, linesProcessed, normalCropApplied,
   cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
-  setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural, setInputImageDims,
+  setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setInputImageDims, setImgNatural,
   setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
   setDiscActive, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
   setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
@@ -120,8 +120,7 @@ export function useImageActions({
     // but may change after edits. `inputImageDims` retains the original
     // file dimensions as loaded from disk.
     setRealImageDims({ w: result.width, h: result.height })
-    // Set both the zoom-pan natural dims and the app-level input dims so
-    // components (StatusBar, etc.) can read the original file size.
+    setInputImageDims({ w: result.width, h: result.height })
     setImgNatural({ w: result.width, h: result.height })
     if (setInputImageDims) setInputImageDims({ w: result.width, h: result.height })
     setImageMeta({ format: result.format || '', dpiX: result.dpiX || 0, dpiY: result.dpiY || 0 })
@@ -241,6 +240,7 @@ export function useImageActions({
       // load: `inputImageDims` records the compositor result size and
       // `realImageDims` is set to the same value initially.
       setRealImageDims({ w: info.width, h: info.height })
+      setInputImageDims({ w: info.width, h: info.height })
       setImgNatural({ w: info.width, h: info.height })
       if (setInputImageDims) setInputImageDims({ w: info.width, h: info.height })
       setImageMeta({ format: '', dpiX: 0, dpiY: 0 })
