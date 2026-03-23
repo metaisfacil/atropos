@@ -72,6 +72,7 @@ Understand the image fields before editing anything:
 11. Omitting disc state from `LoadImage` / `RecropImage` resets can leak stale disc state into later operations.
 12. Forgetting to reset tool toggles in `loadFile` leaves tools visually active on the new image.
 13. Forgetting `cancelTouchup()` in a new reset or load path allows an in-flight touch-up to mutate cleared state.
+14. Disc translation must honor current disc rotation in both live preview and backend commit (use a shared transformation path and keep `discRotation` in sync).
 
 ## Where to Look
 
