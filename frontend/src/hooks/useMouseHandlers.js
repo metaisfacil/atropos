@@ -11,9 +11,10 @@ export function useMouseHandlers({
   discNoMaskPreview,
   discCenter,
   discRadius,
+  discRotation,
   setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setPreview,
   setLoading, setZoom, setRealImageDims, setCornerState, setDetectedCornerPts,
-  setSelectedCornerPts, setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setLines, setLinesDone,
+  setSelectedCornerPts, setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscRotation, setDiscBgColor, setNormalRect, setLines, setLinesDone,
   discLiveActive, setDiscLiveActive, discLiveTransform, setDiscLiveTransform,
   setLinesProcessed, setUseStraightEdgeTool,
   straightEdgeRemainsActive,
@@ -46,6 +47,51 @@ export function useMouseHandlers({
   const mouseUpHandledRef    = useRef(false) // set by canvas handler to suppress window handler double-fire
 
   const clamp = (value, min, max) => Math.min(Math.max(value, min), max)
+
+  const computeDiscShift = (screenDx, screenDy) => {
+    const bounds = imgRef.current ? imgRef.current.getBoundingClientRect() : null
+    if (!bounds || realImageDims.w <= 0 || realImageDims.h <= 0 || discRadius <= 0) return null
+
+    const scaleX = realImageDims.w / bounds.width
+    const scaleY = realImageDims.h / bounds.height
+
+    // Map the pointer movement from display space into (possibly rotated)
+    // disc-local image space, with inverted drag direction for working output.
+    const rotatedX = screenDx * scaleX
+    const rotatedY = screenDy * scaleY
+    const angleRad = discRotation * Math.PI / 180
+    const cos = Math.cos(angleRad)
+    const sin = Math.sin(angleRad)
+
+    const desiredImgDx = -(rotatedX * cos + rotatedY * sin)
+    const desiredImgDy = -(-rotatedX * sin + rotatedY * cos)
+
+    const startCenter = ctrlDragRef.current?.startCenter || discCenter || { x: 0, y: 0 }
+    const minCenterX = discRadius
+    const maxCenterX = Math.max(discRadius, realImageDims.w - discRadius)
+    const minCenterY = discRadius
+    const maxCenterY = Math.max(discRadius, realImageDims.h - discRadius)
+
+    const clampedCenterX = clamp(startCenter.x + desiredImgDx, minCenterX, maxCenterX)
+    const clampedCenterY = clamp(startCenter.y + desiredImgDy, minCenterY, maxCenterY)
+
+    const appliedImgDx = clampedCenterX - startCenter.x
+    const appliedImgDy = clampedCenterY - startCenter.y
+
+    // Map applied image-space shift into screen-space (inverse drag) for live preview.
+    const previewX = -(cos * appliedImgDx - sin * appliedImgDy)
+    const previewY = -(sin * appliedImgDx + cos * appliedImgDy)
+
+    const liveDx = Math.round(previewX / scaleX)
+    const liveDy = Math.round(previewY / scaleY)
+
+    return {
+      dx: Math.round(appliedImgDx),
+      dy: Math.round(appliedImgDy),
+      liveDx,
+      liveDy,
+    }
+  }
 
   // Refs that shadow state/callback values so the window mouseup listener
   // can read current values without being re-registered on every render.
@@ -212,34 +258,10 @@ export function useMouseHandlers({
       const screenDx = e.clientX - ctrlDragRef.current.startClientX
       const screenDy = e.clientY - ctrlDragRef.current.startClientY
 
-      const bounds = imgRef.current ? imgRef.current.getBoundingClientRect() : null
-      const scaleX = (bounds && realImageDims.w > 0) ? realImageDims.w / bounds.width : 0
-      const scaleY = (bounds && realImageDims.h > 0) ? realImageDims.h / bounds.height : 0
-
-      let liveDx = screenDx
-      let liveDy = screenDy
-
-      if (bounds && realImageDims.w > 0 && realImageDims.h > 0 && discRadius > 0) {
-        const desiredImgDx = -Math.round(screenDx * scaleX)
-        const desiredImgDy = -Math.round(screenDy * scaleY)
-
-        const startCenter = ctrlDragRef.current.startCenter || discCenter
-        const minCenterX = discRadius
-        const maxCenterX = Math.max(discRadius, realImageDims.w - discRadius)
-        const minCenterY = discRadius
-        const maxCenterY = Math.max(discRadius, realImageDims.h - discRadius)
-
-        const clampedCenterX = clamp(startCenter.x + desiredImgDx, minCenterX, maxCenterX)
-        const clampedCenterY = clamp(startCenter.y + desiredImgDy, minCenterY, maxCenterY)
-
-        const appliedImgDx = clampedCenterX - startCenter.x
-        const appliedImgDy = clampedCenterY - startCenter.y
-
-        liveDx = -Math.round(appliedImgDx / scaleX)
-        liveDy = -Math.round(appliedImgDy / scaleY)
+      const shift = computeDiscShift(screenDx, screenDy)
+      if (shift) {
+        setDiscLiveTransform(prev => ({ ...prev, dx: shift.liveDx, dy: shift.liveDy }))
       }
-
-      setDiscLiveTransform(prev => ({ ...prev, dx: liveDx, dy: liveDy }))
       return
     }
   }
@@ -360,6 +382,7 @@ export function useMouseHandlers({
             setDiscCenter({ x: result.discCenterX, y: result.discCenterY })
           }
           if (result?.discRadius !== undefined) setDiscRadius(result.discRadius)
+          if (result?.discRotation !== undefined) setDiscRotation(result.discRotation)
           if (result?.discBgR !== undefined) {
             setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
           }
@@ -381,13 +404,15 @@ export function useMouseHandlers({
       mouseUpHandledRef.current = true
       const screenDx = e.clientX - ctrlDragRef.current.startClientX
       const screenDy = e.clientY - ctrlDragRef.current.startClientY
+
+      const shift = computeDiscShift(screenDx, screenDy)
       let dx = 0
       let dy = 0
-      if (imgRef.current && realImageDims.w > 0 && realImageDims.h > 0) {
-        const bounds = imgRef.current.getBoundingClientRect()
-        dx = -Math.round(screenDx * (realImageDims.w / bounds.width))
-        dy = -Math.round(screenDy * (realImageDims.h / bounds.height))
+      if (shift) {
+        dx = shift.dx
+        dy = shift.dy
       }
+
       ctrlDragRef.current = null; ctrlDragBusy.current = false
       setLoading(true)
       showStatus('Applying disc shift…')
@@ -400,6 +425,7 @@ export function useMouseHandlers({
             setDiscCenter({ x: result.discCenterX, y: result.discCenterY })
           }
           if (result?.discRadius !== undefined) setDiscRadius(result.discRadius)
+          if (result?.discRotation !== undefined) setDiscRotation(result.discRotation)
           if (result?.discBgR !== undefined) {
             setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
           }
@@ -428,6 +454,7 @@ export function useMouseHandlers({
         const result = await DrawDisc({ centerX: end.x, centerY: end.y, radius })
         setPreview(result.preview)
         if (result?.unmaskedPreview) setDiscNoMaskPreview(result.unmaskedPreview)
+        if (result?.discRotation !== undefined) setDiscRotation(result.discRotation)
         setDiscCenter({ x: end.x, y: end.y })
         setDiscRadius(radius)
         if (result?.discBgR !== undefined) {

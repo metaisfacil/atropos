@@ -98,6 +98,7 @@ export default function App() {
   const [discNoMaskPreview, setDiscNoMaskPreview] = useState(null)
   const [discCenter, setDiscCenter] = useState(null)
   const [discRadius, setDiscRadius] = useState(0)
+  const [discRotation, setDiscRotation] = useState(0)
   const [discBgColor, setDiscBgColor] = useState({ r: 255, g: 255, b: 255 })
 
   // Live drag preview state for disc translation/rotation
@@ -202,6 +203,7 @@ export default function App() {
     showStatus, showError,
     setImageMeta,
     compositorDropRef,
+    setDiscRotation,
   })
   flushPendingSaveRef.current = flushPendingSave
 
@@ -212,8 +214,9 @@ export default function App() {
     imageLoaded, loading, mode, dragging, dragStart, dragCurrent,
     useTouchupTool, useStraightEdgeTool, discActive, linesProcessed,
     touchupStrokes, cornerState, dotRadius, cornersDetected, customCorner, linesDone,
-    realImageDims, discNoMaskPreview, discCenter, discRadius,
+    realImageDims, discNoMaskPreview, discCenter, discRadius, discRotation,
     setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setPreview,
+    setDiscRotation,
     setLoading, setZoom, setRealImageDims, setCornerState, setDetectedCornerPts,
     setSelectedCornerPts, setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setLines, setLinesDone,
     discLiveActive, setDiscLiveActive, discLiveTransform, setDiscLiveTransform,
@@ -228,7 +231,7 @@ export default function App() {
     imageLoaded, mode, discActive, featherSize,
     ctrlDragRef, shiftDragRef, mousePosRef,
     setPreview, setFeatherSize, setLoading, setRealImageDims,
-    setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor,
+    setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setDiscRotation,
     displayToImage, showStatus, showError, handleSaveImage, flushPendingSave,
     canSave: imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive),
     normalRect, handleNormalCrop, handleUndo,

@@ -215,6 +215,7 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 		DiscCenterX:     a.discCenter.X,
 		DiscCenterY:     a.discCenter.Y,
 		DiscRadius:      a.discRadius,
+		DiscRotation:    a.rotationAngle,
 		DiscBgR:         int(a.bgColor.R),
 		DiscBgG:         int(a.bgColor.G),
 		DiscBgB:         int(a.bgColor.B),

@@ -384,6 +384,7 @@ export namespace main {
 	    discCenterX?: number;
 	    discCenterY?: number;
 	    discRadius?: number;
+	    discRotation?: number;
 	    discBgR?: number;
 	    discBgG?: number;
 	    discBgB?: number;
@@ -406,6 +407,7 @@ export namespace main {
 	        this.discCenterX = source["discCenterX"];
 	        this.discCenterY = source["discCenterY"];
 	        this.discRadius = source["discRadius"];
+	        this.discRotation = source["discRotation"];
 	        this.discBgR = source["discBgR"];
 	        this.discBgG = source["discBgG"];
 	        this.discBgB = source["discBgB"];

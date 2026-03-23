@@ -8,7 +8,7 @@ export function useKeyboardShortcuts({
   imageLoaded, mode, discActive, featherSize,
   ctrlDragRef, shiftDragRef, mousePosRef,
   setPreview, setFeatherSize, setLoading, setRealImageDims,
-  setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor,
+  setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setDiscRotation,
   displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, canSave,
   normalRect, handleNormalCrop, handleUndo,
 }) {
@@ -96,6 +96,7 @@ export function useKeyboardShortcuts({
             if (result?.unmaskedPreview) setDiscNoMaskPreview(result.unmaskedPreview)
             if (result?.discCenterX !== undefined && result?.discCenterY !== undefined) setDiscCenter({ x: result.discCenterX, y: result.discCenterY })
             if (result?.discRadius !== undefined) setDiscRadius(result.discRadius)
+            if (result?.discRotation !== undefined) setDiscRotation(result.discRotation)
             if (result?.discBgR !== undefined) setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
             if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
             showStatus(''); setLoading(false); await flushPendingSave(); break
@@ -108,6 +109,7 @@ export function useKeyboardShortcuts({
             if (result?.unmaskedPreview) setDiscNoMaskPreview(result.unmaskedPreview)
             if (result?.discCenterX !== undefined && result?.discCenterY !== undefined) setDiscCenter({ x: result.discCenterX, y: result.discCenterY })
             if (result?.discRadius !== undefined) setDiscRadius(result.discRadius)
+            if (result?.discRotation !== undefined) setDiscRotation(result.discRotation)
             if (result?.discBgR !== undefined) setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
             if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
             showStatus(''); setLoading(false); await flushPendingSave(); break
