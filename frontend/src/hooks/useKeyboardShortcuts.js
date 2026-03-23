@@ -7,7 +7,7 @@ import { Quit } from '../../wailsjs/runtime/runtime'
 export function useKeyboardShortcuts({
   imageLoaded, mode, discActive, featherSize,
   ctrlDragRef, shiftDragRef, mousePosRef,
-  setPreview, setFeatherSize, setLoading,
+  setPreview, setFeatherSize, setLoading, setRealImageDims,
   displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, canSave,
   normalRect, handleNormalCrop, handleUndo,
 }) {
@@ -82,22 +82,22 @@ export function useKeyboardShortcuts({
         }
 
         switch (key) {
-          case 'w': result = await Crop({ direction: 'top'    }); if (result?.preview) setPreview(result.preview); await flushPendingSave(); break
-          case 's': result = await Crop({ direction: 'bottom' }); if (result?.preview) setPreview(result.preview); await flushPendingSave(); break
-          case 'a': result = await Crop({ direction: 'left'   }); if (result?.preview) setPreview(result.preview); await flushPendingSave(); break
-          case 'd': result = await Crop({ direction: 'right'  }); if (result?.preview) setPreview(result.preview); await flushPendingSave(); break
+          case 'w': result = await Crop({ direction: 'top'    }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); await flushPendingSave(); break
+          case 's': result = await Crop({ direction: 'bottom' }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); await flushPendingSave(); break
+          case 'a': result = await Crop({ direction: 'left'   }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); await flushPendingSave(); break
+          case 'd': result = await Crop({ direction: 'right'  }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); await flushPendingSave(); break
           case 'q':
             setLoading(true); showStatus('Rotating…')
             result = mode === 'disc' && discActive
               ? await RotateDisc({ angle: -15 })
               : await Rotate({ flipCode: 2 })
-            if (result?.preview) setPreview(result.preview); showStatus(''); setLoading(false); await flushPendingSave(); break
+            if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); showStatus(''); setLoading(false); await flushPendingSave(); break
           case 'e':
             setLoading(true); showStatus('Rotating…')
             result = mode === 'disc' && discActive
               ? await RotateDisc({ angle: 15 })
               : await Rotate({ flipCode: 1 })
-            if (result?.preview) setPreview(result.preview); showStatus(''); setLoading(false); await flushPendingSave(); break
+            if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); showStatus(''); setLoading(false); await flushPendingSave(); break
           default:
             break
         }
