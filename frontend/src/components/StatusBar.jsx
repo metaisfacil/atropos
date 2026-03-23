@@ -1,7 +1,7 @@
 import React from 'react'
 import DelayedHint from './DelayedHint'
 
-export default function StatusBar({ imageLoaded, imageMeta, realImageDims, zoom, onResetZoom }) {
+export default function StatusBar({ imageLoaded, imageMeta, realImageDims, inputImageDims, zoom, onResetZoom }) {
   // Each item: { text, hint, onClick? }
   const items = []
 

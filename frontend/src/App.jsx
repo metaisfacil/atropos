@@ -518,6 +518,7 @@ export default function App() {
           imageLoaded={imageLoaded}
           imageMeta={imageMeta}
           realImageDims={realImageDims}
+          inputImageDims={inputImageDims}
           zoom={zoom}
           onResetZoom={() => setZoom(1)}
         />
