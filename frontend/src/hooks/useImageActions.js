@@ -25,7 +25,7 @@ import {
 export function useImageActions({
   mode, loading, imageLoaded, discActive, linesProcessed, normalCropApplied,
   cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
-  setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural,
+  setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setImgNatural, setInputImageDims,
   setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
   setDiscActive, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
   setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
@@ -120,7 +120,10 @@ export function useImageActions({
     // but may change after edits. `inputImageDims` retains the original
     // file dimensions as loaded from disk.
     setRealImageDims({ w: result.width, h: result.height })
+    // Set both the zoom-pan natural dims and the app-level input dims so
+    // components (StatusBar, etc.) can read the original file size.
     setImgNatural({ w: result.width, h: result.height })
+    if (setInputImageDims) setInputImageDims({ w: result.width, h: result.height })
     setImageMeta({ format: result.format || '', dpiX: result.dpiX || 0, dpiY: result.dpiY || 0 })
     resetImageState()
 
@@ -239,6 +242,7 @@ export function useImageActions({
       // `realImageDims` is set to the same value initially.
       setRealImageDims({ w: info.width, h: info.height })
       setImgNatural({ w: info.width, h: info.height })
+      if (setInputImageDims) setInputImageDims({ w: info.width, h: info.height })
       setImageMeta({ format: '', dpiX: 0, dpiY: 0 })
       resetImageState()
       suggestedCornerParamsRef.current = info.suggestedCornerParams || {}
@@ -310,6 +314,7 @@ export function useImageActions({
           setFitWidth(0)
           setPreview(result.preview)
           setRealImageDims({ w: result.width, h: result.height })
+          if (setInputImageDims) setInputImageDims({ w: result.width, h: result.height })
           setImageMeta({ format: '', dpiX: 0, dpiY: 0 })
           resetImageState()
           showStatus(`Re-cropping from ${result.width}×${result.height} image`)
@@ -532,6 +537,15 @@ export function useImageActions({
   }
 
   // ── Mode switch ───────────────────────────────────────────────────────────
+  // Mode switch behaviour:
+  // - Resets mode-specific frontend state and calls the corresponding
+  //   backend Reset* method (ResetCorners, ResetDisc, ClearLines, ResetNormal).
+  // - When switching to `corner`, attempts cached restoration via
+  //   `RestoreCornerOverlay` if the detection settings match; otherwise
+  //   optionally runs `DetectCorners` (when `autoDetectOnModeSwitch`), or
+  //   falls back to `GetCleanPreview` to refresh the preview and `realImageDims`.
+  // - Always cancels any in-flight touchup and disables transient tools.
+  // See the function implementation below for exact ordering and guards.
   const handleModeSwitch = async (m) => {
     if (m === mode) return
     setUseTouchupTool(false)
