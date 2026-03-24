@@ -30,13 +30,13 @@ func suggestCornerParams(w, h int) SuggestedCornerParams {
 
 // CornerDetectRequest contains parameters for the Shi-Tomasi corner detector.
 type CornerDetectRequest struct {
-	MaxCorners     int     `json:"maxCorners"`
-	QualityLevel   float64 `json:"qualityLevel"`
-	MinDistance    int     `json:"minDistance"`
-	AccentValue    int     `json:"accentValue"`
-	UseStretch     bool    `json:"useStretch"`
-	StretchLow     float64 `json:"stretchLow"`
-	StretchHigh    float64 `json:"stretchHigh"`
+	MaxCorners   int     `json:"maxCorners"`
+	QualityLevel float64 `json:"qualityLevel"`
+	MinDistance  int     `json:"minDistance"`
+	AccentValue  int     `json:"accentValue"`
+	UseStretch   bool    `json:"useStretch"`
+	StretchLow   float64 `json:"stretchLow"`
+	StretchHigh  float64 `json:"stretchHigh"`
 }
 
 // ClickCornerRequest holds the image-space coordinates of a user click.
