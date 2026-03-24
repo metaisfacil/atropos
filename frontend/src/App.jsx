@@ -178,8 +178,10 @@ export default function App() {
   const {
     loadingFull,
     saving,
+    resetImagePending,
     handleLoadImage,
     handleDetectCorners,
+    handleReset,
     handleResetCorners,
     handleResetDisc,
     handleResetNormal,
@@ -343,14 +345,9 @@ export default function App() {
                   <button
                     className="reset-btn-danger"
                     disabled={loading}
-                    onClick={
-                      mode === 'corner' ? handleResetCorners :
-                      mode === 'disc'   ? handleResetDisc    :
-                      mode === 'normal' ? handleResetNormal  :
-                                          handleClearLines
-                    }
+                    onClick={handleReset}
                   >
-                    Reset{mode === 'corner' ? ` (${cornerState.cornerCount}/4)` : ''}
+                    {resetImagePending ? 'Reset (All)' : 'Reset (Mode)'}
                   </button>
                 </DelayedHint>
               )}

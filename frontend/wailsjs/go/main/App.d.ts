@@ -70,6 +70,8 @@ export function ResetCorners():Promise<main.ProcessResult>;
 
 export function ResetDisc():Promise<main.ProcessResult>;
 
+export function ResetImage():Promise<main.ProcessResult>;
+
 export function ResetNormal():Promise<main.ProcessResult>;
 
 export function ResizeImage(arg1:main.ResizeRequest):Promise<main.ProcessResult>;

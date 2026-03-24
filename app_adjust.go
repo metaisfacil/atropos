@@ -364,14 +364,49 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 		a.logf(msg)
 		return nil, fmt.Errorf(msg)
 	}
+
+	trimRect := trimBordersRect(img)
+	if trimRect.Eq(img.Bounds()) {
+		a.logf("TrimBorders: no border strips detected")
+		preview, err := imageToBase64(img)
+		if err != nil {
+			return nil, err
+		}
+		b := img.Bounds()
+		return &ProcessResult{Preview: preview, Message: "No border strips detected", Width: b.Dx(), Height: b.Dy()}, nil
+	}
+
+	a.saveUndo()
+	a.warpedImage = subImage(img, trimRect)
+
+	preview, err := imageToBase64(a.warpedImage)
+	if err != nil {
+		return nil, err
+	}
+	b := a.warpedImage.Bounds()
+	a.logf("TrimBorders: trimmed rect=%v → %dx%d", trimRect, b.Dx(), b.Dy())
+	return &ProcessResult{
+		Preview: preview,
+		Message: fmt.Sprintf("Trimmed borders (rect=%v)", trimRect),
+		Width:   b.Dx(),
+		Height:  b.Dy(),
+	}, nil
+}
+
+// trimBordersRect returns the rectangle of the image after removing verifiable
+// near-white or near-black border strips from all four sides. If no trim is
+// needed, the original bounds are returned.
+func trimBordersRect(img *image.NRGBA) image.Rectangle {
+	if img == nil {
+		return image.Rectangle{}
+	}
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 
-	// isBorderRow returns true when ≥99% of the row's pixels are near-white or near-black.
 	isBorderRow := func(y int) bool {
 		count := 0
 		for x := 0; x < w; x++ {
-			off := y*img.Stride + x*4
+			off := (y-b.Min.Y)*img.Stride + (x-b.Min.X)*4
 			r, g, bv := img.Pix[off], img.Pix[off+1], img.Pix[off+2]
 			if (r >= 240 && g >= 240 && bv >= 240) || (r <= 15 && g <= 15 && bv <= 15) {
 				count++
@@ -380,11 +415,10 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 		return count*100 >= w*99
 	}
 
-	// isBorderCol returns true when ≥99% of the column's pixels are near-white or near-black.
 	isBorderCol := func(x int) bool {
 		count := 0
 		for y := 0; y < h; y++ {
-			off := y*img.Stride + x*4
+			off := (y-b.Min.Y)*img.Stride + (x-b.Min.X)*4
 			r, g, bv := img.Pix[off], img.Pix[off+1], img.Pix[off+2]
 			if (r >= 240 && g >= 240 && bv >= 240) || (r <= 15 && g <= 15 && bv <= 15) {
 				count++
@@ -393,47 +427,27 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 		return count*100 >= h*99
 	}
 
-	top := 0
-	for top < h && isBorderRow(top) {
+	top := b.Min.Y
+	for top < b.Max.Y && isBorderRow(top) {
 		top++
 	}
-	bottom := h
+	bottom := b.Max.Y
 	for bottom > top && isBorderRow(bottom-1) {
 		bottom--
 	}
-	left := 0
-	for left < w && isBorderCol(left) {
+	left := b.Min.X
+	for left < b.Max.X && isBorderCol(left) {
 		left++
 	}
-	right := w
+	right := b.Max.X
 	for right > left && isBorderCol(right-1) {
 		right--
 	}
 
-	if top == 0 && bottom == h && left == 0 && right == w {
-		a.logf("TrimBorders: no border strips detected")
-		preview, err := imageToBase64(img)
-		if err != nil {
-			return nil, err
-		}
-		return &ProcessResult{Preview: preview, Message: "No border strips detected", Width: w, Height: h}, nil
+	if top == b.Min.Y && bottom == b.Max.Y && left == b.Min.X && right == b.Max.X {
+		return b
 	}
-
-	a.saveUndo()
-	a.warpedImage = subImage(img, image.Rect(left, top, right, bottom))
-
-	preview, err := imageToBase64(a.warpedImage)
-	if err != nil {
-		return nil, err
-	}
-	nb := a.warpedImage.Bounds()
-	a.logf("TrimBorders: trimmed top=%d bottom=%d left=%d right=%d → %dx%d", top, h-bottom, left, w-right, nb.Dx(), nb.Dy())
-	return &ProcessResult{
-		Preview: preview,
-		Message: fmt.Sprintf("Trimmed borders (top=%d, bottom=%d, left=%d, right=%d)", top, h-bottom, left, w-right),
-		Width:   nb.Dx(),
-		Height:  nb.Dy(),
-	}, nil
+	return image.Rect(left, top, right, bottom)
 }
 
 // SetLevels applies an explicit levels stretch to the working image.

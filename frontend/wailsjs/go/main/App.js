@@ -138,6 +138,10 @@ export function ResetDisc() {
   return window['go']['main']['App']['ResetDisc']();
 }
 
+export function ResetImage() {
+  return window['go']['main']['App']['ResetImage']();
+}
+
 export function ResetNormal() {
   return window['go']['main']['App']['ResetNormal']();
 }

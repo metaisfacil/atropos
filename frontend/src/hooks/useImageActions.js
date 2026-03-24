@@ -4,6 +4,7 @@ import {
   LoadImage,
   DetectCorners,
   ResetCorners,
+  ResetImage,
   NormalCrop,
   ResetNormal,
   OpenImageDialog,
@@ -41,11 +42,19 @@ export function useImageActions({
 }) {
   const [loadingFull, setLoadingFull] = useState(false)
   const [saving, setSaving]          = useState(false)
+  const [resetImagePending, setResetImagePending] = useState(false)
   const modeRef            = useRef(mode)
   const lastDetectSettings      = useRef(null)
   const suggestedCornerParamsRef = useRef({})
   const detectGenRef            = useRef(0)
   const cornerEntryRef          = useRef(null) // { preview, width, height } captured on corner mode entry
+  const resetImagePendingRef    = useRef(false)
+
+  const setResetPending = (value) => {
+    resetImagePendingRef.current = value
+    setResetImagePending(value)
+  }
+  const clearResetImagePending = () => setResetPending(false)
 
   const markUnsavedChanges = () => {
     if (setUnsavedChanges) setUnsavedChanges(true)
@@ -360,6 +369,7 @@ export function useImageActions({
 
   // ── Corner detection ───────────────────────────────────────────────────────
   const handleDetectCorners = async () => {
+    clearResetImagePending()
     setLoading(true)
     try {
       await runDetectCorners(autoCornerParams ? suggestedCornerParamsRef.current : {})
@@ -372,6 +382,7 @@ export function useImageActions({
 
   // ── Mode-specific reset handlers ──────────────────────────────────────────
   const handleResetCorners = async () => {
+    clearResetImagePending()
     CancelTouchup()
     setLoading(true)
     showStatus('Resetting corners…')
@@ -393,6 +404,7 @@ export function useImageActions({
   }
 
   const handleResetDisc = async () => {
+    clearResetImagePending()
     CancelTouchup()
     setLoading(true)
     showStatus('Resetting disc…')
@@ -421,6 +433,7 @@ export function useImageActions({
   }
 
   const handleResetNormal = async () => {
+    clearResetImagePending()
     CancelTouchup()
     setLoading(true)
     showStatus('Resetting normal crop…')
@@ -440,7 +453,68 @@ export function useImageActions({
     }
   }
 
+  const handleResetImage = async () => {
+    CancelTouchup()
+    setLoading(true)
+    showStatus('Resetting to original image…')
+    try {
+      const result = await ResetImage()
+      if (result?.preview) setPreview(result.preview)
+      if (result?.width && result?.height) {
+        setRealImageDims({ w: result.width, h: result.height })
+        setInputImageDims({ w: result.width, h: result.height })
+        setImgNatural({ w: result.width, h: result.height })
+      }
+      resetImageState()
+      clearUnsavedChanges()
+      showStatus(result?.message || 'Image restored to loaded state')
+    } catch (err) {
+      console.error('ResetImage error:', err)
+      showError(err)
+    } finally {
+      setLoading(false)
+      setResetPending(false)
+    }
+  }
+
+  const handleReset = async () => {
+    if (resetImagePendingRef.current) {
+      setConfirmDialog({
+        message: 'This will undo ALL modifications to the current image. Are you sure?',
+        onYes: async () => {
+          setConfirmDialog(null)
+          await handleResetImage()
+        },
+        onNo: () => {
+          setConfirmDialog(null)
+          setResetPending(true)
+          showStatus('Reset cancelled — press again to confirm full reset')
+        },
+        onCancel: () => {
+          setConfirmDialog(null)
+          setResetPending(true)
+          showStatus('Reset cancelled — press again to confirm full reset')
+        },
+        yesText: 'Yes',
+        noText: 'No',
+        cancelText: 'Cancel',
+      })
+      return
+    }
+
+    // Clear the current mode-specific crop/selection first.
+    setConfirmDialog(null)
+    if (mode === 'corner') await handleResetCorners()
+    else if (mode === 'disc') await handleResetDisc()
+    else if (mode === 'normal') await handleResetNormal()
+    else await handleClearLines()
+
+    showStatus('Press Reset again to restore the original loaded image')
+    setResetPending(true)
+  }
+
   const handleNormalCrop = async () => {
+    clearResetImagePending()
     if (!normalRect) return
     setLoading(true)
     showStatus('Applying crop…')
@@ -461,6 +535,7 @@ export function useImageActions({
   }
 
   const handleClearLines = async () => {
+    clearResetImagePending()
     CancelTouchup()
     setLoading(true)
     showStatus('Resetting lines…')
@@ -483,6 +558,7 @@ export function useImageActions({
 
   // ── Undo ──────────────────────────────────────────────────────────────────
   const handleUndo = async () => {
+    clearResetImagePending()
     setLoading(true)
     showStatus('Undoing…')
     try {
@@ -759,9 +835,11 @@ export function useImageActions({
   return {
     loadingFull,
     saving,
+    resetImagePending,
     handleLoadImage,
     handleDetectCorners,
     handleCompositorLoad,
+    handleReset,
     handleResetCorners,
     handleResetDisc,
     handleResetNormal,

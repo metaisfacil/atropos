@@ -93,6 +93,14 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	t2 := time.Now()
 	a.originalImage = nrgba            // reuse — toNRGBA already made a fresh copy
 	a.currentImage = cloneImage(nrgba) // one clone instead of two
+
+	// Apply automatic border trim immediately after load, but keep originalImage
+	trimRect := trimBordersRect(a.currentImage)
+	if !trimRect.Eq(a.currentImage.Bounds()) {
+		a.currentImage = subImage(a.currentImage, trimRect)
+		a.logf("LoadImage: auto-trimmed borders to %dx%d", a.currentImage.Bounds().Dx(), a.currentImage.Bounds().Dy())
+	}
+
 	a.imageLoaded = true
 	a.loadedFilePath = req.FilePath
 	a.resetPipelineState()
@@ -123,6 +131,36 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 		DPIX:                  dpiX,
 		DPIY:                  dpiY,
 		SuggestedCornerParams: suggestCornerParams(b.Dx(), b.Dy()),
+	}, nil
+}
+
+// ResetImage restores the app image state back to the original loaded image
+// and clears all intermediate crop/warp/adjustment state.
+func (a *App) ResetImage() (*ProcessResult, error) {
+	a.logf("ResetImage")
+	a.cancelTouchup()
+	if a.originalImage == nil {
+		return nil, fmt.Errorf("ResetImage: no image loaded")
+	}
+
+	// Restore the pre-load image and clear derived state.
+	a.currentImage = cloneImage(a.originalImage)
+	a.warpedImage = nil
+	a.levelsBaseImage = nil
+	a.undoStack = nil
+	a.resetPipelineState()
+	a.imageLoaded = true
+
+	preview, err := imageToBase64(a.currentImage)
+	if err != nil {
+		return nil, err
+	}
+	b := a.currentImage.Bounds()
+	return &ProcessResult{
+		Preview: preview,
+		Message: "Reset to original image",
+		Width:   b.Dx(),
+		Height:  b.Dy(),
 	}, nil
 }
 
