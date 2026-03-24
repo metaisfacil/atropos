@@ -377,6 +377,7 @@ export function useMouseHandlers({
     }
 
     if (mode === 'disc' && shiftDragRef.current && discActive) {
+      mouseUpHandledRef.current = true
       const dx = e.clientX - shiftDragRef.current.startX
       const totalAngle = dx * 0.3
       shiftDragRef.current = null; shiftDragBusy.current = false
@@ -405,7 +406,6 @@ export function useMouseHandlers({
         showStatus('')
       }
       setDragStart(null); setDragCurrent(null)
-      mouseUpHandledRef.current = true
       return
     }
 
