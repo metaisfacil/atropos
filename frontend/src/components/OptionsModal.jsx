@@ -3,14 +3,14 @@ import DelayedHint from './DelayedHint'
 
 const FADE_MS = 150
 
-// OptionsPanel renders a modal dialog for configuring application options.
+// OptionsModal renders a modal dialog for configuring application options.
 // Props:
 //   open / onClose
 //   touchupBackend / setTouchupBackend  ('patchmatch' | 'iopaint')
 //   iopaintURL / setIopaintURL
 //   warpFillMode / setWarpFillMode  ('clamp' | 'fill' | 'outpaint')
 //   warpFillColor / setWarpFillColor  (CSS hex string)
-export default function OptionsPanel({
+export default function OptionsModal({
   open,
   onClose,
   touchupBackend,
