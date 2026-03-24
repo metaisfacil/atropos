@@ -766,7 +766,7 @@ button.options-close:hover {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
 }
 
 .options-section-title {
@@ -875,6 +875,94 @@ button.modal-cancel-btn {
 
 button.modal-cancel-btn:hover {
   background: #505054;
+}
+
+/* ── Options modal tabs ─────────────────────────────────────────────────── */
+
+.options-dialog {
+  width: 520px; /* modestly wider so the left tab rail does not squeeze content */
+  max-width: 92vw;
+}
+
+.options-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.options-tabs {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.options-tablist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 0 0 138px;
+  width: 138px;
+  min-width: 138px;
+}
+
+button.options-tab {
+  width: 100%;
+  padding: 8px 10px;
+  background: #3e3e42;
+  color: #e0e0e0;
+  border: 1px solid #3e3e42;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.2;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  text-align: left;
+}
+
+button.options-tab:hover {
+  background: #505054;
+}
+
+button.options-tab.active {
+  border-color: #007acc;
+  background: #3e3e42;
+  color: #007acc;
+}
+
+button.options-tab:focus-visible {
+  outline: 2px solid #007acc;
+  outline-offset: 1px;
+}
+
+.options-tab-shell {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  height: auto;
+  transition: height 180ms ease;
+  will-change: height;
+}
+
+.options-tabpanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.options-tabpanel.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.options-tabpanel[hidden] {
+  display: none;
 }
 
 .adj-btn-grid {
