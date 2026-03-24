@@ -17,6 +17,7 @@ package main
 //     and distance-to-border weighted blending.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"image"
@@ -142,7 +143,7 @@ func stitchDetectAndDescribe(img *image.NRGBA) ([]stitchFeature, float64) {
 
 	gray := toGrayscale(workImg)
 	// Use a moderate quality level and minimum distance to get a good spread.
-	pts := goodFeaturesToTrack(gray, compositorMaxFeats, 0.01, 10, 7)
+	pts, _ := goodFeaturesToTrack(context.Background(), gray, compositorMaxFeats, 0.01, 10, 7)
 
 	feats := make([]stitchFeature, 0, len(pts))
 	for _, p := range pts {

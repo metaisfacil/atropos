@@ -132,6 +132,19 @@ func (a *App) applyWarpFill(img *image.NRGBA, oobMask *image.Alpha) *image.NRGBA
 	return img
 }
 
+// CancelCornerDetect cancels any in-flight DetectCorners call. Safe to call
+// from any goroutine; no-op when no detection is running.
+func (a *App) CancelCornerDetect() {
+	a.cornerDetectMu.Lock()
+	fn := a.cornerDetectCancel
+	a.cornerDetectCancel = nil
+	a.cornerDetectMu.Unlock()
+	if fn != nil {
+		a.logf("CancelCornerDetect: cancelling in-flight detection")
+		fn()
+	}
+}
+
 // DetectCorners detects corners in the current image using Shi-Tomasi algorithm.
 // It returns the clean (unmodified) preview together with the detected corner
 // coordinates so the frontend can render the overlay dots via SVG.
@@ -143,6 +156,18 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 		a.logf(msg)
 		return nil, fmt.Errorf(msg)
 	}
+
+	// Register a cancellable context so CancelCornerDetect() can abort this call.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a.cornerDetectMu.Lock()
+	a.cornerDetectCancel = cancel
+	a.cornerDetectMu.Unlock()
+	defer func() {
+		a.cornerDetectMu.Lock()
+		a.cornerDetectCancel = nil
+		a.cornerDetectMu.Unlock()
+	}()
 
 	b := a.currentImage.Bounds()
 	imgW, imgH := b.Dx(), b.Dy()
@@ -251,8 +276,14 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 			thisMinDist = 1
 		}
 
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		a.logf("DetectCorners: scale=%d src=%dx%d max=%d minDist=%d", s, srcGray.Bounds().Dx(), srcGray.Bounds().Dy(), perScale, thisMinDist)
-		pts := goodFeaturesToTrack(srcGray, perScale, quality, thisMinDist, 7)
+		pts, err := goodFeaturesToTrack(ctx, srcGray, perScale, quality, thisMinDist, 7)
+		if err != nil {
+			return nil, err
+		}
 		a.logf("DetectCorners: scale=%d got %d pts", s, len(pts))
 
 		// Scale pts back to working resolution

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"math"
@@ -302,7 +303,7 @@ func TestApplyCLAHE_UniformImage(t *testing.T) {
 func TestGoodFeaturesToTrack_BlackImage(t *testing.T) {
 	// All black → no gradients → no corners
 	gray := image.NewGray(image.Rect(0, 0, 64, 64))
-	pts := goodFeaturesToTrack(gray, 10, 0.01, 10, 3)
+	pts, _ := goodFeaturesToTrack(context.Background(), gray, 10, 0.01, 10, 3)
 	if len(pts) != 0 {
 		t.Fatalf("expected 0 corners on blank image, got %d", len(pts))
 	}
@@ -317,7 +318,7 @@ func TestGoodFeaturesToTrack_SingleCorner(t *testing.T) {
 		}
 	}
 
-	pts := goodFeaturesToTrack(gray, 20, 0.01, 5, 3)
+	pts, _ := goodFeaturesToTrack(context.Background(), gray, 20, 0.01, 5, 3)
 	if len(pts) == 0 {
 		t.Fatal("expected at least one corner on a white square")
 	}
@@ -331,7 +332,7 @@ func TestGoodFeaturesToTrack_RespectsMaxCorners(t *testing.T) {
 		}
 	}
 
-	pts := goodFeaturesToTrack(gray, 2, 0.01, 5, 3)
+	pts, _ := goodFeaturesToTrack(context.Background(), gray, 2, 0.01, 5, 3)
 	if len(pts) > 2 {
 		t.Fatalf("expected at most 2 corners, got %d", len(pts))
 	}
