@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"image"
 	"image/color"
@@ -516,7 +517,7 @@ func gaussianBlurGray(src *image.Gray) *image.Gray {
 }
 
 // goodFeaturesToTrack implements the Shi-Tomasi corner detector in pure Go.
-func goodFeaturesToTrack(gray *image.Gray, maxCorners int, qualityLevel float64, minDistance int, blockSize int) []image.Point {
+func goodFeaturesToTrack(ctx context.Context, gray *image.Gray, maxCorners int, qualityLevel float64, minDistance int, blockSize int) ([]image.Point, error) {
 	b := gray.Bounds()
 	w, h := b.Dx(), b.Dy()
 
@@ -542,7 +543,13 @@ func goodFeaturesToTrack(gray *image.Gray, maxCorners int, qualityLevel float64,
 	cornerMap := make([]float64, w*h)
 	maxEig := 0.0
 
+	done := ctx.Done()
 	for y := half; y < h-half; y++ {
+		select {
+		case <-done:
+			return nil, ctx.Err()
+		default:
+		}
 		for x := half; x < w-half; x++ {
 			var sxx, syy, sxy float64
 			for dy := -half; dy <= half; dy++ {
@@ -611,7 +618,7 @@ func goodFeaturesToTrack(gray *image.Gray, maxCorners int, qualityLevel float64,
 		}
 	}
 
-	return result
+	return result, nil
 }
 
 // ---- Perspective transform ----

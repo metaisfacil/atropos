@@ -115,6 +115,11 @@ type App struct {
 	touchupMu     sync.Mutex
 	touchupCancel context.CancelFunc
 
+	// cornerDetectCancel cancels an in-flight DetectCorners call.
+	// Protected by cornerDetectMu; nil when no operation is running.
+	cornerDetectMu     sync.Mutex
+	cornerDetectCancel context.CancelFunc
+
 	// Warp out-of-bounds fill settings
 	warpFillMode  string      // "clamp", "fill", or "outpaint"
 	warpFillColor color.NRGBA // used when warpFillMode == "fill"
