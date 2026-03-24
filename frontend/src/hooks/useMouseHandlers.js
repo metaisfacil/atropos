@@ -2,6 +2,7 @@ import { useRef, useCallback, useEffect } from 'react'
 import {
   ClickCorner, StraightEdgeRotate, RotateDisc, ShiftDisc, DrawDisc, AddLine, ProcessLines,
 } from '../../wailsjs/go/main/App'
+import { displayToImage as displayToImageHelper, computeDiscShift as computeDiscShiftHelper } from '../utils/imageCoords'
 
 export function useMouseHandlers({
   imageLoaded, loading, mode, dragging, dragStart, dragCurrent,
@@ -118,13 +119,7 @@ export function useMouseHandlers({
   const displayToImage = displayToImageRef.current = useCallback((dispX, dispY) => {
     const el = imgRef.current
     if (!el) return { x: 0, y: 0 }
-    const width = el.clientWidth
-    const height = el.clientHeight
-    if (width <= 0 || height <= 0) return { x: 0, y: 0 }
-    return {
-      x: Math.round(dispX * (realImageDims.w / width)),
-      y: Math.round(dispY * (realImageDims.h / height)),
-    }
+    return displayToImageHelper(dispX, dispY, realImageDims, el.clientWidth, el.clientHeight)
   }, [realImageDims]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const getRelPos = useCallback((e) => {
@@ -272,7 +267,8 @@ export function useMouseHandlers({
       const screenDx = e.clientX - ctrlDragRef.current.startClientX
       const screenDy = e.clientY - ctrlDragRef.current.startClientY
 
-      const shift = computeDiscShift(screenDx, screenDy)
+      const el = imgRef.current
+      const shift = computeDiscShiftHelper(screenDx, screenDy, realImageDims, discRadius, discRotation, discCenter, ctrlDragRef.current.startCenter, el?.clientWidth || 0, el?.clientHeight || 0)
       if (shift) {
         setDiscLiveTransform(prev => ({ ...prev, dx: shift.liveDx, dy: shift.liveDy }))
       }
@@ -419,7 +415,8 @@ export function useMouseHandlers({
       const screenDx = e.clientX - ctrlDragRef.current.startClientX
       const screenDy = e.clientY - ctrlDragRef.current.startClientY
 
-      const shift = computeDiscShift(screenDx, screenDy)
+      const el = imgRef.current
+      const shift = computeDiscShiftHelper(screenDx, screenDy, realImageDims, discRadius, discRotation, discCenter, ctrlDragRef.current.startCenter, el?.clientWidth || 0, el?.clientHeight || 0)
       let dx = 0
       let dy = 0
       if (shift) {
