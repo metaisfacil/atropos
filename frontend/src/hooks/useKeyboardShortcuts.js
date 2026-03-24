@@ -124,7 +124,7 @@ export function useKeyboardShortcuts({
         }
 
         if (['w', 's', 'a', 'd', 'q', 'e'].includes(key)) {
-          if (!canSave) { showStatus('Apply a crop first before adjusting'); return }
+          if (!canSave) return
         }
 
         switch (key) {

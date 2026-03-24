@@ -4,7 +4,6 @@ import {
   LoadImage,
   DetectCorners,
   ResetCorners,
-  SkipCrop,
   NormalCrop,
   ResetNormal,
   OpenImageDialog,
@@ -13,12 +12,12 @@ import {
   ConfirmClose,
   GetCleanPreview,
   RestoreCornerOverlay,
-  RecropImage,
   CancelCornerDetect,
   CancelTouchup,
   LoadImageBytes,
   ResetDisc,
   ClearLines,
+  CancelLineProgress,
   SaveImage,
   RunPostSaveCommand,
   Undo,
@@ -30,7 +29,7 @@ export function useImageActions({
   cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
   setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setInputImageDims, setImgNatural,
   setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
-  setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscRotation, setDiscBgColor, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
+  setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscRotation, setDiscBgColor, setNormalRect, setNormalCropApplied, setCornersDetected,
   setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
   setUseTouchupTool, setUseStraightEdgeTool, setDragging, setDragStart, setDragCurrent,
   setConfirmDialog, setTouchupStrokes,
@@ -61,7 +60,7 @@ export function useImageActions({
   useEffect(() => { modeRef.current = mode }, [mode])
   useEffect(() => { loadingRef.current = loading }, [loading])
 
-  // ── Shared mode/image state reset (used by loadFile and handleRecrop) ────────
+  // ── Shared mode/image state reset (used by loadFile) ─────────────────────────
   const resetImageState = () => {
     setCornerState(s => ({ ...s, cornerCount: 0 }))
     setLinesDone(0)
@@ -69,7 +68,6 @@ export function useImageActions({
     setDiscActive(false)
     setNormalRect(null)
     setNormalCropApplied(false)
-    setCropSkipped(false)
     setCornersDetected(false)
     lastDetectSettings.current = null
     cornerEntryRef.current = null
@@ -372,69 +370,6 @@ export function useImageActions({
     }
   }
 
-  // ── Skip crop ─────────────────────────────────────────────────────────────
-  const handleSkipCrop = async () => {
-    setLoading(true)
-    showStatus('Skipping crop…')
-    try {
-      const result = await SkipCrop()
-      if (result?.preview) setPreview(result.preview)
-      if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
-      if (mode === 'corner') {
-        setCornerState(s => ({ ...s, cornerCount: 4 }))
-        setDetectedCornerPts([])
-        setSelectedCornerPts([])
-      } else if (mode === 'disc') {
-        setDiscActive(true)
-        setDragging(false)
-        setDragStart(null)
-        setDragCurrent(null)
-      } else if (mode === 'line') {
-        setLinesProcessed(true)
-      } else if (mode === 'normal') {
-        setNormalCropApplied(true)
-        setNormalRect(null)
-      }
-      setCropSkipped(true)
-      markUnsavedChanges()
-      showStatus(result?.message || 'Crop skipped')
-    } catch (err) {
-      console.error('SkipCrop error:', err)
-      showError(err)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // ── Re-crop ───────────────────────────────────────────────────────────────
-  const handleRecrop = () => {
-    setConfirmDialog({
-      message: 'Re-crop will use the current output as a new source image, resetting all crop and adjustment state. Continue?',
-      onConfirm: async () => {
-        CancelTouchup()
-        setConfirmDialog(null)
-        setLoading(true)
-        showStatus('Re-cropping…')
-        try {
-          const result = await RecropImage()
-          setFitWidth(0)
-          setPreview(result.preview)
-          setRealImageDims({ w: result.width, h: result.height })
-          if (setInputImageDims) setInputImageDims({ w: result.width, h: result.height })
-          setImageMeta({ format: '', dpiX: 0, dpiY: 0 })
-          resetImageState()
-          markUnsavedChanges()
-          showStatus(`Re-cropping from ${result.width}×${result.height} image`)
-        } catch (err) {
-          console.error('RecropImage error:', err)
-          showError(err)
-        } finally {
-          setLoading(false)
-        }
-      },
-    })
-  }
-
   // ── Mode-specific reset handlers ──────────────────────────────────────────
   const handleResetCorners = async () => {
     CancelTouchup()
@@ -448,7 +383,6 @@ export function useImageActions({
       setDetectedCornerPts(result.corners || [])
       setSelectedCornerPts([])
       setCornerState(s => ({ ...s, cornerCount: 0 }))
-      setCropSkipped(false)
       setUseTouchupTool(false)
       markUnsavedChanges()
     } catch (err) {
@@ -472,7 +406,6 @@ export function useImageActions({
       setDiscRadius(0)
       setDiscRotation(0)
       setDiscBgColor({ r: 255, g: 255, b: 255 })
-      setCropSkipped(false)
       setUseTouchupTool(false)
       setUseStraightEdgeTool(false)
       setDragging(false)
@@ -497,7 +430,6 @@ export function useImageActions({
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
       setNormalRect(null)
       setNormalCropApplied(false)
-      setCropSkipped(false)
       setUseTouchupTool(false)
       markUnsavedChanges()
       showStatus(result?.message || 'Normal crop reset')
@@ -537,7 +469,6 @@ export function useImageActions({
       setLinesDone(0)
       setLines([])
       setLinesProcessed(false)
-      setCropSkipped(false)
       setUseTouchupTool(false)
       markUnsavedChanges()
       if (result?.preview) setPreview(result.preview)
@@ -567,24 +498,20 @@ export function useImageActions({
         if (mode === 'corner' && cornerState.cornerCount >= 4) {
           setCornerState(s => ({ ...s, cornerCount: 0 }))
           setSelectedCornerPts([])
-          setCropSkipped(false)
           setUseTouchupTool(false)
         } else if (mode === 'disc' && discActive) {
           setDiscActive(false)
           setDragging(false)
           setDragStart(null)
           setDragCurrent(null)
-          setCropSkipped(false)
           setUseTouchupTool(false)
           setUseStraightEdgeTool(false)
         } else if (mode === 'line' && linesProcessed) {
           setLinesProcessed(false)
-          setCropSkipped(false)
           setUseTouchupTool(false)
         } else if (mode === 'normal' && normalCropApplied) {
           setNormalCropApplied(false)
           setNormalRect(null)
-          setCropSkipped(false)
           setUseTouchupTool(false)
         }
         setBlackPoint(0)
@@ -694,57 +621,16 @@ export function useImageActions({
   }, [unsavedChanges, handleSaveImage])
 
   // ── Mode switch ───────────────────────────────────────────────────────────
-  // Mode switch behaviour:
-  // - Resets mode-specific frontend state and calls the corresponding
-  //   backend Reset* method (ResetCorners, ResetDisc, ClearLines, ResetNormal).
-  // - When switching to `corner`, attempts cached restoration via
-  //   `RestoreCornerOverlay` if the detection settings match; otherwise
-  //   optionally runs `DetectCorners` (when `autoDetectOnModeSwitch`), or
-  //   falls back to `GetCleanPreview` to refresh the preview and `realImageDims`.
-  // - Always cancels any in-flight touchup and disables transient tools.
-  // See the function implementation below for exact ordering and guards.
-  /*
-    Pseudocode summary — onClick (mode button):
-
-    if leaving 'corner':
-      ResetCorners()              ← clears selectedCorners + warpedImage
-      setCornersDetected(false)
-      setCornerState({...cornerCount: 0})
-      setCropSkipped(false)
-
-    if leaving 'disc' && discActive:
-      ResetDisc()                 ← clears all disc state + warpedImage
-      setDiscActive(false)
-      setCropSkipped(false)
-
-    if leaving 'line':
-      ClearLines()                ← clears lines + warpedImage
-      setLinesDone(0), setLines([]), setLinesProcessed(false)
-      setCropSkipped(false)
-
-    if leaving 'normal':
-      ResetNormal()               ← clears warpedImage
-      setNormalRect(null), setNormalCropApplied(false)
-      setCropSkipped(false)
-
-    if arriving at 'corner' && lastDetectSettings matches current settings:
-      RestoreCornerOverlay({dotRadius})   ← re-render cached corners
-      setFitWidth(min(container.w, container.h * res.w/res.h))
-      setPreview, setRealImageDims
-      setCornersDetected(true)
-      setMode('corner'); return           ← early return, skip detection / GetCleanPreview
-
-    if arriving at 'corner' && autoDetectOnModeSwitch:
-      setLoading(true)
-      DetectCorners(autoCornerParams ? suggestedCornerParams : {})
-      setLoading(false)
-      setMode('corner'); return           ← early return, skip GetCleanPreview
-
-    setFitWidth(min(container.w, container.h * res.w/res.h))
-    GetCleanPreview()                       ← returns currentImage (warpedImage now nil)
-    setPreview, setRealImageDims
-    setMode(m)
-  */
+  // Clears mode-specific frontend state without resetting any committed crop.
+  // When a crop has been committed in the current mode (cornerCount>=4,
+  // discActive, linesProcessed, normalCropApplied), warpedImage is preserved so
+  // the user can continue editing (e.g. apply adjustments or crop again in a
+  // different mode) without losing prior work.
+  //
+  // When switching to `corner`, attempts cached restoration via
+  // `RestoreCornerOverlay` if detection settings match; otherwise optionally
+  // runs `DetectCorners` (when `autoDetectOnModeSwitch`), or falls back to
+  // `GetCleanPreview` which returns the current working image.
   const handleModeSwitch = async (m) => {
     if (m === mode) return
     setUseTouchupTool(false)
@@ -753,13 +639,14 @@ export function useImageActions({
     if (imageLoaded) {
       CancelTouchup()
       try {
-        let leavePreview = null
         if (mode === 'corner') {
+          const cropCommitted = cornerState.cornerCount >= 4
           detectGenRef.current++
           CancelCornerDetect()
           showStatus('')
           setLoading(false)
-          if (cornerEntryRef.current) {
+          // Only restore the pre-detection preview if no warp was committed
+          if (!cropCommitted && cornerEntryRef.current) {
             const { preview, width, height } = cornerEntryRef.current
             setPreview(preview)
             if (width && height) {
@@ -767,27 +654,39 @@ export function useImageActions({
               const c = canvasRef.current
               if (c) setFitWidth(Math.min(c.clientWidth, c.clientHeight * width / height))
             }
-            cornerEntryRef.current = null
           }
+          cornerEntryRef.current = null
+          // If a warp was committed, the detect settings are stale (they were
+          // for the pre-warp image); clear them so re-entering corner mode
+          // runs fresh detection on the warped result.
+          if (cropCommitted) lastDetectSettings.current = null
           setCornerState(s => ({ ...s, cornerCount: 0 }))
           setCornersDetected(false)
           setDetectedCornerPts([])
           setSelectedCornerPts([])
-          setCropSkipped(false)
-          leavePreview = await ResetCorners()
-        } else if (mode === 'disc' && discActive) {
-          await ResetDisc(); setDiscActive(false); setCropSkipped(false)
+          // When no crop committed, call ResetCorners to clean up selectedCorners
+          // on the backend and get the currentImage preview.
+          if (!cropCommitted) await ResetCorners()
+        } else if (mode === 'disc') {
+          if (discActive) {
+            // Disc crop committed; preserve warpedImage, just clear UI state
+            setDiscActive(false)
+            setDiscNoMaskPreview(null)
+            setDragging(false)
+            setDragStart(null)
+            setDragCurrent(null)
+          }
+          // If !discActive: no committed crop, no backend state to clean up
         } else if (mode === 'line') {
-          await ClearLines()
+          // CancelLineProgress clears a.lines without touching warpedImage
+          CancelLineProgress()
           setLinesDone(0)
           setLines([])
           setLinesProcessed(false)
-          setCropSkipped(false)
         } else if (mode === 'normal') {
-          await ResetNormal()
+          // normalRect is frontend-only; no backend state to clean up
           setNormalRect(null)
           setNormalCropApplied(false)
-          setCropSkipped(false)
         }
 
         if (m === 'corner' && lastDetectSettings.current) {
@@ -836,7 +735,9 @@ export function useImageActions({
           return
         }
 
-        const res = leavePreview ?? await GetCleanPreview()
+        // GetCleanPreview returns workingImage() — warpedImage if a crop was committed,
+        // currentImage otherwise. This is the correct preview for the incoming mode.
+        const res = await GetCleanPreview()
         if (res?.preview) {
           const c = canvasRef.current
           if (c && res.width && res.height) {
@@ -861,8 +762,6 @@ export function useImageActions({
     handleLoadImage,
     handleDetectCorners,
     handleCompositorLoad,
-    handleSkipCrop,
-    handleRecrop,
     handleResetCorners,
     handleResetDisc,
     handleResetNormal,

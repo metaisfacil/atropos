@@ -157,6 +157,14 @@ func (a *App) ProcessLines() (*ProcessResult, error) {
 	return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy()}, nil
 }
 
+// CancelLineProgress clears any in-progress lines without disturbing a
+// committed warpedImage from a prior crop operation. Called when the user
+// switches away from line mode before processing lines.
+func (a *App) CancelLineProgress() {
+	a.logf("CancelLineProgress")
+	a.lines = nil
+}
+
 // ClearLines removes all drawn lines and restores the pre-line image.
 func (a *App) ClearLines() (*ProcessResult, error) {
 	a.logf("ClearLines")

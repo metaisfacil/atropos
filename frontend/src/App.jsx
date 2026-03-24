@@ -92,7 +92,6 @@ export default function App() {
   const [cornersDetected, setCornersDetected] = useState(false)
   const [detectedCornerPts, setDetectedCornerPts] = useState([])
   const [selectedCornerPts, setSelectedCornerPts] = useState([])
-  const [cropSkipped, setCropSkipped]     = useState(false)
 
   // ── Disc mode ─────────────────────────────────────────────────────────────
   const [featherSize, setFeatherSize] = useState(15)
@@ -181,8 +180,6 @@ export default function App() {
     saving,
     handleLoadImage,
     handleDetectCorners,
-    handleSkipCrop,
-    handleRecrop,
     handleResetCorners,
     handleResetDisc,
     handleResetNormal,
@@ -198,7 +195,7 @@ export default function App() {
     cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
     setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setInputImageDims, setImgNatural,
     setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
-    setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
+    setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setNormalCropApplied, setCornersDetected,
     setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
     setUseTouchupTool, setUseStraightEdgeTool, setDragging, setDragStart, setDragCurrent,
     setConfirmDialog, setTouchupStrokes,
@@ -234,7 +231,7 @@ export default function App() {
     setPreview, setFeatherSize, setLoading, setRealImageDims,
     setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setDiscRotation,
     displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, handleLoadImage,
-    canSave: imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive),
+    canSave: imageLoaded,
     normalRect, handleNormalCrop, handleUndo,
     unsavedChanges, setUnsavedChanges,
     confirmClose: async () => {
@@ -293,7 +290,6 @@ export default function App() {
                 state={cornerState}        setState={setCornerState}
                 dotRadius={dotRadius}      setDotRadius={setDotRadius}
                 customCorner={customCorner} setCustomCorner={setCustomCorner}
-                disabled={cropSkipped}
               />
             </div>
 
@@ -305,7 +301,6 @@ export default function App() {
                 discCutoutPercent={discCutoutPercent}
                 setDiscCutoutPercent={setDiscCutoutPercent}
                 setPreview={setPreview}
-                disabled={cropSkipped}
               />
             </div>
 
@@ -325,7 +320,7 @@ export default function App() {
             <div className="sidebar-actions">
               {mode === 'corner' && (
                 <DelayedHint hint="Run corner detection, then click 4 corners to apply the perspective crop.">
-                  <button className="primary" onClick={handleDetectCorners} disabled={!imageLoaded || loading || cropSkipped}>
+                  <button className="primary" onClick={handleDetectCorners} disabled={!imageLoaded || loading}>
                     Detect
                   </button>
                 </DelayedHint>
@@ -337,46 +332,27 @@ export default function App() {
                   </button>
                 </DelayedHint>
               )}
-              {((mode === 'corner' && cornerState.cornerCount < 4) ||
-                (mode === 'disc'   && !discActive) ||
-                (mode === 'line'   && !linesProcessed) ||
-                (mode === 'normal' && !normalCropApplied)) && (
-                <DelayedHint hint="Skip the cropping step and proceed to adjustments/touch-up. (You can re-crop later.)">
-                  <button className="skip-crop-btn" onClick={handleSkipCrop} disabled={!imageLoaded || loading}>
-                    Skip crop
-                  </button>
-                </DelayedHint>
-              )}
-              {((mode === 'corner' && cornerState.cornerCount > 0) ||
+              {imageLoaded && (
+                unsavedChanges ||
+                (mode === 'corner' && cornerState.cornerCount > 0) ||
                 (mode === 'disc'   && discActive) ||
                 (mode === 'line'   && (linesDone > 0 || linesProcessed)) ||
-                (mode === 'normal' && (normalRect !== null || normalCropApplied))) && (
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  {((mode === 'corner' && cornerState.cornerCount === 4) ||
-                    (mode === 'disc'   && discActive) ||
-                    (mode === 'line'   && linesProcessed) ||
-                    (mode === 'normal' && normalCropApplied)) && (
-                    <DelayedHint hint="Promote the current output to be the new source image and restart cropping.">
-                      <button className="recrop-btn" onClick={handleRecrop} disabled={!imageLoaded || loading}>
-                        Re-crop
-                      </button>
-                    </DelayedHint>
-                  )}
-                  <DelayedHint hint="Reset this mode's crop/selection and clear the current warp result.">
-                    <button
-                      className="reset-btn-danger"
-                      disabled={loading}
-                      onClick={
-                        mode === 'corner' ? handleResetCorners :
-                        mode === 'disc'   ? handleResetDisc    :
-                        mode === 'normal' ? handleResetNormal  :
-                                            handleClearLines
-                      }
-                    >
-                      Reset{mode === 'corner' && !cropSkipped ? ` (${cornerState.cornerCount}/4)` : ''}
-                    </button>
-                  </DelayedHint>
-                </div>
+                (mode === 'normal' && (normalRect !== null || normalCropApplied))
+              ) && (
+                <DelayedHint hint="Reset this mode's crop/selection and clear the current warp result.">
+                  <button
+                    className="reset-btn-danger"
+                    disabled={loading}
+                    onClick={
+                      mode === 'corner' ? handleResetCorners :
+                      mode === 'disc'   ? handleResetDisc    :
+                      mode === 'normal' ? handleResetNormal  :
+                                          handleClearLines
+                    }
+                  >
+                    Reset{mode === 'corner' ? ` (${cornerState.cornerCount}/4)` : ''}
+                  </button>
+                </DelayedHint>
               )}
             </div>
 
@@ -392,12 +368,7 @@ export default function App() {
             setRealImageDims={setRealImageDims}
             useStretchPreprocess={useStretchPreprocess}
             setUseStretchPreprocess={setUseStretchPreprocess}
-            postCropAvailable={
-              (mode === 'corner' && cornerState.cornerCount === 4) ||
-              (mode === 'line'   && linesProcessed) ||
-              (mode === 'disc'   && discActive) ||
-              (mode === 'normal' && normalCropApplied)
-            }
+            postCropAvailable={imageLoaded}
             useTouchupTool={useTouchupTool}
             setUseTouchupTool={setUseTouchupTool}
             touchupStrokes={touchupStrokes}
@@ -409,6 +380,7 @@ export default function App() {
             discActive={discActive}
             useStraightEdgeTool={useStraightEdgeTool}
             setUseStraightEdgeTool={setUseStraightEdgeTool}
+            setUnsavedChanges={setUnsavedChanges}
           />
 
           <ToolsPanel
@@ -420,7 +392,7 @@ export default function App() {
             shortcutsOpen={shortcutsOpen} setShortcutsOpen={setShortcutsOpen}
             mode={mode}
             discActive={discActive}
-            canSave={imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive)}
+            canSave={imageLoaded}
             imageLoaded={imageLoaded}
           />
           </div>  {/* end .sidebar-bottom-scroll */}
@@ -432,7 +404,7 @@ export default function App() {
               </button>
             </DelayedHint>
             <DelayedHint hint="Save the currently cropped/adjusted image to disk.">
-              <button onClick={handleSaveImage} className="save-btn" disabled={loading || !(imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive))}>
+              <button onClick={handleSaveImage} className="save-btn" disabled={loading || !imageLoaded}>
                 Save image
               </button>
             </DelayedHint>

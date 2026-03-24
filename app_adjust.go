@@ -152,17 +152,18 @@ func (a *App) Undo() (*ProcessResult, error) {
 	}, nil
 }
 
-// Crop removes pixels from the specified edge of the warped image.
+// Crop removes pixels from the specified edge of the working image.
 func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
 	a.logf("Crop: direction=%q", req.Direction)
-	if a.warpedImage == nil {
-		const msg = "Crop: no warped image"
+	img := a.workingImage()
+	if img == nil {
+		const msg = "Crop: no image loaded"
 		a.logf(msg)
 		return nil, fmt.Errorf(msg)
 	}
 	a.saveUndo()
 
-	b := a.warpedImage.Bounds()
+	b := img.Bounds()
 	r := b
 
 	switch req.Direction {
@@ -188,7 +189,7 @@ func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
 		}
 	}
 
-	a.warpedImage = subImage(a.warpedImage, r)
+	a.warpedImage = subImage(img, r)
 
 	preview, err := imageToBase64(a.warpedImage)
 	if err != nil {
@@ -198,17 +199,18 @@ func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
 	return &ProcessResult{Preview: preview, Width: nb.Dx(), Height: nb.Dy()}, nil
 }
 
-// Rotate applies a 90-degree rotation to the warped image.
+// Rotate applies a 90-degree rotation to the working image.
 func (a *App) Rotate(req RotateRequest) (*ProcessResult, error) {
 	a.logf("Rotate: flipCode=%d", req.FlipCode)
-	if a.warpedImage == nil {
-		const msg = "Rotate: no warped image"
+	img := a.workingImage()
+	if img == nil {
+		const msg = "Rotate: no image loaded"
 		a.logf(msg)
 		return nil, fmt.Errorf(msg)
 	}
 	a.saveUndo()
 
-	a.warpedImage = rotate90(a.warpedImage, req.FlipCode)
+	a.warpedImage = rotate90(img, req.FlipCode)
 
 	preview, err := imageToBase64(a.warpedImage)
 	if err != nil {
@@ -356,13 +358,12 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 // qualify as near-white or near-black.
 func (a *App) TrimBorders() (*ProcessResult, error) {
 	a.logf("TrimBorders")
-	if a.warpedImage == nil {
-		const msg = "TrimBorders: no processed image"
+	img := a.workingImage()
+	if img == nil {
+		const msg = "TrimBorders: no image loaded"
 		a.logf(msg)
 		return nil, fmt.Errorf(msg)
 	}
-
-	img := a.warpedImage
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 

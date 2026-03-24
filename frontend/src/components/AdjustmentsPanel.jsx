@@ -34,6 +34,7 @@ export default function AdjustmentsPanel({
   setUseStraightEdgeTool,
   realImageDims,
   setRealImageDims,
+  setUnsavedChanges,
 }) {
   const applyTrimBorders = async () => {
     if (!imageLoaded) return
@@ -42,6 +43,7 @@ export default function AdjustmentsPanel({
       const result = await TrimBorders()
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+      if (setUnsavedChanges) setUnsavedChanges(true)
     } catch (err) {
       console.error('TrimBorders error:', err)
     } finally {
@@ -56,11 +58,11 @@ export default function AdjustmentsPanel({
     try {
       const result = await AutoContrast()
       if (result?.preview) setPreview(result.preview)
-      // AutoContrast returns a message like "Auto Contrast applied (black=12, white=243)".
       if (typeof result?.black === 'number' && typeof result?.white === 'number') {
         setBlackPoint(result.black)
         setWhitePoint(result.white)
       }
+      if (setUnsavedChanges) setUnsavedChanges(true)
     } catch (err) {
       console.error('AutoContrast error:', err)
     } finally {
@@ -78,6 +80,7 @@ export default function AdjustmentsPanel({
       const result = await ResizeImage({ width, height })
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+      if (setUnsavedChanges) setUnsavedChanges(true)
     } catch (err) {
       console.error('ResizeImage error:', err)
     } finally {
@@ -91,6 +94,7 @@ export default function AdjustmentsPanel({
     try {
       const result = await SetLevels({ black: bp, white: wp })
       if (result?.preview) setPreview(result.preview)
+      if (setUnsavedChanges) setUnsavedChanges(true)
     } catch (err) {
       console.error('SetLevels error:', err)
     } finally {
