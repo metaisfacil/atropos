@@ -30,7 +30,7 @@ export function useImageActions({
   cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
   setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setInputImageDims, setImgNatural,
   setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
-  setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
+  setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscRotation, setDiscBgColor, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
   setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
   setUseTouchupTool, setUseStraightEdgeTool, setDragging, setDragStart, setDragCurrent,
   setConfirmDialog, setTouchupStrokes,
@@ -85,6 +85,7 @@ export function useImageActions({
     setDiscNoMaskPreview(null)
     setDiscCenter(null)
     setDiscRadius(0)
+    setDiscRotation(0)
     setDiscBgColor({ r: 255, g: 255, b: 255 })
   }
 

@@ -393,7 +393,7 @@ export function useMouseHandlers({
             setDiscCenter({ x: result.discCenterX, y: result.discCenterY })
           }
           if (result?.discRadius !== undefined) setDiscRadius(result.discRadius)
-          if (result?.discRotation !== undefined) setDiscRotation(result.discRotation)
+          setDiscRotation(result?.discRotation ?? discRotation)
           if (result?.discBgR !== undefined) {
             setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
           }
@@ -465,7 +465,7 @@ export function useMouseHandlers({
         const result = await DrawDisc({ centerX: end.x, centerY: end.y, radius })
         setPreview(result.preview)
         if (result?.unmaskedPreview) setDiscNoMaskPreview(result.unmaskedPreview)
-        if (result?.discRotation !== undefined) setDiscRotation(result.discRotation)
+        setDiscRotation(result?.discRotation ?? 0)
         setDiscCenter({ x: end.x, y: end.y })
         setDiscRadius(radius)
         if (result?.discBgR !== undefined) {
