@@ -576,9 +576,9 @@ func stitchRender(imgs []*image.NRGBA, Hs []stitchH, offsetX, offsetY float64, o
 					}
 					if wSum > 0 {
 						out.SetNRGBA(ox, oy, color.NRGBA{
-							R: clampByte(int(rSum / wSum + 0.5)),
-							G: clampByte(int(gSum / wSum + 0.5)),
-							B: clampByte(int(bSum / wSum + 0.5)),
+							R: clampByte(int(rSum/wSum + 0.5)),
+							G: clampByte(int(gSum/wSum + 0.5)),
+							B: clampByte(int(bSum/wSum + 0.5)),
 							A: 255,
 						})
 					}
@@ -618,4 +618,3 @@ func stitchBilinear(img *image.NRGBA, x, y float64) (r, g, b float64) {
 	b = w00*float64(c00.B) + w10*float64(c10.B) + w01*float64(c01.B) + w11*float64(c11.B)
 	return
 }
-
