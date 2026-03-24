@@ -1,0 +1,10 @@
+{
+  "name": "atropos",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test:backend": "go test ./...",
+    "test:frontend": "cd frontend && npm test -- --run",
+    "test:all": "npm run test:backend && npm run test:frontend"
+  }
+}
