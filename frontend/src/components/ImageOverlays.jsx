@@ -2,6 +2,8 @@ import React from 'react'
 
 export default function ImageOverlays({
   realImageDims,
+  fitWidth,
+  zoom,
   mode,
   dragging, dragStart, dragCurrent,
   useTouchupTool, touchupStrokes, brushSize,
@@ -65,27 +67,25 @@ export default function ImageOverlays({
         )
        })()}
       {mode === 'corner' && (detectedCornerPts.length > 0 || selectedCornerPts.length > 0) && (() => {
+        // Compute display-space scale directly to avoid SVG viewBox aspect-ratio mismatch
+        const displayScale = realImageDims.w > 0 ? (fitWidth * zoom) / realImageDims.w : 1
         const referenceSize = 1600 // base image size for slider values
         const minDim = Math.min(realImageDims.w, realImageDims.h)
-        const scale = minDim > 0 ? minDim / referenceSize : 1
-        const scaledDotRadius = Math.max(2, Math.round(dotRadius * scale))
-        const scaledSelectedRadius = Math.max(scaledDotRadius * 1.5, scaledDotRadius + 4)
+        const imgScale = minDim > 0 ? minDim / referenceSize : 1
+        const dotR = Math.max(2, Math.round(dotRadius * imgScale)) * displayScale
+        const selectedR = Math.max(dotR * 1.5, dotR + 4)
 
         return (
           <svg
-            viewBox={`0 0 ${realImageDims.w} ${realImageDims.h}`}
-            preserveAspectRatio="none"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6 }}
           >
             {detectedCornerPts.map((pt, i) => (
-              <circle key={`d${i}`} cx={pt.X} cy={pt.Y} r={scaledDotRadius}
-                fill="rgba(255,0,0,0.6)" stroke="red" strokeWidth="1"
-                vectorEffect="non-scaling-stroke" />
+              <circle key={`d${i}`} cx={pt.X * displayScale} cy={pt.Y * displayScale} r={dotR}
+                fill="rgba(255,0,0,0.6)" stroke="red" strokeWidth="1" />
             ))}
             {selectedCornerPts.map((pt, i) => (
-              <circle key={`s${i}`} cx={pt.X} cy={pt.Y} r={scaledSelectedRadius}
-                fill="rgba(0,255,0,0.6)" stroke="lime" strokeWidth="2"
-                vectorEffect="non-scaling-stroke" />
+              <circle key={`s${i}`} cx={pt.X * displayScale} cy={pt.Y * displayScale} r={selectedR}
+                fill="rgba(0,255,0,0.6)" stroke="lime" strokeWidth="2" />
             ))}
           </svg>
         )
