@@ -73,9 +73,9 @@ export default function ConfirmationModal({
         </div>
 
         <div className="options-footer" style={{ gap: '10px' }}>
-          <button className="modal-cancel-btn" onClick={onCancel}>{cancelText}</button>
-          <button className="options-ok-btn recrop-btn" onClick={onNoAction}>{noText}</button>
-          <button className="options-ok-btn recrop-btn" onClick={onYesAction}>{yesText}</button>
+          <button className="options-ok-btn recrop-btn" onClick={onYesAction} style={{ flex: 1 }}>{yesText}</button>
+          <button className="options-ok-btn recrop-btn" onClick={onNoAction} style={{ flex: 1 }}>{noText}</button>
+          <button className="modal-cancel-btn" onClick={onCancel} style={{ flex: 1 }}>{cancelText}</button>
         </div>
       </div>
     </div>
