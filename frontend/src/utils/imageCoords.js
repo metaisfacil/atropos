@@ -1,18 +1,68 @@
-export function displayToImage(dispX, dispY, realImageDims, clientWidth, clientHeight) {
-  if (!realImageDims || realImageDims.w <= 0 || realImageDims.h <= 0) return { x: 0, y: 0 }
-  if (clientWidth <= 0 || clientHeight <= 0) return { x: 0, y: 0 }
+import { addDebugLog, initFrontendDebugLogAPI } from './debugLogger'
+
+initFrontendDebugLogAPI()
+
+export function getDisplayScale(realImageDims, clientWidth, clientHeight, naturalImageDims = null) {
+  if (!realImageDims || realImageDims.w <= 0 || realImageDims.h <= 0) return null
+  if (clientWidth <= 0 || clientHeight <= 0) return null
+
+  const source = (naturalImageDims && naturalImageDims.w > 0 && naturalImageDims.h > 0)
+    ? naturalImageDims
+    : realImageDims
+
   return {
-    x: Math.round(dispX * (realImageDims.w / clientWidth)),
-    y: Math.round(dispY * (realImageDims.h / clientHeight)),
+    scaleX: source.w / clientWidth,
+    scaleY: source.h / clientHeight,
   }
 }
 
-export function computeDiscShift(screenDx, screenDy, realImageDims, discRadius, discRotation, discCenter, ctrlStartCenter, clientWidth, clientHeight) {
+export function displayToImage(dispX, dispY, realImageDims, clientWidth, clientHeight, naturalImageDims = null) {
+  if (!realImageDims || realImageDims.w <= 0 || realImageDims.h <= 0) return { x: 0, y: 0 }
+  if (clientWidth <= 0 || clientHeight <= 0) return { x: 0, y: 0 }
+
+  const scale = getDisplayScale(realImageDims, clientWidth, clientHeight, naturalImageDims)
+  if (!scale) return { x: 0, y: 0 }
+
+  return {
+    x: Math.round(dispX * scale.scaleX),
+    y: Math.round(dispY * scale.scaleY),
+  }
+}
+
+export function computeDiscShift(
+  screenDx,
+  screenDy,
+  realImageDims,
+  discRadius,
+  discRotation,
+  discCenter,
+  ctrlStartCenter,
+  clientWidth,
+  clientHeight,
+  naturalImageDims = null,
+) {
+  // Core invariants:
+  //  - `realImageDims` is full source image dims (used for center/clamping boundaries)
+  //  - `naturalImageDims` is display image dims (used for live-scale conversion during disc drag)
+  //  - `screenDx/screenDy` are pointer movement in CSS pixels at current viewport
+  //  - `discRotation` is the current disc rotation angle in degrees
+  //  - `ctrlStartCenter` is the center where the current ctrl-drag began
+  //  - Returned `dx/dy` are integer image-space shifts for backend ShiftDisc
+  //  - Returned `liveDx/liveDy` are display-space preview offsets for immediate drag UX
+
+  // DON’T use realImageDims for live scale in disc mode; pass naturalImageDims explicitly.
+  // Disc mode may display a cropped or transformed preview image that has different
+  // pixel dimensions from the full source image, so scale must be computed from
+  // the natural dimensions of the displayed img element when available.
+
   if (!realImageDims || realImageDims.w <= 0 || realImageDims.h <= 0 || discRadius <= 0) return null
   if (clientWidth <= 0 || clientHeight <= 0) return null
 
-  const scaleX = realImageDims.w / clientWidth
-  const scaleY = realImageDims.h / clientHeight
+  const scale = getDisplayScale(realImageDims, clientWidth, clientHeight, naturalImageDims)
+  if (!scale) return null
+
+  const scaleX = scale.scaleX
+  const scaleY = scale.scaleY
 
   const rotatedX = screenDx * scaleX
   const rotatedY = screenDy * scaleY
@@ -34,15 +84,38 @@ export function computeDiscShift(screenDx, screenDy, realImageDims, discRadius, 
   const appliedImgDx = clampedCenterX - startCenter.x
   const appliedImgDy = clampedCenterY - startCenter.y
 
-  const previewX = -(cos * appliedImgDx - sin * appliedImgDy)
-  const previewY = -(sin * appliedImgDx + cos * appliedImgDy)
+  const roundedImgDx = Math.round(appliedImgDx)
+  const roundedImgDy = Math.round(appliedImgDy)
+
+  const previewX = -(cos * roundedImgDx - sin * roundedImgDy)
+  const previewY = -(sin * roundedImgDx + cos * roundedImgDy)
+
   const liveDx = Math.round(previewX / scaleX)
   const liveDy = Math.round(previewY / scaleY)
 
-  return {
-    dx: Math.round(appliedImgDx),
-    dy: Math.round(appliedImgDy),
+  const result = {
+    dx: roundedImgDx,
+    dy: roundedImgDy,
     liveDx,
     liveDy,
   }
+
+  const expectedLiveDx = Math.round(previewX / scaleX)
+  const expectedLiveDy = Math.round(previewY / scaleY)
+
+  const message = {
+    screenDx, screenDy,
+    realImageDims, discRadius, discRotation, discCenter, ctrlStartCenter,
+    scaleX, scaleY, rotatedX, rotatedY, desiredImgDx, desiredImgDy,
+    appliedImgDx, appliedImgDy,
+    roundedImgDx, roundedImgDy,
+    liveDx, liveDy,
+    expectedLiveDx, expectedLiveDy,
+    match: liveDx === expectedLiveDx && liveDy === expectedLiveDy,
+  }
+
+  console.debug('computeDiscShift', message)
+  addDebugLog('computeDiscShift', message)
+
+  return result
 }

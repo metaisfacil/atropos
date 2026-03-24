@@ -26,6 +26,7 @@ describe('image coordinate helpers', () => {
       { x: 500, y: 500 },
       500,
       500,
+      { w: 1000, h: 1000 },
     )
     expect(result).not.toBeNull()
     expect(result.dx).toBeGreaterThanOrEqual(-100)
@@ -46,11 +47,86 @@ describe('image coordinate helpers', () => {
     )
 
     expect(result).not.toBeNull()
-    // With 90deg rotation, screen-movement right should become positive dy in image space.
+    // With 90deg rotation and scale 2, screen-movement right 10px becomes image-space dy=20.
     expect(result.dx).toBe(0)
     expect(result.dy).toBe(20)
-    // live preview is inverse of rotation transform and scaled back to display.
+    // live preview is inverse transform (image->display), so 20 image px becomes 10 screen px.
     expect(result.liveDx).toBe(10)
     expect(result.liveDy).toBeCloseTo(0)
+  })
+
+  it('computeDiscShift live offset corresponds to backend shift scale', () => {
+    const result = computeDiscShift(2, 0,
+      { w: 1000, h: 1000 },
+      100,
+      0,
+      { x: 500, y: 500 },
+      { x: 500, y: 500 },
+      500,
+      500,
+      { w: 1000, h: 1000 },
+    )
+
+    expect(result).not.toBeNull()
+    // screen drag 2px at scale 2 maps to image shift -4 and preview 2.
+    expect(result.dx).toBe(-4)
+    expect(result.dy).toBe(0)
+    expect(result.liveDx).toBe(2)
+    expect(result.liveDy).toBeCloseTo(0)
+  })
+
+  it('computeDiscShift uses natural display source dims for live scale in disc mode', () => {
+    // Real image is 2800x2764, preview natural is 784x776 (disc crop), so scale should be based on 784x776.
+    const result = computeDiscShift(1, 1,
+      { w: 2800, h: 2764 },
+      100,
+      0,
+      { x: 500, y: 500 },
+      { x: 500, y: 500 },
+      784,
+      776,
+      { w: 784, h: 776 },
+    )
+
+    expect(result).not.toBeNull()
+    // If using real dims here, scale would incorrectly be far larger.
+    expect(result.liveDx).toBeGreaterThanOrEqual(0)
+    expect(result.liveDy).toBeGreaterThanOrEqual(0)
+  })
+
+  it('computeDiscShift works for rotation + down-drag (regression sample)', () => {
+    const result = computeDiscShift(0, 2,
+      { w: 2800, h: 2764 },
+      377,
+      -37.5,
+      { x: 959, y: 1156 },
+      { x: 959, y: 1156 },
+      784,
+      784,
+    )
+
+    expect(result).not.toBeNull()
+    expect(result.dx).toBe(4)
+    expect(result.dy).toBe(-6)
+    expect(result.liveDx).toBe(0)
+    expect(result.liveDy).toBe(2)
+    expect(result).toHaveProperty('match', true)
+  })
+
+  it('computeDiscShift works for rotation + diagonal-down-drag (regression sample #2)', () => {
+    const result = computeDiscShift(-3, 53,
+      { w: 2800, h: 2764 },
+      675,
+      -30.3,
+      { x: 977, y: 1273 },
+      { x: 977, y: 1273 },
+      784,
+      784,
+    )
+
+    expect(result).not.toBeNull()
+    expect(result.liveDx).toBe(-3)
+    expect(result.liveDy).toBe(53)
+    expect(result).toHaveProperty('match', true)
   })
 })
