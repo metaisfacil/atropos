@@ -10,6 +10,10 @@ export function AutoContrast() {
   return window['go']['main']['App']['AutoContrast']();
 }
 
+export function CancelCornerDetect() {
+  return window['go']['main']['App']['CancelCornerDetect']();
+}
+
 export function CancelTouchup() {
   return window['go']['main']['App']['CancelTouchup']();
 }

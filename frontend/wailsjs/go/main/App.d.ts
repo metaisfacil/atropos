@@ -6,6 +6,8 @@ export function AddLine(arg1:main.LineAddRequest):Promise<main.ProcessResult>;
 
 export function AutoContrast():Promise<main.ProcessResult>;
 
+export function CancelCornerDetect():Promise<void>;
+
 export function CancelTouchup():Promise<void>;
 
 export function ClearLines():Promise<main.ProcessResult>;

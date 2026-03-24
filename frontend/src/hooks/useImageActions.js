@@ -14,6 +14,7 @@ import {
   GetCleanPreview,
   RestoreCornerOverlay,
   RecropImage,
+  CancelCornerDetect,
   CancelTouchup,
   LoadImageBytes,
   ResetDisc,
@@ -44,6 +45,8 @@ export function useImageActions({
   const modeRef            = useRef(mode)
   const lastDetectSettings      = useRef(null)
   const suggestedCornerParamsRef = useRef({})
+  const detectGenRef            = useRef(0)
+  const cornerEntryRef          = useRef(null) // { preview, width, height } captured on corner mode entry
 
   const markUnsavedChanges = () => {
     if (setUnsavedChanges) setUnsavedChanges(true)
@@ -69,6 +72,7 @@ export function useImageActions({
     setCropSkipped(false)
     setCornersDetected(false)
     lastDetectSettings.current = null
+    cornerEntryRef.current = null
     setLines([])
     setTouchupStrokes([])
     setUseTouchupTool(false)
@@ -86,19 +90,28 @@ export function useImageActions({
 
   // ── Core corner detector (private — used by loadFile and handleDetectCorners) ─
   const runDetectCorners = async (overrides = {}) => {
+    const gen = ++detectGenRef.current
     const maxCorners  = overrides.maxCorners  ?? cornerState.maxCorners
     const minDistance = overrides.minDistance ?? cornerState.minDistance
     showStatus('Detecting corners…')
-    const result = await DetectCorners({
-      maxCorners,
-      qualityLevel: cornerState.qualityLevel,
-      minDistance,
-      accentValue:  cornerState.accent,
-      dotRadius,
-      useStretch:      useStretchPreprocess,
-      stretchLow:      0.01,
-      stretchHigh:     0.99,
-    })
+    let result
+    try {
+      result = await DetectCorners({
+        maxCorners,
+        qualityLevel: cornerState.qualityLevel,
+        minDistance,
+        accentValue:  cornerState.accent,
+        dotRadius,
+        useStretch:      useStretchPreprocess,
+        stretchLow:      0.01,
+        stretchHigh:     0.99,
+      })
+    } catch (err) {
+      if (detectGenRef.current !== gen) { showStatus(''); return }  // cancelled by mode switch — discard silently
+      throw err
+    }
+    if (detectGenRef.current !== gen) { showStatus(''); return }
+    cornerEntryRef.current = { preview: result.preview, width: result.width, height: result.height }
     setPreview(result.preview)
     showStatus(result.message + ' — click 4 corners')
     if (result.width && result.height) setRealImageDims({ w: result.width, h: result.height })
@@ -735,16 +748,32 @@ export function useImageActions({
     if (m === mode) return
     setUseTouchupTool(false)
     setUseStraightEdgeTool(false)
+    setMode(m)
     if (imageLoaded) {
       CancelTouchup()
       try {
+        let leavePreview = null
         if (mode === 'corner') {
+          detectGenRef.current++
+          CancelCornerDetect()
+          showStatus('')
+          setLoading(false)
+          if (cornerEntryRef.current) {
+            const { preview, width, height } = cornerEntryRef.current
+            setPreview(preview)
+            if (width && height) {
+              setRealImageDims({ w: width, h: height })
+              const c = canvasRef.current
+              if (c) setFitWidth(Math.min(c.clientWidth, c.clientHeight * width / height))
+            }
+            cornerEntryRef.current = null
+          }
           setCornerState(s => ({ ...s, cornerCount: 0 }))
           setCornersDetected(false)
           setDetectedCornerPts([])
           setSelectedCornerPts([])
           setCropSkipped(false)
-          await ResetCorners()
+          leavePreview = await ResetCorners()
         } else if (mode === 'disc' && discActive) {
           await ResetDisc(); setDiscActive(false); setCropSkipped(false)
         } else if (mode === 'line') {
@@ -767,8 +796,13 @@ export function useImageActions({
               snap.minDistance === cornerState.minDistance &&
               snap.accent === cornerState.accent &&
               snap.useStretch === useStretchPreprocess) {
+            const restoreGen = detectGenRef.current
+            setLoading(true)
+            showStatus('Loading cached corners…')
             try {
               const res = await RestoreCornerOverlay({ dotRadius })
+              if (detectGenRef.current !== restoreGen) return
+              cornerEntryRef.current = { preview: res.preview, width: res.width, height: res.height }
               const c = canvasRef.current
               if (c && res.width && res.height) {
                 setFitWidth(Math.min(c.clientWidth, c.clientHeight * res.width / res.height))
@@ -781,10 +815,12 @@ export function useImageActions({
               setSelectedCornerPts([])
               setCornersDetected(true)
               setCornerState(s => ({ ...s, cornerCount: 0 }))
-              setMode(m)
+              showStatus(res.message || '')
               return
             } catch (_) {
               // RestoreCornerOverlay failed (e.g. stale cache) — fall through to GetCleanPreview
+            } finally {
+              setLoading(false)
             }
           }
         }
@@ -796,11 +832,10 @@ export function useImageActions({
           } finally {
             setLoading(false)
           }
-          setMode(m)
           return
         }
 
-        const res = await GetCleanPreview()
+        const res = leavePreview ?? await GetCleanPreview()
         if (res?.preview) {
           const c = canvasRef.current
           if (c && res.width && res.height) {
@@ -809,6 +844,7 @@ export function useImageActions({
             setFitWidth(0)
           }
           setPreview(res.preview)
+          if (m === 'corner') cornerEntryRef.current = { preview: res.preview, width: res.width, height: res.height }
         }
         if (res?.width && res?.height) setRealImageDims({ w: res.width, h: res.height })
       } catch (err) {
@@ -816,7 +852,6 @@ export function useImageActions({
         showError(err)
       }
     }
-    setMode(m)
   }
 
   return {
