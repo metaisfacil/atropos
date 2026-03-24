@@ -212,24 +212,20 @@ export default function App() {
   flushPendingSaveRef.current = flushPendingSave
 
   const {
-    handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave,
-    displayToImage,
+    handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave, displayToImage,
   } = useMouseHandlers({
     imageLoaded, loading, mode, dragging, dragStart, dragCurrent,
-    useTouchupTool, useStraightEdgeTool, discActive, linesProcessed,
-    touchupStrokes, cornerState, dotRadius, cornersDetected, customCorner, linesDone,
+    useTouchupTool, useStraightEdgeTool, discActive, linesProcessed, touchupStrokes,
+    cornerState, dotRadius, cornersDetected, customCorner, linesDone,
     realImageDims, discNoMaskPreview, discCenter, discRadius, discRotation,
     setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setPreview,
-    setDiscRotation,
-    setLoading, setZoom, setRealImageDims, setCornerState, setDetectedCornerPts,
-    setSelectedCornerPts, setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setLines, setLinesDone,
-    discLiveActive, setDiscLiveActive, discLiveTransform, setDiscLiveTransform,
-    setLinesProcessed, setUseStraightEdgeTool,
-    straightEdgeRemainsActive,
-    spaceDownRef, panDragRef, canvasRef, ctrlDragRef, shiftDragRef,
-    touchupDraggingRef, imgRef, lastResizeRef, mousePosRef,
-    commitTouchup, showStatus, showError,
-    setUnsavedChanges,
+    setDiscRotation, setLoading, setZoom, setRealImageDims, setCornerState,
+    setDetectedCornerPts, setSelectedCornerPts, setDiscActive, setDiscNoMaskPreview,
+    setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setLines, setLinesDone,
+    setDiscLiveActive, setDiscLiveTransform, setLinesProcessed, setUseStraightEdgeTool,
+    straightEdgeRemainsActive, spaceDownRef, panDragRef, canvasRef, ctrlDragRef,
+    shiftDragRef, touchupDraggingRef, imgRef, lastResizeRef, mousePosRef,
+    commitTouchup, showStatus, showError, setUnsavedChanges,
   })
 
   useKeyboardShortcuts({

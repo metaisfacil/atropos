@@ -88,8 +88,13 @@ endif
 setup: ensure-prereqs
 	cd frontend && npm install
 
+ifeq ($(OS),Windows_NT)
 dev:
-	wails dev -ldflags "$(LDFLAGS)"
+	set "ATROPOS_DEBUG=1" && wails dev -ldflags "$(LDFLAGS)"
+else
+dev:
+	ATROPOS_DEBUG=1 wails dev -ldflags "$(LDFLAGS)"
+endif
 
 frontend:
 	cd frontend && npm run build
