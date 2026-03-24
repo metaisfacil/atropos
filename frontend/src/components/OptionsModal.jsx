@@ -1,15 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import DelayedHint from './DelayedHint'
+import OptionsTabs from './OptionsTabs'
 
 const FADE_MS = 150
 
-// OptionsModal renders a modal dialog for configuring application options.
-// Props:
-//   open / onClose
-//   touchupBackend / setTouchupBackend  ('patchmatch' | 'iopaint')
-//   iopaintURL / setIopaintURL
-//   warpFillMode / setWarpFillMode  ('clamp' | 'fill' | 'outpaint')
-//   warpFillColor / setWarpFillColor  (CSS hex string)
 export default function OptionsModal({
   open,
   onClose,
@@ -40,14 +34,14 @@ export default function OptionsModal({
 }) {
   const dialogRef = useRef(null)
   const [mounted, setMounted] = useState(false)
-  const [shown, setShown]     = useState(false)
+  const [shown, setShown] = useState(false)
+  const [activeTab, setActiveTab] = useState('inpainting')
   const fadeOutTimer = useRef(null)
 
   useEffect(() => {
     if (open) {
       clearTimeout(fadeOutTimer.current)
       setMounted(true)
-      // one frame delay so the browser registers the initial opacity:0 before transitioning
       requestAnimationFrame(() => requestAnimationFrame(() => setShown(true)))
     } else {
       setShown(false)
@@ -56,34 +50,27 @@ export default function OptionsModal({
     return () => clearTimeout(fadeOutTimer.current)
   }, [open])
 
-  // Close on Escape key
   useEffect(() => {
     if (!open) return
-    const handler = (e) => { if (e.key === 'Escape') onClose() }
+    const handler = (e) => {
+      if (e.key === 'Escape') onClose()
+    }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [open, onClose])
 
   if (!mounted) return null
 
-  return (
-    <div className={`options-backdrop ${shown ? 'visible' : ''}`} onClick={onClose}>
-      <div
-        ref={dialogRef}
-        className="options-dialog"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Options"
-      >
-        <div className="options-header">
-          <span className="options-title">Options</span>
-          <button className="options-close" onClick={onClose} aria-label="Close">✕</button>
-        </div>
-
-        <div className="options-body">
+  const tabs = [
+    {
+      id: 'inpainting',
+      label: 'Inpainting',
+      content: (
+        <>
           <DelayedHint hint="The touch-up brush lets you paint over blemishes or unwanted areas. The backend controls how the masked region is filled in.">
-            <div className="options-section-title" tabIndex={0}>Touch-up backend</div>
+            <div className="options-section-title" tabIndex={0}>
+              Touch-up backend
+            </div>
           </DelayedHint>
 
           <DelayedHint hint="PatchMatch is a built-in content-aware fill. It samples nearby patches to reconstruct the masked area entirely on your CPU, no server or internet connection required.">
@@ -113,7 +100,9 @@ export default function OptionsModal({
           </DelayedHint>
 
           <div className={`options-iopaint-url ${touchupBackend === 'iopaint' ? 'visible' : ''}`}>
-            <label className="options-field-label" htmlFor="iopaint-url">IOPaint endpoint URL</label>
+            <label className="options-field-label" htmlFor="iopaint-url">
+              IOPaint endpoint URL
+            </label>
             <DelayedHint hint="Base URL of your running IOPaint server, e.g. by default, the app will make requests to /api/v1/inpaint at http://127.0.0.1:8086/.">
               <input
                 id="iopaint-url"
@@ -126,11 +115,18 @@ export default function OptionsModal({
               />
             </DelayedHint>
           </div>
-
-          <div className="options-divider" />
-
+        </>
+      ),
+    },
+    {
+      id: 'fill',
+      label: 'Fill & crop',
+      content: (
+        <>
           <DelayedHint hint="When the perspective crop extends beyond the scan boundary, this setting controls how those regions are handled.">
-            <div className="options-section-title" tabIndex={0}>Out-of-bounds fill</div>
+            <div className="options-section-title" tabIndex={0}>
+              Out-of-bounds fill
+            </div>
           </DelayedHint>
 
           <DelayedHint hint="Clamps source coordinates to the image boundary, repeating edge pixels into any out-of-bounds region. No region is ever left blank or transparent.">
@@ -160,7 +156,9 @@ export default function OptionsModal({
           </DelayedHint>
 
           <div className={`options-iopaint-url ${warpFillMode === 'fill' ? 'visible' : ''}`}>
-            <label className="options-field-label" htmlFor="warp-fill-color">Fill colour</label>
+            <label className="options-field-label" htmlFor="warp-fill-color">
+              Fill colour
+            </label>
             <DelayedHint hint="The colour used to fill regions outside the scan. White works well for most scanned documents.">
               <input
                 id="warp-fill-color"
@@ -184,11 +182,18 @@ export default function OptionsModal({
               Outpaint <span className="options-hint">(built-in PatchMatch)</span>
             </label>
           </DelayedHint>
-
-          <div className="options-divider" />
-
+        </>
+      ),
+    },
+    {
+      id: 'modes',
+      label: 'Modes',
+      content: (
+        <>
           <DelayedHint hint="Settings that apply when cropping in Disc mode.">
-            <div className="options-section-title" tabIndex={0}>Disc mode</div>
+            <div className="options-section-title" tabIndex={0}>
+              Disc mode
+            </div>
           </DelayedHint>
 
           <DelayedHint hint={"Punches a small centred hole (11% of the disc diameter) filled with the background colour, so the eyedropper can affect the spindle area in the middle of the disc.\r\n\r\nYou can also set the Cutout % slider to 0% for the same effect."}>
@@ -205,7 +210,9 @@ export default function OptionsModal({
           <div className="options-divider" />
 
           <DelayedHint hint="Settings for the corner detection mode.">
-            <div className="options-section-title" tabIndex={0}>Corner detection</div>
+            <div className="options-section-title" tabIndex={0}>
+              Corner detection
+            </div>
           </DelayedHint>
 
           <DelayedHint hint="When on, Min Distance and Max Corners are automatically set from image dimensions each time an image is loaded. You can still adjust them manually after loading.">
@@ -218,11 +225,18 @@ export default function OptionsModal({
               Auto-adjust parameters on load <span className="options-hint">(default: on)</span>
             </label>
           </DelayedHint>
-
-          <div className="options-divider" />
-
+        </>
+      ),
+    },
+    {
+      id: 'workflow',
+      label: 'Workflow',
+      content: (
+        <>
           <DelayedHint hint="Controls what happens automatically when you switch between modes.">
-            <div className="options-section-title" tabIndex={0}>After switching modes</div>
+            <div className="options-section-title" tabIndex={0}>
+              After switching modes
+            </div>
           </DelayedHint>
 
           <DelayedHint hint="When on, switching to Corner mode automatically runs corner detection on the loaded image, the same as pressing Detect manually.">
@@ -239,7 +253,9 @@ export default function OptionsModal({
           <div className="options-divider" />
 
           <DelayedHint hint="Controls what happens after you finish using a tool.">
-            <div className="options-section-title" tabIndex={0}>After use</div>
+            <div className="options-section-title" tabIndex={0}>
+              After use
+            </div>
           </DelayedHint>
 
           <DelayedHint hint="When on, the touch-up brush stays active after each stroke is committed, so you can immediately paint another area without re-enabling the tool.">
@@ -263,11 +279,18 @@ export default function OptionsModal({
               Straight edge remains active <span className="options-hint">(default: on)</span>
             </label>
           </DelayedHint>
-
-          <div className="options-divider" />
-
+        </>
+      ),
+    },
+    {
+      id: 'save',
+      label: 'Save',
+      content: (
+        <>
           <DelayedHint hint="Actions to perform automatically after a file is saved.">
-            <div className="options-section-title" tabIndex={0}>Post-save actions</div>
+            <div className="options-section-title" tabIndex={0}>
+              Post-save actions
+            </div>
           </DelayedHint>
 
           <DelayedHint hint="Run a program automatically after each save. Use {path} in the command as a placeholder for the saved image path.">
@@ -282,7 +305,9 @@ export default function OptionsModal({
           </DelayedHint>
 
           <div className={`options-iopaint-url ${postSaveEnabled ? 'visible' : ''}`}>
-            <label className="options-field-label" htmlFor="post-save-command">Command</label>
+            <label className="options-field-label" htmlFor="post-save-command">
+              Command
+            </label>
             <DelayedHint hint="Command to run after saving. Use {path} as a placeholder for the saved image path. The first token is the executable; the rest are arguments. Example: C:\tools\viewer.exe {path}">
               <input
                 id="post-save-command"
@@ -306,10 +331,40 @@ export default function OptionsModal({
               Close after save <span className="options-hint">(default: off)</span>
             </label>
           </DelayedHint>
+        </>
+      ),
+    },
+  ]
+
+  return (
+    <div className={`options-backdrop ${shown ? 'visible' : ''}`} onClick={onClose}>
+      <div
+        ref={dialogRef}
+        className="options-dialog"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Options"
+      >
+        <div className="options-header">
+          <span className="options-title">Options</span>
+          <button className="options-close" onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        </div>
+
+        <div className="options-body">
+          <OptionsTabs
+            tabs={tabs}
+            activeTab={activeTab}
+            onChange={setActiveTab}
+          />
         </div>
 
         <div className="options-footer">
-          <button className="options-ok-btn" onClick={onClose}>OK</button>
+          <button className="options-ok-btn" onClick={onClose}>
+            OK
+          </button>
         </div>
       </div>
     </div>
