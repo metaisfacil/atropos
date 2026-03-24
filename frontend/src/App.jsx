@@ -7,7 +7,7 @@ import DiscPanel        from './components/DiscPanel'
 import LinePanel        from './components/LinePanel'
 import AdjustmentsPanel from './components/AdjustmentsPanel'
 import ShortcutsPanel   from './components/ShortcutsPanel'
-import OptionsPanel     from './components/OptionsPanel'
+import OptionsModal     from './components/OptionsModal'
 import ToolsPanel       from './components/ToolsPanel'
 import CompositorModal  from './components/CompositorModal'
 import AboutModal       from './components/AboutModal'
@@ -468,7 +468,7 @@ export default function App() {
         cancelText={confirmDialog?.cancelText ?? 'Cancel'}
       />
 
-      <OptionsPanel
+      <OptionsModal
         open={optionsOpen}
         onClose={() => setOptionsOpen(false)}
         touchupBackend={touchupBackend}
