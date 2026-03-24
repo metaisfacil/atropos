@@ -20,9 +20,12 @@
   position: absolute;
   top: 0;
   right: -3px;
+  width: 6px;
   height: 100%;
   cursor: ew-resize;
   z-index: 10;
+  touch-action: none;
+  user-select: none;
 }
 
 .sidebar-resize-handle:hover {
