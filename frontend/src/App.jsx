@@ -534,6 +534,8 @@ export default function App() {
               />
               <ImageOverlays
                 realImageDims={realImageDims}
+                fitWidth={fitWidth}
+                zoom={zoom}
                 mode={mode}
                 dragging={dragging}
                 dragStart={dragStart}
