@@ -93,15 +93,17 @@ export function computeDiscShift(
   const liveDx = Math.round(previewX / scaleX)
   const liveDy = Math.round(previewY / scaleY)
 
+  const expectedLiveDx = Math.round(previewX / scaleX)
+  const expectedLiveDy = Math.round(previewY / scaleY)
+  const match = liveDx === expectedLiveDx && liveDy === expectedLiveDy
+
   const result = {
     dx: roundedImgDx,
     dy: roundedImgDy,
     liveDx,
     liveDy,
+    match,
   }
-
-  const expectedLiveDx = Math.round(previewX / scaleX)
-  const expectedLiveDy = Math.round(previewY / scaleY)
 
   const message = {
     screenDx, screenDy,
@@ -111,7 +113,7 @@ export function computeDiscShift(
     roundedImgDx, roundedImgDy,
     liveDx, liveDy,
     expectedLiveDx, expectedLiveDy,
-    match: liveDx === expectedLiveDx && liveDy === expectedLiveDy,
+    match,
   }
 
   return result
