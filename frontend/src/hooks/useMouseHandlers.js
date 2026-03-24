@@ -52,7 +52,10 @@ export function useMouseHandlers({
 
   const computeDiscShift = (screenDx, screenDy) => {
     const el = imgRef.current
-    if (!el || realImageDims.w <= 0 || realImageDims.h <= 0 || discRadius <= 0) return null
+    if (!el || realImageDims.w <= 0 || realImageDims.h <= 0 || discRadius <= 0) {
+      console.debug('computeDiscShift skipping: missing state', {screenDx, screenDy, realImageDims, discRadius})
+      return null
+    }
 
     // Use the <img> element's natural (intrinsic) pixel dimensions for the
     // scale factor.  After DrawDisc the displayed image is the disc crop
@@ -70,14 +73,14 @@ export function useMouseHandlers({
 
     // Map the pointer movement from display space into (possibly rotated)
     // disc-local image space, with inverted drag direction for working output.
-    const rotatedX = screenDx * scaleX
-    const rotatedY = screenDy * scaleY
     const angleRad = discRotation * Math.PI / 180
     const cos = Math.cos(angleRad)
     const sin = Math.sin(angleRad)
 
-    const desiredImgDx = -(rotatedX * cos + rotatedY * sin)
-    const desiredImgDy = -(-rotatedX * sin + rotatedY * cos)
+    // Use screen deltas directly in image-space to keep final backend shift proportional
+    // to the visual pointer movement, avoiding double-scale drift.
+    const desiredImgDx = -(screenDx * cos + screenDy * sin)
+    const desiredImgDy = -(-screenDx * sin + screenDy * cos)
 
     const startCenter = ctrlDragRef.current?.startCenter || discCenter || { x: 0, y: 0 }
     const minCenterX = discRadius
@@ -91,16 +94,29 @@ export function useMouseHandlers({
     const appliedImgDx = clampedCenterX - startCenter.x
     const appliedImgDy = clampedCenterY - startCenter.y
 
-    // Map applied image-space shift into screen-space (inverse drag) for live preview.
-    const previewX = -(cos * appliedImgDx - sin * appliedImgDy)
-    const previewY = -(sin * appliedImgDx + cos * appliedImgDy)
+    // Apply integer shift to match backend ShiftDisc behavior.
+    const roundedImgDx = Math.round(appliedImgDx)
+    const roundedImgDy = Math.round(appliedImgDy)
 
-    const liveDx = Math.round(previewX / scaleX)
-    const liveDy = Math.round(previewY / scaleY)
+    // Map the rounded image-space shift into screen-space (inverse drag) for live preview.
+    // The preview transformation should exactly match the dragged cursor movement
+    // in display coordinates, so that the final rendered output does not jump.
+    const liveDx = screenDx
+    const liveDy = screenDy
+
+    console.debug('computeDiscShift result', {
+      screenDx, screenDy,
+      realImageDims, discRadius, discRotation, discCenter,
+      scaleX, scaleY, desiredImgDx, desiredImgDy,
+      clampedCenterX, clampedCenterY,
+      appliedImgDx, appliedImgDy,
+      roundedImgDx, roundedImgDy,
+      liveDx, liveDy,
+    })
 
     return {
-      dx: Math.round(appliedImgDx),
-      dy: Math.round(appliedImgDy),
+      dx: roundedImgDx,
+      dy: roundedImgDy,
       liveDx,
       liveDy,
     }
@@ -268,7 +284,11 @@ export function useMouseHandlers({
       const screenDy = e.clientY - ctrlDragRef.current.startClientY
 
       const el = imgRef.current
-      const shift = computeDiscShiftHelper(screenDx, screenDy, realImageDims, discRadius, discRotation, discCenter, ctrlDragRef.current.startCenter, el?.clientWidth || 0, el?.clientHeight || 0)
+      // Use the live natural dimensions for scale in disc mode (preview image may be cropped),
+      // not the full source realImageDims.
+      // DON’T use realImageDims for live scale in disc mode; pass naturalImageDims explicitly.
+      const natural = { w: el?.naturalWidth || realImageDims.w, h: el?.naturalHeight || realImageDims.h }
+      const shift = computeDiscShiftHelper(screenDx, screenDy, realImageDims, discRadius, discRotation, discCenter, ctrlDragRef.current.startCenter, el?.clientWidth || 0, el?.clientHeight || 0, natural)
       if (shift) {
         setDiscLiveTransform(prev => ({ ...prev, dx: shift.liveDx, dy: shift.liveDy }))
       }
@@ -397,6 +417,7 @@ export function useMouseHandlers({
           if (result?.discBgR !== undefined) {
             setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
           }
+          console.debug('ShiftDisc applied', { result, discCenter, discRadius, discRotation })
         }
       } catch (err) {
         console.error('RotateDisc drag error:', err)
@@ -416,13 +437,18 @@ export function useMouseHandlers({
       const screenDy = e.clientY - ctrlDragRef.current.startClientY
 
       const el = imgRef.current
-      const shift = computeDiscShiftHelper(screenDx, screenDy, realImageDims, discRadius, discRotation, discCenter, ctrlDragRef.current.startCenter, el?.clientWidth || 0, el?.clientHeight || 0)
+      // Use the live natural dimensions for scale in disc mode (preview image may be cropped),
+      // not the full source realImageDims.
+      // DON’T use realImageDims for live scale in disc mode; pass naturalImageDims explicitly.
+      const natural = { w: el?.naturalWidth || realImageDims.w, h: el?.naturalHeight || realImageDims.h }
+      const shift = computeDiscShiftHelper(screenDx, screenDy, realImageDims, discRadius, discRotation, discCenter, ctrlDragRef.current.startCenter, el?.clientWidth || 0, el?.clientHeight || 0, natural)
       let dx = 0
       let dy = 0
       if (shift) {
         dx = shift.dx
         dy = shift.dy
       }
+      console.debug('Shift preview compute', {screenDx, screenDy, shift, ctrlDragRef: ctrlDragRef.current, discCenter, discRadius, discRotation})
 
       ctrlDragRef.current = null; ctrlDragBusy.current = false
       setLoading(true)
