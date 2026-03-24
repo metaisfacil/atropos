@@ -20,6 +20,9 @@ var assets embed.FS
 func main() {
 	// Parse flags: --debug, --corners, --disc, --lines, --normal, --post-save, and positional image path
 	debug := false
+	if os.Getenv("ATROPOS_DEBUG") == "1" || strings.EqualFold(os.Getenv("ATROPOS_DEBUG"), "true") {
+		debug = true
+	}
 	launchMode := ""
 	launchFile := ""
 	postSave := ""

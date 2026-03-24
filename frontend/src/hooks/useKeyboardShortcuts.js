@@ -67,7 +67,7 @@ export function useKeyboardShortcuts({
             if (r?.unmaskedPreview) setDiscNoMaskPreview(r.unmaskedPreview)
             if (r?.discCenterX !== undefined && r?.discCenterY !== undefined) setDiscCenter({ x: r.discCenterX, y: r.discCenterY })
             if (r?.discRadius !== undefined) setDiscRadius(r.discRadius)
-            if (r?.discRotation !== undefined) setDiscRotation(r.discRotation)
+            setDiscRotation(r?.discRotation ?? discRotation)
             if (r?.discBgR !== undefined) setDiscBgColor({ r: r.discBgR, g: r.discBgG, b: r.discBgB })
           }
           switch (e.key) {
@@ -141,7 +141,7 @@ export function useKeyboardShortcuts({
             if (result?.unmaskedPreview) setDiscNoMaskPreview(result.unmaskedPreview)
             if (result?.discCenterX !== undefined && result?.discCenterY !== undefined) setDiscCenter({ x: result.discCenterX, y: result.discCenterY })
             if (result?.discRadius !== undefined) setDiscRadius(result.discRadius)
-            if (result?.discRotation !== undefined) setDiscRotation(result.discRotation)
+            setDiscRotation(result?.discRotation ?? discRotation)
             if (result?.discBgR !== undefined) setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
             if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
             setUnsavedChanges(true)
@@ -155,7 +155,7 @@ export function useKeyboardShortcuts({
             if (result?.unmaskedPreview) setDiscNoMaskPreview(result.unmaskedPreview)
             if (result?.discCenterX !== undefined && result?.discCenterY !== undefined) setDiscCenter({ x: result.discCenterX, y: result.discCenterY })
             if (result?.discRadius !== undefined) setDiscRadius(result.discRadius)
-            if (result?.discRotation !== undefined) setDiscRotation(result.discRotation)
+            setDiscRotation(result?.discRotation ?? discRotation)
             if (result?.discBgR !== undefined) setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
             if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
             setUnsavedChanges(true)
