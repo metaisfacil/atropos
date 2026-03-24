@@ -51,18 +51,21 @@ export function useMouseHandlers({
 
   const computeDiscShift = (screenDx, screenDy) => {
     const el = imgRef.current
-    const bounds = el ? el.getBoundingClientRect() : null
-    if (!bounds || realImageDims.w <= 0 || realImageDims.h <= 0 || discRadius <= 0) return null
+    if (!el || realImageDims.w <= 0 || realImageDims.h <= 0 || discRadius <= 0) return null
 
     // Use the <img> element's natural (intrinsic) pixel dimensions for the
     // scale factor.  After DrawDisc the displayed image is the disc crop
     // (much smaller than the source), while realImageDims still holds the
     // source dimensions.  naturalWidth/Height always matches the currently
     // displayed image, so the display-to-image scale is correct.
+    const clientW = el.clientWidth
+    const clientH = el.clientHeight
+    if (clientW <= 0 || clientH <= 0) return null
+
     const natW = el.naturalWidth  || realImageDims.w
     const natH = el.naturalHeight || realImageDims.h
-    const scaleX = natW / bounds.width
-    const scaleY = natH / bounds.height
+    const scaleX = natW / clientW
+    const scaleY = natH / clientH
 
     // Map the pointer movement from display space into (possibly rotated)
     // disc-local image space, with inverted drag direction for working output.
@@ -115,10 +118,12 @@ export function useMouseHandlers({
   const displayToImage = displayToImageRef.current = useCallback((dispX, dispY) => {
     const el = imgRef.current
     if (!el) return { x: 0, y: 0 }
-    const rect = el.getBoundingClientRect()
+    const width = el.clientWidth
+    const height = el.clientHeight
+    if (width <= 0 || height <= 0) return { x: 0, y: 0 }
     return {
-      x: Math.round(dispX * (realImageDims.w / rect.width)),
-      y: Math.round(dispY * (realImageDims.h / rect.height)),
+      x: Math.round(dispX * (realImageDims.w / width)),
+      y: Math.round(dispY * (realImageDims.h / height)),
     }
   }, [realImageDims]) // eslint-disable-line react-hooks/exhaustive-deps
 
