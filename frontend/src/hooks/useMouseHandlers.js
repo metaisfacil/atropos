@@ -3,24 +3,19 @@ import {
   ClickCorner, StraightEdgeRotate, RotateDisc, ShiftDisc, DrawDisc, AddLine, ProcessLines,
 } from '../../wailsjs/go/main/App'
 import { displayToImage as displayToImageHelper, computeDiscShift as computeDiscShiftHelper } from '../utils/imageCoords'
+import { sanitizeArg, debugOptions } from '../utils/debugLogger'
 
 export function useMouseHandlers({
   imageLoaded, loading, mode, dragging, dragStart, dragCurrent,
   useTouchupTool, useStraightEdgeTool, discActive, linesProcessed,
   touchupStrokes, cornerState, dotRadius, cornersDetected, customCorner, linesDone,
-  realImageDims,
-  discNoMaskPreview,
-  discCenter,
-  discRadius,
-  discRotation,
+  realImageDims, discNoMaskPreview, discCenter, discRadius, discRotation,
   setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setPreview,
   setLoading, setZoom, setRealImageDims, setCornerState, setDetectedCornerPts,
-  setSelectedCornerPts, setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscRotation, setDiscBgColor, setNormalRect, setLines, setLinesDone,
-  setUnsavedChanges,
-  discLiveActive, setDiscLiveActive, discLiveTransform, setDiscLiveTransform,
-  setLinesProcessed, setUseStraightEdgeTool,
-  straightEdgeRemainsActive,
-  spaceDownRef, panDragRef, canvasRef, ctrlDragRef, shiftDragRef,
+  setSelectedCornerPts, setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius,
+  setDiscRotation, setDiscBgColor, setNormalRect, setLines, setLinesDone, setUnsavedChanges,
+  setDiscLiveActive, setDiscLiveTransform, setLinesProcessed, setUseStraightEdgeTool,
+  straightEdgeRemainsActive, spaceDownRef, panDragRef, canvasRef, ctrlDragRef, shiftDragRef,
   touchupDraggingRef, imgRef, lastResizeRef, mousePosRef,
   commitTouchup, showStatus, showError,
 }) {
@@ -53,7 +48,6 @@ export function useMouseHandlers({
   const computeDiscShift = (screenDx, screenDy) => {
     const el = imgRef.current
     if (!el || realImageDims.w <= 0 || realImageDims.h <= 0 || discRadius <= 0) {
-      console.debug('computeDiscShift skipping: missing state', {screenDx, screenDy, realImageDims, discRadius})
       return null
     }
 
@@ -104,15 +98,6 @@ export function useMouseHandlers({
     const liveDx = screenDx
     const liveDy = screenDy
 
-    console.debug('computeDiscShift result', {
-      screenDx, screenDy,
-      realImageDims, discRadius, discRotation, discCenter,
-      scaleX, scaleY, desiredImgDx, desiredImgDy,
-      clampedCenterX, clampedCenterY,
-      appliedImgDx, appliedImgDy,
-      roundedImgDx, roundedImgDy,
-      liveDx, liveDy,
-    })
 
     return {
       dx: roundedImgDx,
@@ -291,6 +276,9 @@ export function useMouseHandlers({
       const shift = computeDiscShiftHelper(screenDx, screenDy, realImageDims, discRadius, discRotation, discCenter, ctrlDragRef.current.startCenter, el?.clientWidth || 0, el?.clientHeight || 0, natural)
       if (shift) {
         setDiscLiveTransform(prev => ({ ...prev, dx: shift.liveDx, dy: shift.liveDy }))
+        if (debugOptions.verbose) {
+          console.debug('Drag translation', { screenDx, screenDy, shiftDx: shift.dx, shiftDy: shift.dy, liveDx: shift.liveDx, liveDy: shift.liveDy })
+        }
       }
       return
     }
@@ -417,7 +405,6 @@ export function useMouseHandlers({
           if (result?.discBgR !== undefined) {
             setDiscBgColor({ r: result.discBgR, g: result.discBgG, b: result.discBgB })
           }
-          console.debug('ShiftDisc applied', { result, discCenter, discRadius, discRotation })
         }
       } catch (err) {
         console.error('RotateDisc drag error:', err)
@@ -448,7 +435,6 @@ export function useMouseHandlers({
         dx = shift.dx
         dy = shift.dy
       }
-      console.debug('Shift preview compute', {screenDx, screenDy, shift, ctrlDragRef: ctrlDragRef.current, discCenter, discRadius, discRotation})
 
       ctrlDragRef.current = null; ctrlDragBusy.current = false
       setLoading(true)

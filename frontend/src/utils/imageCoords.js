@@ -1,4 +1,4 @@
-import { addDebugLog, initFrontendDebugLogAPI } from './debugLogger'
+import { addDebugLog, initFrontendDebugLogAPI, debugOptions } from './debugLogger'
 
 initFrontendDebugLogAPI()
 
@@ -113,9 +113,6 @@ export function computeDiscShift(
     expectedLiveDx, expectedLiveDy,
     match: liveDx === expectedLiveDx && liveDy === expectedLiveDy,
   }
-
-  console.debug('computeDiscShift', message)
-  addDebugLog('computeDiscShift', message)
 
   return result
 }
