@@ -160,7 +160,7 @@ export function useImageActions({
     setLoading(true)
     setLoadingFull(true)
     setZoom(1)
-    const name = filePath.split(/[\/]/).pop()
+    const name = filePath.split(/[/\\]/).pop()
     showStatus(`Loading ${name}…`)
 
     const result = await LoadImage({ filePath })
@@ -264,8 +264,13 @@ export function useImageActions({
     const onDrop = async (e) => {
       if (!e.dataTransfer) return
       const file = e.dataTransfer.files?.[0]
+      // Read URI list synchronously before any await (dataTransfer data is cleared after the event)
+      const uriList = e.dataTransfer.getData('text/uri-list') || ''
 
       if (file && file.type.startsWith('image/') && !file.path) {
+        // Local filesystem drops (from Explorer/Finder) carry a file:// URI and are
+        // already handled by Wails OnFileDrop — skip to avoid loading the image twice.
+        if (uriList.startsWith('file://')) return
         e.preventDefault()
         try {
           const buffer = await file.arrayBuffer()
@@ -277,7 +282,7 @@ export function useImageActions({
         }
       }
 
-      const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')
+      const url = uriList || e.dataTransfer.getData('text/plain')
       if (url && /^https?:\/\//.test(url)) {
         e.preventDefault()
         try {
@@ -303,10 +308,17 @@ export function useImageActions({
   }, [])
 
   // ── Launch arguments ───────────────────────────────────────────────────────
+  // The `cancelled` flag guards against React StrictMode's double-invocation
+  // of effects with [] deps.  In development StrictMode React mounts → runs
+  // effects → unmounts (cleanup) → remounts → runs effects again.  Without
+  // the flag both invocations would race to call LoadImage, causing a second
+  // detection run or a spurious setLoading(false) mid-detection.
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
         const args = (await GetLaunchArgs()) || {}
+        if (cancelled) return
         if (args.mode) setMode(args.mode)
         // CLI-provided post-save overrides persisted settings (do not force quit)
         if (args.postSaveCommand) {
@@ -321,12 +333,14 @@ export function useImageActions({
           showStatus('No image loaded')
         }
       } catch (err) {
+        if (cancelled) return
         console.error('Launch args error:', err)
         setLoading(false)
         setLoadingFull(false)
         showStatus('No image loaded')
       }
     })()
+    return () => { cancelled = true }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Compositor: load result into corner-mode pipeline ───────────────────────
