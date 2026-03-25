@@ -349,14 +349,15 @@ export function useMouseHandlers({
       cornerMouseDownRef.current = false
       if (!hadMouseDown) return
       if (Date.now() - lastResizeRef.current < 300) return
-      if ((cornerState.cornerCount === 0 && !cornersDetected && !customCorner) || cornerState.cornerCount >= 4) return
+      const isCustomClick = customCorner || e.ctrlKey
+      if ((cornerState.cornerCount === 0 && !cornersDetected && !isCustomClick) || cornerState.cornerCount >= 4) return
       const imgPt = displayToImage(pos.x, pos.y)
       try {
         if (cornerState.cornerCount === 3) {
           setLoading(true)
           showStatus('Applying perspective warp…')
         }
-        const result = await ClickCorner({ x: imgPt.x, y: imgPt.y, custom: customCorner, dotRadius })
+        const result = await ClickCorner({ x: imgPt.x, y: imgPt.y, custom: isCustomClick, dotRadius })
         if (result.preview) setPreview(result.preview)
         showStatus(result.message)
         setCornerState(s => ({ ...s, cornerCount: result.count }))
