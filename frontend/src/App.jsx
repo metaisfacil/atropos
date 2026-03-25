@@ -195,7 +195,7 @@ export default function App() {
     handleCompositorLoad,
   } = useImageActions({
     mode, loading, imageLoaded, discActive, linesProcessed, normalCropApplied,
-    cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
+    cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, setCloseAfterSave, postSaveEnabled, setPostSaveEnabled, postSaveCommand, setPostSaveCommand, autoDetectOnModeSwitch,
     setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setInputImageDims, setImgNatural,
     setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
     setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
