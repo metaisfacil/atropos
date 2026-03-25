@@ -113,9 +113,13 @@ export function useMouseHandlers({
   const dragStartRef       = useRef(dragStart)
   const dragCurrentRef     = useRef(dragCurrent)
   const displayToImageRef  = useRef(null)
+  // Shadows disc state for the window-level mousemove handler (effect closure
+  // can't close over frequently-changing props, so we use a ref instead).
+  const discStateRef       = useRef({ realImageDims, discRadius, discRotation, discCenter })
   draggingRef.current      = dragging
   dragStartRef.current     = dragStart
   dragCurrentRef.current   = dragCurrent
+  discStateRef.current     = { realImageDims, discRadius, discRotation, discCenter }
 
   const displayToImage = displayToImageRef.current = useCallback((dispX, dispY) => {
     const el = imgRef.current
@@ -183,11 +187,19 @@ export function useMouseHandlers({
     if (mode === 'disc' && e.ctrlKey && discActive) {
       shiftDragRef.current = null
       const point = displayToImage(pos.x, pos.y)
+      const el = imgRef.current
       ctrlDragRef.current = {
         startImg: point,
         startClientX: e.clientX,
         startClientY: e.clientY,
         startCenter: discCenter,
+        // Capture stable display/natural dimensions at drag-start so that
+        // live-preview and commit calculations use the same scale factor
+        // even if the layout reflows during the async ShiftDisc round-trip.
+        clientW: el?.clientWidth  || 0,
+        clientH: el?.clientHeight || 0,
+        natW:    el?.naturalWidth  || 0,
+        natH:    el?.naturalHeight || 0,
       }
       ctrlDragBusy.current = false
       setDragging(true); setDragStart(pos); setDragCurrent(pos)
@@ -268,16 +280,20 @@ export function useMouseHandlers({
       const screenDx = e.clientX - ctrlDragRef.current.startClientX
       const screenDy = e.clientY - ctrlDragRef.current.startClientY
 
+      const ctrl = ctrlDragRef.current
       const el = imgRef.current
-      // Use the live natural dimensions for scale in disc mode (preview image may be cropped),
-      // not the full source realImageDims.
-      // DON’T use realImageDims for live scale in disc mode; pass naturalImageDims explicitly.
-      const natural = { w: el?.naturalWidth || realImageDims.w, h: el?.naturalHeight || realImageDims.h }
-      const shift = computeDiscShiftHelper(screenDx, screenDy, realImageDims, discRadius, discRotation, discCenter, ctrlDragRef.current.startCenter, el?.clientWidth || 0, el?.clientHeight || 0, natural)
+      // Use the dimensions captured at drag-start for consistent scale.
+      // DON'T use realImageDims for live scale in disc mode; pass naturalImageDims explicitly.
+      const clientW = ctrl.clientW || el?.clientWidth  || 0
+      const clientH = ctrl.clientH || el?.clientHeight || 0
+      const natW    = ctrl.natW    || el?.naturalWidth  || 0
+      const natH    = ctrl.natH    || el?.naturalHeight || 0
+      const natural = { w: natW || realImageDims.w, h: natH || realImageDims.h }
+      const shift = computeDiscShiftHelper(screenDx, screenDy, realImageDims, discRadius, discRotation, discCenter, ctrl.startCenter, clientW, clientH, natural)
       if (shift) {
         setDiscLiveTransform(prev => ({ ...prev, dx: shift.liveDx, dy: shift.liveDy }))
         if (debugOptions.verbose) {
-          console.debug('Drag translation', { screenDx, screenDy, shiftDx: shift.dx, shiftDy: shift.dy, liveDx: shift.liveDx, liveDy: shift.liveDy })
+          console.debug("Drag translation", { screenDx, screenDy, shiftDx: shift.dx, shiftDy: shift.dy, liveDx: shift.liveDx, liveDy: shift.liveDy })
         }
       }
       return
@@ -423,12 +439,15 @@ export function useMouseHandlers({
       const screenDx = e.clientX - ctrlDragRef.current.startClientX
       const screenDy = e.clientY - ctrlDragRef.current.startClientY
 
+      const ctrl = ctrlDragRef.current
       const el = imgRef.current
-      // Use the live natural dimensions for scale in disc mode (preview image may be cropped),
-      // not the full source realImageDims.
-      // DON’T use realImageDims for live scale in disc mode; pass naturalImageDims explicitly.
-      const natural = { w: el?.naturalWidth || realImageDims.w, h: el?.naturalHeight || realImageDims.h }
-      const shift = computeDiscShiftHelper(screenDx, screenDy, realImageDims, discRadius, discRotation, discCenter, ctrlDragRef.current.startCenter, el?.clientWidth || 0, el?.clientHeight || 0, natural)
+      // Use the dimensions captured at drag-start for consistent scale factor.
+      const clientW = ctrl.clientW || el?.clientWidth  || 0
+      const clientH = ctrl.clientH || el?.clientHeight || 0
+      const natW    = ctrl.natW    || el?.naturalWidth  || 0
+      const natH    = ctrl.natH    || el?.naturalHeight || 0
+      const natural = { w: natW || realImageDims.w, h: natH || realImageDims.h }
+      const shift = computeDiscShiftHelper(screenDx, screenDy, realImageDims, discRadius, discRotation, discCenter, ctrl.startCenter, clientW, clientH, natural)
       let dx = 0
       let dy = 0
       if (shift) {
@@ -582,6 +601,28 @@ export function useMouseHandlers({
       if (!el) return
       const rect = el.getBoundingClientRect()
       setDragCurrent({ x: e.clientX - rect.left, y: e.clientY - rect.top })
+
+      // Keep disc live transform updated even when the mouse has left the
+      // canvas-area element (handleMouseMove only fires inside that element).
+      // Without this, releasing outside canvas-area would commit a shift
+      // larger than the last position the live preview showed.
+      if (ctrlDragRef.current) {
+        const ctrl = ctrlDragRef.current
+        const screenDx = e.clientX - ctrl.startClientX
+        const screenDy = e.clientY - ctrl.startClientY
+        const clientW = ctrl.clientW || el.clientWidth  || 0
+        const clientH = ctrl.clientH || el.clientHeight || 0
+        const natW    = ctrl.natW    || el.naturalWidth  || 0
+        const natH    = ctrl.natH    || el.naturalHeight || 0
+        const { realImageDims, discRadius, discRotation, discCenter } = discStateRef.current
+        const natural = { w: natW || realImageDims.w, h: natH || realImageDims.h }
+        const shift = computeDiscShiftHelper(screenDx, screenDy, realImageDims, discRadius, discRotation, discCenter, ctrl.startCenter, clientW, clientH, natural)
+        if (shift) setDiscLiveTransform(prev => ({ ...prev, dx: shift.liveDx, dy: shift.liveDy }))
+      }
+      if (shiftDragRef.current) {
+        const dx = e.clientX - shiftDragRef.current.startX
+        setDiscLiveTransform(prev => ({ ...prev, angle: dx * 0.3 }))
+      }
     }
     window.addEventListener('mouseup', onWindowMouseUp)
     window.addEventListener('mousemove', onWindowMouseMove)
