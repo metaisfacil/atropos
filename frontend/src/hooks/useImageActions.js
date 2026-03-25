@@ -22,12 +22,11 @@ import {
   SaveImage,
   RunPostSaveCommand,
   Undo,
-  CompositorLoadResult,
 } from '../../wailsjs/go/main/App'
 
 export function useImageActions({
   mode, loading, imageLoaded, discActive, linesProcessed, normalCropApplied,
-  cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
+  cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, setCloseAfterSave, postSaveEnabled, setPostSaveEnabled, postSaveCommand, setPostSaveCommand, autoDetectOnModeSwitch,
   setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setInputImageDims, setImgNatural,
   setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
   setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscRotation, setDiscBgColor, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
@@ -157,6 +156,8 @@ export function useImageActions({
   // ── Core file loader (private — used by dialog, drag-drop, and launch args) ─
   const loadFile = async (filePath, autoDetect = true) => {
     CancelTouchup()
+    detectGenRef.current++   // invalidate any in-flight corner detection
+    CancelCornerDetect()
     setLoading(true)
     setLoadingFull(true)
     setZoom(1)
@@ -263,26 +264,12 @@ export function useImageActions({
 
     const onDrop = async (e) => {
       if (!e.dataTransfer) return
-      const file = e.dataTransfer.files?.[0]
-      // Read URI list synchronously before any await (dataTransfer data is cleared after the event)
-      const uriList = e.dataTransfer.getData('text/uri-list') || ''
-
-      if (file && file.type.startsWith('image/') && !file.path) {
-        // Local filesystem drops (from Explorer/Finder) carry a file:// URI and are
-        // already handled by Wails OnFileDrop — skip to avoid loading the image twice.
-        if (uriList.startsWith('file://')) return
-        e.preventDefault()
-        try {
-          const buffer = await file.arrayBuffer()
-          await loadImageFromBytes(buffer, file.name || 'dropped-image')
-          return
-        } catch (err) {
-          console.error('Drop image load error:', err)
-          showError(err)
-        }
-      }
-
-      const url = uriList || e.dataTransfer.getData('text/plain')
+      // File drops from the filesystem are handled exclusively by Wails OnFileDrop
+      // (which provides file paths). In WebView2, File.path is never set, so the
+      // old !file.path guard couldn't distinguish Explorer drops from browser drags,
+      // causing every Explorer drop to also trigger a slow bytes-based load here.
+      // Only handle http/https URL drops (e.g. dragging an image URL from a browser).
+      const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')
       if (url && /^https?:\/\//.test(url)) {
         e.preventDefault()
         try {
