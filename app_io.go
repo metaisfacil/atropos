@@ -610,8 +610,16 @@ func tokenizeCommandLine(s string) []string {
 // OpenImageDialog shows a file picker for loading images.
 func (a *App) OpenImageDialog() (string, error) {
 	a.logf("OpenImageDialog: showing dialog")
+	defaultDir := ""
+	defaultName := ""
+	if a.loadedFilePath != "" {
+		defaultDir = filepath.Dir(a.loadedFilePath)
+		defaultName = filepath.Base(a.loadedFilePath)
+	}
 	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Open Image",
+		Title:            "Open Image",
+		DefaultDirectory: defaultDir,
+		DefaultFilename:  defaultName,
 		Filters: []runtime.FileFilter{
 			{DisplayName: "Image Files (*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif)", Pattern: "*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif"},
 			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
