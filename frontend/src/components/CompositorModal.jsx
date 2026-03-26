@@ -32,6 +32,7 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
   const [paths, setPaths]           = useState([])
   const [orientation, setOrientation] = useState('ltr')
   const [stitching, setStitching]   = useState(false)
+  const [loading, setLoading]       = useState(false)
   const [status, setStatus]         = useState('')
   const [preview, setPreview]       = useState(null)
   const [resultDims, setResultDims] = useState(null)
@@ -148,12 +149,16 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
   }
 
   async function handleLoadForCropping() {
+    setLoading(true)
+    setStatus('')
     try {
       const steps = (((rotation / 90) % 4) + 4) % 4
       const info = await CompositorLoadResult({ rotationSteps: steps })
       onLoad(info)
     } catch (err) {
       setStatus('Load failed: ' + (err?.message || String(err)))
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -324,7 +329,7 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
               <button
                 className="load-btn"
                 onClick={handleLoadForCropping}
-                disabled={!hasResult || stitching}
+                disabled={!hasResult || stitching || loading}
               >
                 Load output
               </button>
