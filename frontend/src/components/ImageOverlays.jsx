@@ -19,6 +19,7 @@ export default function ImageOverlays({
   normalRect,
   lines,
   displayToImage,
+  lineStartImgRef,
 }) {
   return (
     <>
@@ -127,7 +128,10 @@ export default function ImageOverlays({
       {mode === 'line' && (() => {
         const allLines = [...lines] // image-space coords
         if (dragging && dragStart && dragCurrent) {
-          const s = displayToImage(dragStart.x, dragStart.y)
+          // Use the image-space start captured at mousedown when available.
+          // This keeps the line stable if the user zooms mid-drag, since
+          // dragStart.x is a CSS-pixel value that becomes stale after a zoom.
+          const s = lineStartImgRef?.current || displayToImage(dragStart.x, dragStart.y)
           const e = displayToImage(dragCurrent.x, dragCurrent.y)
           allLines.push({ x1: s.x, y1: s.y, x2: e.x, y2: e.y })
         }

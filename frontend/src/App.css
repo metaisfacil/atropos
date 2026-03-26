@@ -44,6 +44,8 @@
   padding-left: 10px; /* small left gutter so content appears centered */
   scrollbar-gutter: stable both-edges;
   align-items: stretch;
+  margin-bottom: 20px;
+  margin-top: 20px;
 }
 
 /* Inner wrapper to vertically center the mode panels group when there's spare space */
@@ -128,11 +130,6 @@
   border-color: #007acc;
   background: #3e3e42;
   color: #007acc;
-}
-
-.control-section {
-  margin-bottom: 20px;
-  margin-top: 20px;
 }
 
 .control-group {
