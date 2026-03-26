@@ -397,7 +397,10 @@ func (a *App) OpenSaveDialog() (string, error) {
 	defaultDir := ""
 	defaultName := "output"
 	if a.loadedFilePath != "" {
-		defaultDir = filepath.Dir(a.loadedFilePath)
+		dir := filepath.Dir(a.loadedFilePath)
+		if _, statErr := os.Stat(dir); statErr == nil {
+			defaultDir = dir
+		}
 		base := filepath.Base(a.loadedFilePath)
 		defaultName = strings.TrimSuffix(base, filepath.Ext(base))
 	}
@@ -613,7 +616,10 @@ func (a *App) OpenImageDialog() (string, error) {
 	defaultDir := ""
 	defaultName := ""
 	if a.loadedFilePath != "" {
-		defaultDir = filepath.Dir(a.loadedFilePath)
+		dir := filepath.Dir(a.loadedFilePath)
+		if _, statErr := os.Stat(dir); statErr == nil {
+			defaultDir = dir
+		}
 		defaultName = filepath.Base(a.loadedFilePath)
 	}
 	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
