@@ -212,7 +212,7 @@ export default function App() {
   flushPendingSaveRef.current = flushPendingSave
 
   const {
-    handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave, displayToImage,
+    handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave, displayToImage, lineStartImgRef,
   } = useMouseHandlers({
     imageLoaded, loading, mode, dragging, dragStart, dragCurrent,
     useTouchupTool, useStraightEdgeTool, discActive, linesProcessed, touchupStrokes,
@@ -555,6 +555,7 @@ export default function App() {
                 normalRect={normalRect}
                 lines={lines}
                 displayToImage={displayToImage}
+                lineStartImgRef={lineStartImgRef}
               />
             </div>
           ) : !loading ? (

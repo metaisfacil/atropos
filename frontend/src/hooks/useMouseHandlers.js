@@ -113,6 +113,9 @@ export function useMouseHandlers({
   const dragStartRef       = useRef(dragStart)
   const dragCurrentRef     = useRef(dragCurrent)
   const displayToImageRef  = useRef(null)
+  // Image-space start point for line-mode drag, captured at mousedown so that
+  // zooming mid-drag doesn't corrupt the scale used for the start coordinate.
+  const lineStartImgRef    = useRef(null)
   // Shadows disc state for the window-level mousemove handler (effect closure
   // can't close over frequently-changing props, so we use a ref instead).
   const discStateRef       = useRef({ realImageDims, discRadius, discRotation, discCenter })
@@ -213,6 +216,9 @@ export function useMouseHandlers({
 
     ctrlDragRef.current = null
     shiftDragRef.current = null
+    // For line mode, capture the start point in image-space now so that
+    // zooming mid-drag doesn't corrupt the scale used later.
+    if (mode === 'line') lineStartImgRef.current = displayToImage(pos.x, pos.y)
     setDragging(true); setDragStart(pos); setDragCurrent(pos)
   }
 
@@ -514,7 +520,9 @@ export function useMouseHandlers({
     }
 
     if (mode === 'line' && !linesProcessed) {
-      const start = displayToImage(dragStart.x, dragStart.y)
+      // Use the image-space start captured at mousedown (stable across zoom changes).
+      const start = lineStartImgRef.current || displayToImage(dragStart.x, dragStart.y)
+      lineStartImgRef.current = null
       const end   = displayToImage(pos.x, pos.y)
       const dx = end.x - start.x; const dy = end.y - start.y
       if (Math.hypot(dx, dy) < 5) return
@@ -633,5 +641,5 @@ export function useMouseHandlers({
     }
   }, [mode, useTouchupTool]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave, displayToImage }
+  return { handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave, displayToImage, lineStartImgRef }
 }
