@@ -194,7 +194,7 @@ export default function App() {
     handleCompositorLoad,
   } = useImageActions({
     mode, loading, imageLoaded, discActive, linesProcessed, normalCropApplied,
-    cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
+    cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, setCloseAfterSave, postSaveEnabled, setPostSaveEnabled, postSaveCommand, setPostSaveCommand, autoDetectOnModeSwitch,
     setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setInputImageDims, setImgNatural,
     setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
     setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setNormalCropApplied, setCornersDetected,
@@ -211,7 +211,7 @@ export default function App() {
   flushPendingSaveRef.current = flushPendingSave
 
   const {
-    handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave, displayToImage,
+    handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave, displayToImage, lineStartImgRef,
   } = useMouseHandlers({
     imageLoaded, loading, mode, dragging, dragStart, dragCurrent,
     useTouchupTool, useStraightEdgeTool, discActive, linesProcessed, touchupStrokes,
@@ -477,7 +477,7 @@ export default function App() {
           style={spacePanMode ? { cursor: 'grab' } : undefined}
         >
           {preview ? (
-            <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0, margin: 'auto', overflow: 'hidden' }}>
+            <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0, margin: 'auto', overflow: 'hidden', flexShrink: 0 }}>
               <img
                 ref={imgRef}
                 src={discLiveActive && discNoMaskPreview ? discNoMaskPreview : preview}
@@ -524,6 +524,7 @@ export default function App() {
                 normalRect={normalRect}
                 lines={lines}
                 displayToImage={displayToImage}
+                lineStartImgRef={lineStartImgRef}
               />
             </div>
           ) : !loading ? (

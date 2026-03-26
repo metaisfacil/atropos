@@ -20,10 +20,10 @@ This document contains the detailed system model, data flow, and operation order
 | File | Responsibility |
 |------|----------------|
 | `hooks/useImageActions.js` | Go API action handlers: `loadFile`, `handleLoadImage`, `handleDetectCorners`, `handleSkipCrop`, `handleRecrop`, `handleResetCorners/Disc/Normal`, `handleNormalCrop`, `handleClearLines`, `handleSaveImage`, `handleModeSwitch`, `handleCompositorLoad`. Also owns the `OnFileDrop` and launch-args `useEffect`s, plus `modeRef`, `lastDetectSettings`, and `suggestedCornerParamsRef`. |
-| `hooks/useMouseHandlers.js` | All pointer interaction: `handleMouseDown/Move/Up/ImageMouseLeave` across all modes. Owns `cornerMouseDownRef`, `ctrlDragBusy`, `shiftDragBusy`, `normalDragPendingRef`, `normalDragActiveRef`, `mouseUpHandledRef`. Registers a `window` `mouseup` listener to commit or cancel Normal-mode drags that end outside the canvas area. Defines `computeDiscShift(screenDx, screenDy)` for disc mode translation that (1) maps screen delta to image delta, (2) applies current `discRotation`, (3) clamps to image bounds, and (4) returns both commit `dx/dy` and live preview `liveDx/liveDy`. Also defines and returns `displayToImage`, which is forwarded to `<ImageOverlays>`. |
+| `hooks/useMouseHandlers.js` | All pointer interaction: `handleMouseDown/Move/Up/ImageMouseLeave` across all modes. Owns `cornerMouseDownRef`, `ctrlDragBusy`, `shiftDragBusy`, `normalDragPendingRef`, `normalDragActiveRef`, `mouseUpHandledRef`. Registers a `window` `mouseup` listener to commit or cancel Normal-mode drags that end outside the canvas area. Defines `computeDiscShift(screenDx, screenDy)` for disc mode translation that (1) maps screen delta to image delta, (2) applies current `discRotation`, (3) clamps to image bounds, and (4) returns both commit `dx/dy` and live preview `liveDx/liveDy`. Also defines and returns `displayToImage` and `lineStartImgRef`. `lineStartImgRef` captures image-space coordinates at mousedown in line mode so that the live drag overlay and the final committed line start remain stable if the user scrollwheels to zoom mid-drag (when `dragStart.x` would otherwise be a stale CSS-pixel value). Both are forwarded to `<ImageOverlays>`. |
 | `hooks/useKeyboardShortcuts.js` | Single `keydown` effect: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+Z` (undo), `Ctrl+S` (save), `Ctrl+W`/`Cmd+W` (quit), `WASDQE` (crop/rotate). WASDQE are guarded by `canSave`; if no crop result exists, `showStatus` is called instead of forwarding to Go, preventing a backend error modal. |
 | `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, window mouseup effect, `EventsOn("touchup-done")` effect. |
-| `hooks/useZoomPan.js` | Canvas viewport: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, scroll `useLayoutEffect`. |
+| `hooks/useZoomPan.js` | Canvas viewport: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, scroll `useLayoutEffect`. The wheel zoom formula uses `imgRef.current.getBoundingClientRect()` (not the canvas rect) to compute cursor position relative to the image's actual left edge, correctly accounting for the `margin: auto` centering offset when the image is smaller than the canvas. `pendingScrollRef` is set inside the `setZoom` updater and applied synchronously in `useLayoutEffect([zoom])` after the DOM commit. |
 | `hooks/usePersistentSettings.js` | File-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, `autoCornerParams`, `closeAfterSave`, `touchupRemainsActive`, `straightEdgeRemainsActive`, `autoDetectOnModeSwitch`). Loads from Go (`GetAllSettings`) on mount and persists via `SaveAllSettings` on every change. Performs a one-time migration from `localStorage` on first launch of the file-backed version. |
 | `hooks/useStatusMessage.js` | `imageInfo` + fade timer logic (`showStatus`). |
 | `components/ImageOverlays.jsx` | Pure render: all SVG overlays (corner dots, touch-up circles, disc guide, straight-edge line, normal crop rect, line mode lines). |
@@ -59,3 +59,709 @@ originalImage  ── immutable after LoadImage; never modified
                                                    Levels / AutoContrast
                                                    TouchUpApply
                                                    SaveImage ◄────────────
+```
+
+### Fields (defined in `app.go` App struct)
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `originalImage` | `*image.NRGBA` | Full-resolution decoded source. Never modified after `LoadImage`. |
+| `currentImage` | `*image.NRGBA` | Working image before any warp/disc operation. Pre-warp levels adjustments write here. |
+| `warpedImage` | `*image.NRGBA` | The current "committed" result. `SaveImage` reads **only** this field. If nil, `workingImage()` falls back to `currentImage`. |
+| `levelsBaseImage` | `*image.NRGBA` | Snapshot taken on the **first** slider drag after any committing operation. All subsequent slider ticks apply levels to this base, preventing value stacking. Cleared by `saveUndo()`. |
+| `discBaseImage` | `*image.NRGBA` | Snapshot of `currentImage` captured at `DrawDisc` time. `redrawDisc()` **always** sources from this image, not `warpedImage`, so every re-render of the disc is deterministic. |
+| `discWorkingCrop` | `*image.NRGBA` | Pre-cropped sub-region of `discBaseImage` centred on the disc with a generous extra margin (`discWorkingCropShiftPadding = 500 px`). `redrawDisc` reads from this small image instead of the full `discBaseImage` to avoid cache thrashing on large images. Refreshed on `DrawDisc` and when a shift moves the disc outside the cached region. Cleared by `ResetDisc`. |
+| `discWorkingCropRect` | `image.Rectangle` | Records the rect of `discBaseImage` that `discWorkingCrop` covers (in `discBaseImage` coordinates). Used to detect when a shift has moved the disc outside the working crop. |
+| `discCenterCutout` | `bool` | When true, `redrawDisc` punches a circular hole at the disc centre to expose `bgColor`. Default: `true`. |
+| `discCutoutPercent` | `int` | Diameter of the centre cutout as a percentage of the disc diameter (1–50). Cutout radius = `discRadius * discCutoutPercent / 100`. Default: `11`. |
+| `undoStack` | `[]undoEntry` | LIFO stack capped at `undoLimit` (10). Each entry is an `undoEntry{image, rotationAngle}`. `rotationAngle` is non-nil only for `saveDiscRotationUndo()` snapshots (e.g. `StraightEdgeRotate`). |
+
+### `workingImage()` (in `app_adjust.go`)
+
+```go
+func (a *App) workingImage() *image.NRGBA {
+    if a.warpedImage != nil {
+        return a.warpedImage
+    }
+    return a.currentImage
+}
+```
+
+**Every read operation uses this.** Never read `currentImage` or `warpedImage` directly unless you specifically need one of them.
+
+### `setWorkingImage(img)` (in `app_adjust.go`)
+
+Always writes to `warpedImage`. This ensures `SaveImage` always has a result, even if the user runs levels/contrast before cropping.
+
+### `saveUndo()` (in `app_adjust.go`)
+
+1. If `undoStack` is full, shift out the oldest entry.
+2. Push an `undoEntry{image: clone of workingImage(), rotationAngle: nil}`.
+3. **Clears `levelsBaseImage`** — next `SetLevels` call gets a fresh snapshot.
+
+### `saveDiscRotationUndo()` (in `app_adjust.go`)
+
+Same as `saveUndo()` but also snapshots the current `rotationAngle` into the entry. Used by `StraightEdgeRotate` so that Undo restores both the image pixels and the accumulated rotation angle, keeping disc re-renders consistent.
+
+**Rule:** Every operation that commits a permanent change must call `saveUndo()` first — except `SetLevels`, which deliberately does not (slider ticks must not flood the undo stack). This includes the warp-entry operations: `ClickCorner` (4th click), `ProcessLines`, and `DrawDisc`. `StraightEdgeRotate` uses `saveDiscRotationUndo()` instead.
+
+---
+
+## Startup Sequence
+
+```
+Wails runtime
+    └── NewApp()             set all defaults (see below)
+    └── App.startup(ctx)     store context
+    └── Wails injects JS bridge
+    └── React mounts
+    └── useEffect (mount)
+        ├── GetAllSettings()   // load shared settings file; migrate localStorage on first run
+        └── GetLaunchArgs()
+            ├── if filePath → loadFile(filePath, autoDetect)
+            └── else        → showStatus('No image loaded')
+```
+
+**NewApp() defaults:**
+
+| Field | Default |
+|-------|---------|
+| `undoLimit` | 10 |
+| `featherSize` | 15 |
+| `cropAmount` | 3 |
+| `bgColor` | white (255,255,255,255) |
+| `postDiscWhite` | 255 |
+| `touchupBackend` | `"patchmatch"` |
+| `iopaintURL` | `"http://127.0.0.1:8086/"` |
+| `warpFillMode` | `"clamp"` |
+| `warpFillColor` | white |
+| `discCenterCutout` | `true` |
+| `discCutoutPercent` | 11 |
+
+**Settings persistence:** Settings are stored in `%AppData%\atropos\settings.json` (Windows) / `~/.config/atropos/settings.json` (other platforms) as JSON, written by the Go backend via `SaveAllSettings`. The file is the source of truth and is shared across all simultaneously running instances. Go applies backend-relevant fields to its in-memory state inside `SaveAllSettings`; it never reads `localStorage`. On first launch after upgrading from an older version, `usePersistentSettings` detects that the file does not yet exist (`Initialized=false`) and performs a one-time migration from `localStorage`.
+
+---
+
+## Image Loading (`app_io.go`)
+
+```
+LoadImage(req)
+    1. Acquire loadMu mutex (reject concurrent loads)
+    2. Decode file:
+         TIFF  → try ImageMagick first, fall back to Go decoder
+         Other → Go stdlib decoder, fall back to ImageMagick for exotic formats
+    3. toNRGBA(src)           convert to NRGBA (RGBA un-premultiply is parallelized)
+    4. originalImage = result (no extra allocation — reuse toNRGBA output)
+       currentImage  = cloneImage(originalImage)
+    5. Clear ALL transient state:
+         warpedImage = nil
+         levelsBaseImage = nil
+         selectedCorners = nil
+         detectedCorners = nil
+         lines = nil
+         undoStack = nil
+         discCenter = zero
+         discRadius = 0
+         rotationAngle = 0
+         discBaseImage = nil
+         discWorkingCrop = nil
+         discWorkingCropRect = zero
+         postDiscBlack = 0
+         postDiscWhite = 255
+    6. imageToBase64(currentImage)   JPEG, downscaled if > 1600px longest side
+    7. Update window title
+    8. extractFileMeta(filePath)      read format name + DPI from file header
+    9. Return ImageInfo{Width, Height, Preview, Format, DPIX, DPIY, SuggestedCornerParams{MinDistance, MaxCorners}}
+```
+
+**Frontend `loadFile(filePath, autoDetect)` flow:**
+
+```
+setLoading(true)
+setZoom(1)
+LoadImage({filePath})
+    → setPreview, setImageLoaded, setRealImageDims
+    → setImageMeta({ format, dpiX, dpiY })
+    → reset ALL mode-specific frontend state (cornerCount, linesDone, discActive,
+      touchupStrokes, useTouchupTool, useStraightEdgeTool, lastDetectSettings, etc.)
+    → suggestedCornerParamsRef.current = result.suggestedCornerParams
+setLoadingFull(false)                    ← hides opaque loading overlay before detect runs
+if autoDetect && mode === 'corner':
+    DetectCorners(autoCornerParams ? suggestedCornerParamsRef.current overrides : {})
+    → setPreview, setCornersDetected(true)
+    → setCornerState updated with overridden maxCorners/minDistance values
+    → lastDetectSettings.current = detection params used
+setLoading(false)
+```
+
+**File dialog defaults:** `OpenImageDialog` and `OpenSaveDialog` derive their default directory from the last loaded file path. Before passing the directory to Wails, they check `os.Stat(dir)` — if the directory no longer exists (e.g. a removable drive), they fall back to an empty string (system default) rather than erroring.
+
+---
+
+## Corner Mode (`app_corner.go`)
+
+### Corner Detection
+
+```
+DetectCorners(req)
+    1. Downsample to ~1500px, apply accent/CLAHE contrast prep
+    2. Multi-scale Shi-Tomasi (goodFeaturesToTrack) at scales [1, 2, 4]
+    3. Deduplicate corners, map back to full-resolution coordinates
+    4. Store in detectedCorners
+    5. Return clean currentImage preview + Corners array
+         Dots are rendered by the frontend as an SVG overlay — never baked into the image
+```
+
+### Clicking Corners
+
+```
+ClickCorner(req)
+    1. If not custom && detectedCorners exist:
+           snap pt to nearest detected corner
+       Else (custom=true OR Ctrl+click):
+           use raw click coordinate
+    2. Append pt to selectedCorners
+    3. If selectedCorners.length < 4:
+           return SnappedX/SnappedY/Count/Message only — NO preview
+    4. On 4th corner → saveUndo() → warpFromCorners(selectedCorners[:4]):
+           sortVertices (→ TL, TR, BL, BR)
+           compute outW = max(widthTop, widthBot)
+           compute outH = max(heightLeft, heightRight)
+           if warpFillMode == "clamp":
+               perspectiveTransform(currentImage, src, dst, outW, outH)
+           else:
+               perspectiveTransformWithMask(currentImage, src, dst, outW, outH)
+               applyWarpFill(warped, oobMask)
+           warpedImage = result
+    5. selectedCorners = nil
+    6. Return preview + Width + Height + "Perspective corrected to W×H"
+```
+
+**Ctrl+click** always uses the raw click coordinate regardless of the `customCorner` checkbox state.
+
+### Reset / Restore
+
+```
+ResetCorners()
+    selectedCorners = nil
+    warpedImage = nil          ← CRITICAL: so GetCleanPreview returns currentImage
+    return clean currentImage preview + Corners (detectedCorners preserved)
+
+RestoreCornerOverlay({dotRadius})
+    if detectedCorners empty → error "no cached corners"
+    return clean currentImage preview + Corners + "Detected N corners — click 4 corners"
+
+SkipCrop()
+    require currentImage != nil
+    warpedImage     = cloneImage(currentImage)
+    selectedCorners = nil
+    return currentImage preview + dims + "Crop skipped — image ready to save"
+```
+
+`SkipCrop` is available in all four modes. The frontend sets mode-specific state to transition past phase 1 without performing a warp:
+
+| Mode | Frontend state change after SkipCrop |
+|------|--------------------------------------|
+| Corner | `cornerCount = 4`, clears `detectedCornerPts` |
+| Disc | `discActive = true` |
+| Line | `linesProcessed = true` |
+| Normal | `normalCropApplied = true` |
+
+`cropSkipped = true` disables all 1st-phase controls until Reset. `detectedCorners` is NOT cleared on mode switch (only on `LoadImage`).
+
+### RecropImage (`app_io.go`)
+
+```
+RecropImage()
+    require warpedImage != nil
+    originalImage = warpedImage
+    currentImage  = cloneImage(warpedImage)
+    reset all transient state identically to LoadImage
+    return ImageInfo{Width, Height, Preview}
+```
+
+Promotes the current output image to a new source for a second crop pass. The frontend shows a `ConfirmationModal` before calling this because it is irreversible within the session.
+
+---
+
+## Line Mode (`app_line.go`)
+
+```
+AddLine(req)
+    append {X1,Y1,X2,Y2} to lines
+    return "Lines: N/4"
+
+ProcessLines()
+    require len(lines) == 4
+    1. Compute all 6 pairwise line intersections
+    2. Filter to intersections within ±50% of image bounds
+    3. If > 4 valid: pick 4 farthest from centroid
+    4. orderPoints → TL, TR, BR, BL
+    5. Compute outW, outH from max edge lengths
+    6. if warpFillMode == "clamp":
+           perspectiveTransform(originalImage, src, dst, outW, outH)
+       else:
+           perspectiveTransformWithMask + applyWarpFill
+    7. warpedImage = result
+    8. lines = nil
+    9. Return preview
+
+ClearLines()
+    lines = nil
+    warpedImage = nil
+    return currentImage preview
+```
+
+**Note:** Line mode warps from `originalImage`, not `currentImage`. Corner mode warps from `currentImage`.
+
+---
+
+## Disc Mode (`app_disc.go` / `app_adjust.go`)
+
+Disc mode is the most stateful mode. Every re-render replays the full pipeline from `discBaseImage`.
+
+### DrawDisc — Entry Point
+
+```
+DrawDisc(req)
+    discCenter    = req.centerX, req.centerY
+    discRadius    = req.radius
+    rotationAngle = 0
+    discBaseImage = cloneImage(currentImage)
+    postDiscBlack = 0
+    postDiscWhite = 255
+    redrawDisc()
+```
+
+### redrawDisc — The Full Disc Pipeline
+
+```
+redrawDisc()
+    1. src = discBaseImage (or originalImage as emergency fallback)
+    2. bbox = [discCenter ± (discRadius + featherSize)]
+    3. cropped = subImage(src, bbox)
+    4. localCenter = discCenter − bbox.Min
+    5. applyCircularMaskWithFeather(cropped, localCenter, discRadius, featherSize, bgColor)
+         for each pixel: distance d to center
+           d <= radius:              alpha = 1.0 (opaque)
+           d >= radius+featherSize:  alpha = 0.0 (transparent, filled with bgColor)
+           in between:               cosine interpolation
+    6. if rotationAngle != 0:
+           rotateArbitrary(feathered, rotationAngle, bgColor)
+    7. if postDiscBlack != 0 OR postDiscWhite != 255:
+           applyLevels(feathered, postDiscBlack, postDiscWhite)
+    8. warpedImage = result
+    9. levelsBaseImage = nil
+    10. Return preview
+```
+
+### Operations that trigger redrawDisc
+
+- `RotateDisc(angle)` — adds angle to rotationAngle, calls redrawDisc
+- `ShiftDisc(dx, dy)` — adjusts discCenter, calls redrawDisc
+- `SetFeatherSize(size)` — updates featherSize, calls redrawDisc if discRadius > 0
+- `GetPixelColor(x, y)` — sets bgColor from discBaseImage pixel, calls redrawDisc
+- `SetLevels(...)` — stores values in postDiscBlack/White, calls redrawDisc
+- `AutoContrast()` — computes + stores values in postDiscBlack/White, calls redrawDisc
+
+### ResetDisc
+
+```
+ResetDisc()
+    discCenter    = zero
+    discRadius    = 0
+    rotationAngle = 0
+    discBaseImage = nil
+    postDiscBlack = 0
+    postDiscWhite = 255
+    warpedImage   = nil
+    levelsBaseImage = nil
+    return currentImage preview
+```
+
+---
+
+## Normal Mode (`app_normal.go`)
+
+Normal mode is the simplest mode: the user drags a rectangle on the image and clicks **Crop** to apply it.
+
+**Drag interaction rules (all enforced in `useMouseHandlers`):**
+- A drag may begin on the canvas area outside image bounds; the selection starts when the cursor first enters the image.
+- While dragging, `dragCurrent` is clamped to the image boundary.
+- A click (drag smaller than 5 px in either dimension) clears any existing `normalRect`.
+- `normalDragPendingRef` tracks the outside-image mousedown state; `e.preventDefault()` suppresses the browser's native drag gesture.
+- `normalDragActiveRef` is set `true` synchronously when the pending drag transitions to active so subsequent `mousemove` events bypass the `if (!dragging) return` guard before React re-renders.
+- `mouseUpHandledRef` prevents the `window` `mouseup` listener from double-committing the same gesture.
+
+### NormalCrop
+
+```
+NormalCrop(req)
+    img = workingImage()
+    normalise coordinates (swap if x1>x2 or y1>y2)
+    clamp to img.Bounds()
+    if region is empty → error
+    saveUndo()
+    warpedImage = subImage(img, rect)
+    return preview + width + height + "Cropped to W×H"
+```
+
+`NormalCrop` calls `workingImage()`, so it works on `currentImage` or `warpedImage` transparently. Each call commits a new undo entry.
+
+### ResetNormal
+
+```
+ResetNormal()
+    warpedImage = nil
+    return currentImage preview + dims + "Normal crop reset"
+```
+
+### Frontend state
+
+| State | Meaning |
+|-------|---------|
+| `normalRect` | `{x1,y1,x2,y2}` image-space selection, or `null` |
+| `normalCropApplied` | `true` after first crop or Skip crop — unlocks touch-up |
+
+`normalRect` is purely frontend; never sent to Go until the user clicks **Crop**.
+
+---
+
+## Adjustments (`app_adjust.go`)
+
+### Crop / Rotate / TrimBorders
+
+```
+Crop(req)          require warpedImage; saveUndo(); crop rect; return preview
+Rotate(req)        require warpedImage; saveUndo(); rotate90(flipCode 0=CCW,1=CW,2=180); return preview
+TrimBorders(req)   require warpedImage; saveUndo(); adjust crop offsets; return preview
+```
+
+### SetLevels (non-committing)
+
+```
+SetLevels(req)
+    On first call after a commit: levelsBaseImage = clone of workingImage()
+
+    if preWarp (warpedImage == nil):
+        apply levels to levelsBaseImage → write to currentImage
+        if detectedCorners exist: redraw corner overlay
+    else if discRadius > 0:
+        postDiscBlack = req.black; postDiscWhite = req.white
+        redrawDisc()
+    else:
+        apply levels to levelsBaseImage → warpedImage = result
+
+    NOTE: saveUndo() is NOT called here
+```
+
+### AutoContrast (committing)
+
+```
+AutoContrast()
+    base = levelsBaseImage ?? workingImage()
+    preLevelsBase = clone(base)
+    saveUndo()              ← commits; clears levelsBaseImage
+
+    (blackPt, whitePt) = computeAutoContrastPoints(base)
+    result = applyLevels(base, blackPt, whitePt)
+
+    if preWarp:    currentImage = result; levelsBaseImage = preLevelsBase; redraw overlay if corners
+    if disc:       postDiscBlack/White = values; levelsBaseImage = preLevelsBase; redrawDisc()
+    else:          warpedImage = result; levelsBaseImage = preLevelsBase
+
+    return preview + black/white values
+```
+
+### Undo
+
+```
+Undo()
+    if undoStack empty → "Nothing to undo"
+    entry = pop from undoStack
+    warpedImage = entry.image
+    if entry.rotationAngle != nil: rotationAngle = *entry.rotationAngle
+    return preview
+```
+
+Undo is blocked in the frontend while any drag operation is active (disc shift, rotation, etc.) to prevent undo from firing mid-drag and corrupting disc state.
+
+---
+
+## Touch-Up (`app_touchup.go`, `app_iopaint.go`, `patchmatch.go`)
+
+### Availability
+
+Touch-up is disabled until phase 1 is complete (crop committed or Skip crop):
+
+| Mode | Enabled when |
+|------|--------------|
+| Corner | `cornerState.cornerCount === 4` |
+| Line | `linesProcessed === true` |
+| Disc | `discActive === true` |
+| Normal | `normalCropApplied === true` |
+
+`useTouchupTool` is reset to `false` on mode switch and on image load. After a successful commit it is also reset unless `touchupRemainsActive` is `true` (default).
+
+### Touch-up cancellation
+
+An in-flight `TouchUpApply` can be aborted via:
+- **Internal** (`cancelTouchup()`): called at the top of every reset and load handler in Go.
+- **External** (`CancelTouchup()`): Wails-bound, called fire-and-forget from the frontend before any reset IPC call.
+
+`cancelTouchup()` is called at the top of: `ResetCorners`, `ResetDisc`, `ClearLines`, `ResetNormal`, `LoadImage`, `RecropImage`.
+
+### TouchUpApply (async, non-blocking)
+
+```
+TouchUpApply(maskB64, patchSize, iterations) → ProcessResult{Message:"running"}, nil
+    cancelTouchup()
+    ctx, cancel = context.WithCancel(Background)
+    mask = buildMask(maskB64)         ← synchronous
+
+    go func():
+        defer: cancel(); touchupCancel = nil
+        if touchupBackend == "iopaint":
+            out, err = iopaintFill(ctx, workingImage, mask)
+        else:
+            out, err = PatchMatchFill(ctx, workingImage, mask, patchSize, iterations)
+
+        if cancelled  → EventsEmit("touchup-done", {cancelled:true})
+        if error      → EventsEmit("touchup-done", {error})
+        saveUndo(); setWorkingImage(out)
+        EventsEmit("touchup-done", {preview, message, width, height})
+```
+
+### PatchMatchFill (`patchmatch.go`)
+
+Nearest-neighbour patch matching with forward and reverse passes (parallelised). `ctx.Err()` is checked at entry (critical — mask building can take ~1 s on large images) and periodically throughout. For `context.Background()` (warp outpaint) the done channel is nil and the select takes the default branch with zero overhead.
+
+### iopaintFill (`app_iopaint.go`)
+
+**Does not send the full image.** Crops to the bounding box of the mask plus a 128 px margin, encodes the crop as JPEG (fast; iopaint does not need lossless input), sends it with the cropped grayscale PNG mask to `{iopaintURL}/api/v1/inpaint`. On success, composites only the masked pixels from the response patch back onto a full clone of the source image and returns a full-size `*image.NRGBA`.
+
+**Outpaint (warp fill) always uses PatchMatch** — IOPaint is an inpainting model and produces black for outpainting.
+
+---
+
+## Mode Switching
+
+### The Four Modes Are Mutually Exclusive
+
+Switching modes always resets the warp result. `setMode(m)` is called at the **top** of `handleModeSwitch` — before any async operations — so the mode button updates immediately.
+
+### Mode Switch Handler (`useImageActions.js:handleModeSwitch`)
+
+```
+leaving 'corner'  → ResetCorners(); reset cornerCount, cornersDetected, cropSkipped
+leaving 'disc'    → ResetDisc() if discActive; reset discActive, cropSkipped
+leaving 'line'    → ClearLines(); reset linesDone, lines, linesProcessed, cropSkipped
+leaving 'normal'  → ResetNormal(); reset normalRect, normalCropApplied, cropSkipped
+
+arriving at 'corner' && lastDetectSettings matches current settings:
+    RestoreCornerOverlay() → reuse cached corners; setFitWidth directly; early return
+
+arriving at 'corner' && autoDetectOnModeSwitch:
+    DetectCorners() → same as manual Detect; early return
+
+otherwise:
+    setFitWidth(min(container.w, container.h * w/h))  ← compute directly, do not zero
+    GetCleanPreview()
+    setPreview, setRealImageDims
+```
+
+### GetCleanPreview (`app_mode.go`)
+
+```
+GetCleanPreview()
+    selectedCorners = nil      ← clear in-progress selection
+    detectedCorners preserved  ← RestoreCornerOverlay still works later
+    img = workingImage()       ← currentImage (warpedImage now nil after reset)
+    return preview + dims + "Ready"
+```
+
+### Cached Corner Restoration
+
+When switching back to corner mode, if all of `{maxCorners, qualityLevel, minDistance, accent, useStretch}` match `lastDetectSettings.current`, `RestoreCornerOverlay` is called instead of re-detecting. `lastDetectSettings.current` is set after every successful `DetectCorners` call and cleared only on `loadFile`.
+
+---
+
+## Image Processing Kernels (`imgproc.go`)
+
+### applyWarpFill (`app_corner.go`)
+
+```
+applyWarpFill(img, oobMask)
+    if no OOB pixels → return img unchanged (fast path)
+    if warpFillMode == "outpaint":
+        PatchMatchFill(img, oobMask, patchSize=9, iterations=5)
+        return out
+    // warpFillMode == "fill":
+    for each OOB pixel: img.SetNRGBA(x, y, warpFillColor)
+    return img
+```
+
+### imageToBase64
+
+```
+imageToBase64(img)
+    if max(w, h) > 1600: resize to fit 1600px (preserving aspect)
+    encode as JPEG quality 85  ("data:image/jpeg;base64,...")
+    (fallback: PNG for very small images)
+```
+
+---
+
+## Frontend Coordinate System
+
+All interaction coordinates go through `displayToImage(dispX, dispY)`:
+
+```javascript
+displayToImage(dispX, dispY) {
+    rect = imgRef.current.getBoundingClientRect()
+    return {
+        x: round(dispX * (realImageDims.w / rect.width)),
+        y: round(dispY * (realImageDims.h / rect.height)),
+    }
+}
+```
+
+- `dispX/dispY` are pixel offsets relative to the `<img>` element's top-left corner (from `getRelPos`)
+- `realImageDims` is the full-resolution image size as reported by Go
+- The ratio `realImageDims.w / rect.width` is the display-to-image scale factor
+
+All persistent SVG overlays use `viewBox="0 0 W H"` with `preserveAspectRatio="none"` inside a `position: relative` wrapper so they track the image at any zoom without DOM measurements:
+
+| Overlay | State | Condition |
+|---------|-------|-----------|
+| Corner dots (detected) | `detectedCornerPts` — `{X,Y}[]` image-space | `mode === 'corner'` |
+| Corner dots (selected) | `selectedCornerPts` — `{X,Y}[]` image-space | `mode === 'corner'` |
+| Touch-up strokes | `touchupStrokes` — `{x,y}[]` image-space | `useTouchupTool && strokes.length > 0` |
+| Line preview | `lines` — `{x1,y1,x2,y2}[]` image-space | `mode === 'line'` |
+| Normal crop rect | `normalRect` — `{x1,y1,x2,y2}` image-space | `mode === 'normal'` (confirmed) |
+
+Transient drag overlays (disc drag circle, live line during drag, live normal rect during drag) use display-space coordinates — acceptable for transient previews.
+
+**`lineStartImgRef`:** In line mode, image-space coordinates are captured in `lineStartImgRef` at mousedown so the live drag overlay and the final committed line start remain stable if the user scrollwheels to zoom mid-drag (when `dragStart.x` would otherwise be a stale CSS-pixel value at the old zoom level).
+
+---
+
+## Zoom and Fit Width (`hooks/useZoomPan.js`)
+
+```javascript
+fitWidth = min(container.clientWidth, container.clientHeight * aspectRatio)
+```
+
+The `<img>` style:
+- If `fitWidth > 0`: `width: fitWidth * zoom px, height: auto, maxWidth: none`
+- Else: `maxWidth: zoom*100%, maxHeight: zoom*100%`
+
+`fitWidth` is recalculated by:
+1. `handleImgLoad` — fires when the browser decodes a new image
+2. `ResizeObserver` on `canvasRef` — fires when the container is resized
+
+**Critical:** In the mode switch handler, `fitWidth` is recomputed directly from the Go response dimensions and container size before calling `setPreview`. Do not zero it and rely on `handleImgLoad`: if the preview src string is unchanged (same `currentImage`, deterministic JPEG encoding), the browser skips `onLoad`, leaving `fitWidth` at 0. With `fitWidth = 0`, the image falls back to percentage-based sizing that resolves circularly against the `inline-block` wrapper and collapses; the absolutely-positioned SVG overlay then floods the entire canvas.
+
+**Scroll-wheel zoom formula:** The wheel handler uses `imgRef.current.getBoundingClientRect()` to compute cursor position relative to the image's actual left/top edge. This correctly accounts for the `margin: auto` centering offset when the image is smaller than the canvas — using `canvasRect` instead would anchor zoom to the wrong point. `pendingScrollRef` is set inside the `setZoom` updater and applied synchronously in `useLayoutEffect([zoom])` after the DOM commit.
+
+**`overflow: hidden` + flex item:** The image wrapper div has both `overflow: hidden` (to clip SVG overlays) and `flexShrink: 0`. Without `flex-shrink: 0`, CSS flexbox would zero out `min-width: auto` on any flex item with non-`visible` overflow, silently collapsing the wrapper to fit the canvas and eliminating horizontal scroll.
+
+### Space+Drag Pan
+
+Holding Space while dragging pans via `canvasRef.current.scrollLeft/scrollTop`. `e.preventDefault()` is called for **every** space keydown including repeats (suppresses native scroll), but `spaceDownRef`/`spacePanMode` only update on the first press.
+
+---
+
+## Save (`app_io.go`)
+
+```
+SaveImage(req)
+    require warpedImage != nil
+    1. Create output file at req.outputPath
+    2. Branch on extension:
+         .jpg/.jpeg → JPEG quality 95
+         .bmp       → BMP
+         .tiff/.tif → TIFF
+         default    → PNG with BestSpeed compression + 1MiB bufio.Writer
+    3. Return "Saved to {path}"
+```
+
+**Only `warpedImage` is saved.** A user who has only done pre-warp adjustments will still get a save because `setWorkingImage` always writes to `warpedImage`.
+
+---
+
+## Wails FFI Bridge (`frontend/wailsjs/go/main/App.js`)
+
+Every Go method exposed to the frontend must have an entry here:
+
+```javascript
+export function MethodName(arg1) {
+    return window['go']['main']['App']['MethodName'](arg1);
+}
+```
+
+When adding new Go methods, add the corresponding entry manually. Complex argument/return types are defined in `frontend/wailsjs/go/models.ts`.
+
+---
+
+## Error Handling
+
+- **Recoverable errors** (invalid state, bad args): Go returns `(nil, error)` → Wails rejects the JS promise → `catch` block in the frontend handler → `ErrorModal`
+- **Touch-up failure**: `ErrorModal` with user-friendly message; if IOPaint backend, includes a hint to check the server
+- **WASDQE before crop**: guarded in `useKeyboardShortcuts` — calls `showStatus(...)` instead of forwarding to Go (prevents error modal)
+- **Destructive confirmation** (Re-crop): `ConfirmationModal` (Cancel / Continue) before calling `RecropImage`. Use this pattern for any future action that irreversibly discards session state.
+- **Warp outpaint failure**: hard error; no fallback
+- **Ctrl+W / Cmd+W**: fires before the `imageLoaded` guard, so quitting works even when no image is loaded
+
+---
+
+## Settings Storage
+
+Settings are persisted to `%AppData%\atropos\settings.json` (Windows) / `~/.config/atropos/settings.json` by the Go backend. All running instances share this file. Invalid values are sanitised to defaults by `sanitizeSettings` in `app_settings.go`.
+
+| Setting | JSON key | Go field | Valid values |
+|---------|----------|----------|--------------|
+| Touch-up backend | `touchupBackend` | `touchupBackend` | `"patchmatch"`, `"iopaint"` |
+| IOPaint URL | `iopaintUrl` | `iopaintURL` | Any non-empty URL string |
+| Warp fill mode | `warpFillMode` | `warpFillMode` | `"clamp"`, `"fill"`, `"outpaint"` |
+| Warp fill color | `warpFillColor` | `warpFillColor` | CSS hex `"#rrggbb"` |
+| Disc centre cutout | `discCenterCutout` | `discCenterCutout` | `true` / `false` (default `true`) |
+| Disc cutout size | `discCutoutPercent` | `discCutoutPercent` | Integer 0–50 (default `11`) |
+| Auto-adjust corner params | `autoCornerParams` | *(frontend-only)* | `true` / `false` (default `true`) |
+| Close after save | `closeAfterSave` | *(frontend-only)* | `true` / `false` (default `false`) |
+| Post-save enabled | `postSaveEnabled` | *(frontend-only)* | `true` / `false` (default `false`) |
+| Post-save command | `postSaveCommand` | *(frontend-only)* | Any string |
+| Touch-up brush remains active | `touchupRemainsActive` | *(frontend-only)* | `true` / `false` (default `true`) |
+| Straight edge remains active | `straightEdgeRemainsActive` | *(frontend-only)* | `true` / `false` (default `true`) |
+| Auto-detect corners on mode switch | `autoDetectOnModeSwitch` | *(frontend-only)* | `true` / `false` (default `true`) |
+
+`closeAfterSave` has no Go counterpart — consumed entirely in the frontend `handleSaveImage` handler.
+
+---
+
+## Image Compositor (`compositor.go`, `app_compositor.go`)
+
+A standalone planar image stitching feature. `compositor.go` has no dependency on app state.
+
+### App struct fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `compositorResult` | `*image.NRGBA` | Cached full-resolution stitch output. Nil until a successful `CompositorStitch`. |
+| `compositorMu` | `sync.Mutex` | Protects `compositorResult`. |
+
+### Wails-facing methods
+
+- **`CompositorOpenFilesDialog()`** — multi-file picker returning selected paths
+- **`CompositorStitch(req)`** — decodes all images, reverses path order for `"rtl"`/`"btt"` orientations, runs `stitchImages`, caches result, returns preview + dimensions
+- **`CompositorLoadResult()`** — promotes the cached result into the main editing pipeline (full state reset, sets `originalImage`/`currentImage`, returns `ImageInfo`)
+- **`CompositorSave(req)`** — encodes cached result to disk
+- **`CompositorOpenSaveDialog()`** — save-file dialog
+
+### Stitching pipeline (`compositor.go`)
+
+`stitchImages(imgs)`: detect Shi-Tomasi features on each image → match with SSD + Lowe's ratio test (threshold 0.75) → estimate homography via RANSAC (2000 iterations, 15 px inlier threshold) with DLT + Hartley normalisation → compose homographies so image[0] is the reference frame → render all images into a single canvas with distance-to-border feathering and bilinear interpolation (parallelised by row).
+
+### Frontend flow
+
+`handleCompositorLoad(info)` receives the `ImageInfo` from `CompositorLoadResult`, updates all image state, calls `resetImageState()`, updates `suggestedCornerParamsRef.current`, then switches to Corner mode and runs corner detection. The `CompositorModal` `onLoad` callback closes the modal **before** calling `handleCompositorLoad`.

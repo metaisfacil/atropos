@@ -436,7 +436,10 @@ func (a *App) OpenSaveDialog() (string, error) {
 	defaultDir := ""
 	defaultName := "output"
 	if a.loadedFilePath != "" {
-		defaultDir = filepath.Dir(a.loadedFilePath)
+		dir := filepath.Dir(a.loadedFilePath)
+		if _, statErr := os.Stat(dir); statErr == nil {
+			defaultDir = dir
+		}
 		base := filepath.Base(a.loadedFilePath)
 		defaultName = strings.TrimSuffix(base, filepath.Ext(base))
 	}
@@ -649,8 +652,19 @@ func tokenizeCommandLine(s string) []string {
 // OpenImageDialog shows a file picker for loading images.
 func (a *App) OpenImageDialog() (string, error) {
 	a.logf("OpenImageDialog: showing dialog")
+	defaultDir := ""
+	defaultName := ""
+	if a.loadedFilePath != "" {
+		dir := filepath.Dir(a.loadedFilePath)
+		if _, statErr := os.Stat(dir); statErr == nil {
+			defaultDir = dir
+		}
+		defaultName = filepath.Base(a.loadedFilePath)
+	}
 	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Open Image",
+		Title:            "Open Image",
+		DefaultDirectory: defaultDir,
+		DefaultFilename:  defaultName,
 		Filters: []runtime.FileFilter{
 			{DisplayName: "Image Files (*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif)", Pattern: "*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif"},
 			{DisplayName: "All Files (*.*)", Pattern: "*.*"},

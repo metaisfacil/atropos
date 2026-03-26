@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"net/http"
@@ -65,25 +66,43 @@ type iopaintRequest struct {
 // mask: alpha > 0 marks pixels to be filled (white in the mask sent to IOPaint).
 // ctx cancels the in-flight HTTP request if the caller is aborted.
 func (a *App) iopaintFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha) (*image.NRGBA, error) {
-	// Encode source image as PNG, then base64.
+	// Crop to the bounding box of the mask (+ margin) to keep the payload small.
+	const cropMargin = 128
+	crop, hasMask := maskBoundingBox(mask, cropMargin, src.Bounds())
+	if !hasMask {
+		return toNRGBA(src), nil
+	}
+
+	// Crop source to the patch region (origin translated to 0,0 by toNRGBA).
+	cropSrc := toNRGBA(src.SubImage(crop))
+
+	// Crop mask to the same region.
+	cropMask := image.NewAlpha(image.Rect(0, 0, crop.Dx(), crop.Dy()))
+	for y := crop.Min.Y; y < crop.Max.Y; y++ {
+		for x := crop.Min.X; x < crop.Max.X; x++ {
+			cropMask.SetAlpha(x-crop.Min.X, y-crop.Min.Y, mask.AlphaAt(x, y))
+		}
+	}
+
+	// Encode source patch as JPEG (fast + small; iopaint doesn't need lossless input).
 	var imgBuf bytes.Buffer
-	if err := png.Encode(&imgBuf, src); err != nil {
+	if err := jpeg.Encode(&imgBuf, cropSrc, &jpeg.Options{Quality: 95}); err != nil {
 		return nil, fmt.Errorf("iopaint: encode source image: %w", err)
 	}
-	imgB64 := "data:image/png;base64," + base64.StdEncoding.EncodeToString(imgBuf.Bytes())
+	imgB64 := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(imgBuf.Bytes())
 
 	// Build a grayscale mask PNG: white (255) where masked, black (0) elsewhere.
-	b := src.Bounds()
-	maskGray := image.NewGray(b)
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			if mask.AlphaAt(x, y).A > 0 {
+	maskGray := image.NewGray(cropMask.Bounds())
+	for y := 0; y < crop.Dy(); y++ {
+		for x := 0; x < crop.Dx(); x++ {
+			if cropMask.AlphaAt(x, y).A > 0 {
 				maskGray.SetGray(x, y, color.Gray{Y: 255})
 			}
 		}
 	}
+	pngEnc := png.Encoder{CompressionLevel: png.BestSpeed}
 	var maskBuf bytes.Buffer
-	if err := png.Encode(&maskBuf, maskGray); err != nil {
+	if err := pngEnc.Encode(&maskBuf, maskGray); err != nil {
 		return nil, fmt.Errorf("iopaint: encode mask: %w", err)
 	}
 	maskB64 := "data:image/png;base64," + base64.StdEncoding.EncodeToString(maskBuf.Bytes())
@@ -184,5 +203,50 @@ func (a *App) iopaintFill(ctx context.Context, src *image.NRGBA, mask *image.Alp
 		}
 	}
 
-	return toNRGBA(out), nil
+	patch := toNRGBA(out)
+
+	// Composite: copy inpainted pixels back into a full clone of src.
+	result := toNRGBA(src)
+	for y := crop.Min.Y; y < crop.Max.Y; y++ {
+		for x := crop.Min.X; x < crop.Max.X; x++ {
+			if mask.AlphaAt(x, y).A > 0 {
+				result.SetNRGBA(x, y, patch.NRGBAAt(x-crop.Min.X, y-crop.Min.Y))
+			}
+		}
+	}
+	return result, nil
+}
+
+// maskBoundingBox returns the bounding rectangle of all non-zero pixels in mask,
+// expanded by margin and clamped to clamp. Returns false if the mask is empty.
+func maskBoundingBox(mask *image.Alpha, margin int, clamp image.Rectangle) (image.Rectangle, bool) {
+	b := mask.Bounds()
+	minX, minY := b.Max.X, b.Max.Y
+	maxX, maxY := b.Min.X-1, b.Min.Y-1
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if mask.AlphaAt(x, y).A > 0 {
+				if x < minX {
+					minX = x
+				}
+				if y < minY {
+					minY = y
+				}
+				if x > maxX {
+					maxX = x
+				}
+				if y > maxY {
+					maxY = y
+				}
+			}
+		}
+	}
+	if maxX < minX {
+		return image.Rectangle{}, false
+	}
+	r := image.Rectangle{
+		Min: image.Point{X: minX - margin, Y: minY - margin},
+		Max: image.Point{X: maxX + 1 + margin, Y: maxY + 1 + margin},
+	}
+	return r.Intersect(clamp), true
 }

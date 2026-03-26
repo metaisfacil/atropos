@@ -22,12 +22,11 @@ import {
   SaveImage,
   RunPostSaveCommand,
   Undo,
-  CompositorLoadResult,
 } from '../../wailsjs/go/main/App'
 
 export function useImageActions({
   mode, loading, imageLoaded, discActive, linesProcessed, normalCropApplied,
-  cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, postSaveEnabled, postSaveCommand, autoDetectOnModeSwitch,
+  cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, setCloseAfterSave, postSaveEnabled, setPostSaveEnabled, postSaveCommand, setPostSaveCommand, autoDetectOnModeSwitch,
   setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setInputImageDims, setImgNatural,
   setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
   setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscRotation, setDiscBgColor, setNormalRect, setNormalCropApplied, setCornersDetected,
@@ -164,10 +163,12 @@ export function useImageActions({
   // ── Core file loader (private — used by dialog, drag-drop, and launch args) ─
   const loadFile = async (filePath, autoDetect = true) => {
     CancelTouchup()
+    detectGenRef.current++   // invalidate any in-flight corner detection
+    CancelCornerDetect()
     setLoading(true)
     setLoadingFull(true)
     setZoom(1)
-    const name = filePath.split(/[\/]/).pop()
+    const name = filePath.split(/[/\\]/).pop()
     showStatus(`Loading ${name}…`)
 
     const result = await LoadImage({ filePath })
@@ -270,20 +271,11 @@ export function useImageActions({
 
     const onDrop = async (e) => {
       if (!e.dataTransfer) return
-      const file = e.dataTransfer.files?.[0]
-
-      if (file && file.type.startsWith('image/') && !file.path) {
-        e.preventDefault()
-        try {
-          const buffer = await file.arrayBuffer()
-          await loadImageFromBytes(buffer, file.name || 'dropped-image')
-          return
-        } catch (err) {
-          console.error('Drop image load error:', err)
-          showError(err)
-        }
-      }
-
+      // File drops from the filesystem are handled exclusively by Wails OnFileDrop
+      // (which provides file paths). In WebView2, File.path is never set, so the
+      // old !file.path guard couldn't distinguish Explorer drops from browser drags,
+      // causing every Explorer drop to also trigger a slow bytes-based load here.
+      // Only handle http/https URL drops (e.g. dragging an image URL from a browser).
       const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')
       if (url && /^https?:\/\//.test(url)) {
         e.preventDefault()
@@ -310,10 +302,17 @@ export function useImageActions({
   }, [])
 
   // ── Launch arguments ───────────────────────────────────────────────────────
+  // The `cancelled` flag guards against React StrictMode's double-invocation
+  // of effects with [] deps.  In development StrictMode React mounts → runs
+  // effects → unmounts (cleanup) → remounts → runs effects again.  Without
+  // the flag both invocations would race to call LoadImage, causing a second
+  // detection run or a spurious setLoading(false) mid-detection.
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
         const args = (await GetLaunchArgs()) || {}
+        if (cancelled) return
         if (args.mode) setMode(args.mode)
         // CLI-provided post-save overrides persisted settings (do not force quit)
         if (args.postSaveCommand) {
@@ -328,12 +327,14 @@ export function useImageActions({
           showStatus('No image loaded')
         }
       } catch (err) {
+        if (cancelled) return
         console.error('Launch args error:', err)
         setLoading(false)
         setLoadingFull(false)
         showStatus('No image loaded')
       }
     })()
+    return () => { cancelled = true }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Compositor: load result into corner-mode pipeline ───────────────────────
