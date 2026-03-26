@@ -8,6 +8,8 @@ export function AutoContrast():Promise<main.ProcessResult>;
 
 export function CancelCornerDetect():Promise<void>;
 
+export function CancelLineProgress():Promise<void>;
+
 export function CancelTouchup():Promise<void>;
 
 export function ClearLines():Promise<main.ProcessResult>;
@@ -67,6 +69,8 @@ export function RecropImage():Promise<main.ImageInfo>;
 export function ResetCorners():Promise<main.ProcessResult>;
 
 export function ResetDisc():Promise<main.ProcessResult>;
+
+export function ResetImage():Promise<main.ProcessResult>;
 
 export function ResetNormal():Promise<main.ProcessResult>;
 

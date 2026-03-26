@@ -371,6 +371,7 @@ export function useMouseHandlers({
           setDetectedCornerPts([])
           setSelectedCornerPts([])
           if (result.width && result.height) setRealImageDims({ w: result.width, h: result.height })
+          if (setUnsavedChanges) setUnsavedChanges(true)
         } else {
           setSelectedCornerPts(prev => [...prev, { X: result.snappedX, Y: result.snappedY }])
         }
@@ -540,6 +541,7 @@ export function useMouseHandlers({
           if (proc.width && proc.height) setRealImageDims({ w: proc.width, h: proc.height })
           showStatus('Perspective correction applied')
           setLinesDone(0); setLines([]); setLinesProcessed(true)
+          if (setUnsavedChanges) setUnsavedChanges(true)
           setLoading(false)
         }
       } catch (err) {

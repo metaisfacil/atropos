@@ -14,6 +14,10 @@ export function CancelCornerDetect() {
   return window['go']['main']['App']['CancelCornerDetect']();
 }
 
+export function CancelLineProgress() {
+  return window['go']['main']['App']['CancelLineProgress']();
+}
+
 export function CancelTouchup() {
   return window['go']['main']['App']['CancelTouchup']();
 }
@@ -132,6 +136,10 @@ export function ResetCorners() {
 
 export function ResetDisc() {
   return window['go']['main']['App']['ResetDisc']();
+}
+
+export function ResetImage() {
+  return window['go']['main']['App']['ResetImage']();
 }
 
 export function ResetNormal() {

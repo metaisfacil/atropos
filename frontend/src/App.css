@@ -44,8 +44,8 @@
   padding-left: 10px; /* small left gutter so content appears centered */
   scrollbar-gutter: stable both-edges;
   align-items: stretch;
-  margin-bottom: 20px;
   margin-top: 20px;
+  margin-bottom: 20px;
 }
 
 /* Inner wrapper to vertically center the mode panels group when there's spare space */
@@ -500,19 +500,6 @@ button.save-btn:hover {
 .shortcut-divider {
   border-top: 1px solid #3e3e42;
   margin: 8px 0;
-}
-
-/* Skip crop: muted amber/ochre — washed-out, distinct from green/orange/blue */
-button.skip-crop-btn {
-  background: #76457f;
-}
-
-button.skip-crop-btn:hover {
-  background: #63376aff;
-}
-
-button.skip-crop-btn:active {
-  background: #502d57ff;
 }
 
 /* Re-crop: muted slate-blue — washed-out, distinct from the vivid primary blue */

@@ -93,6 +93,14 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	t2 := time.Now()
 	a.originalImage = nrgba            // reuse — toNRGBA already made a fresh copy
 	a.currentImage = cloneImage(nrgba) // one clone instead of two
+
+	// Apply automatic border trim immediately after load, but keep originalImage
+	trimRect := trimBordersRect(a.currentImage)
+	if !trimRect.Eq(a.currentImage.Bounds()) {
+		a.currentImage = subImage(a.currentImage, trimRect)
+		a.logf("LoadImage: auto-trimmed borders to %dx%d", a.currentImage.Bounds().Dx(), a.currentImage.Bounds().Dy())
+	}
+
 	a.imageLoaded = true
 	a.loadedFilePath = req.FilePath
 	a.resetPipelineState()
@@ -123,6 +131,36 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 		DPIX:                  dpiX,
 		DPIY:                  dpiY,
 		SuggestedCornerParams: suggestCornerParams(b.Dx(), b.Dy()),
+	}, nil
+}
+
+// ResetImage restores the app image state back to the original loaded image
+// and clears all intermediate crop/warp/adjustment state.
+func (a *App) ResetImage() (*ProcessResult, error) {
+	a.logf("ResetImage")
+	a.cancelTouchup()
+	if a.originalImage == nil {
+		return nil, fmt.Errorf("ResetImage: no image loaded")
+	}
+
+	// Restore the pre-load image and clear derived state.
+	a.currentImage = cloneImage(a.originalImage)
+	a.warpedImage = nil
+	a.levelsBaseImage = nil
+	a.undoStack = nil
+	a.resetPipelineState()
+	a.imageLoaded = true
+
+	preview, err := imageToBase64(a.currentImage)
+	if err != nil {
+		return nil, err
+	}
+	b := a.currentImage.Bounds()
+	return &ProcessResult{
+		Preview: preview,
+		Message: "Reset to original image",
+		Width:   b.Dx(),
+		Height:  b.Dy(),
 	}, nil
 }
 
@@ -242,7 +280,8 @@ type SaveRequest struct {
 // SaveImage writes the processed image to disk.
 func (a *App) SaveImage(req SaveRequest) (*ProcessResult, error) {
 	a.logf("SaveImage: outputPath=%q", req.OutputPath)
-	if a.warpedImage == nil {
+	img := a.workingImage()
+	if img == nil {
 		const msg = "SaveImage: no image to save"
 		a.logf(msg)
 		return nil, fmt.Errorf(msg)
@@ -257,15 +296,15 @@ func (a *App) SaveImage(req SaveRequest) (*ProcessResult, error) {
 	ext := strings.ToLower(filepath.Ext(req.OutputPath))
 	switch ext {
 	case ".jpg", ".jpeg":
-		err = jpeg.Encode(f, a.warpedImage, &jpeg.Options{Quality: 95})
+		err = jpeg.Encode(f, img, &jpeg.Options{Quality: 95})
 	case ".bmp":
-		err = bmp.Encode(f, a.warpedImage)
+		err = bmp.Encode(f, img)
 	case ".tiff", ".tif":
-		err = tiff.Encode(f, a.warpedImage, nil)
+		err = tiff.Encode(f, img, nil)
 	default:
 		bw := bufio.NewWriterSize(f, 1<<20) // 1 MiB write buffer
 		enc := png.Encoder{CompressionLevel: png.BestSpeed}
-		if err = enc.Encode(bw, a.warpedImage); err == nil {
+		if err = enc.Encode(bw, img); err == nil {
 			err = bw.Flush()
 		}
 	}

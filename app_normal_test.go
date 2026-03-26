@@ -23,6 +23,152 @@ func newTestApp(w, h int) *App {
 	return a
 }
 
+func TestResetImage_NoImage(t *testing.T) {
+	a := NewApp()
+	_, err := a.ResetImage()
+	if err == nil {
+		t.Fatal("expected error when no image loaded")
+	}
+}
+
+func TestResetImage_RestoresOriginal(t *testing.T) {
+	a := newTestApp(10, 10)
+	if a.originalImage == nil {
+		t.Fatal("original image should be set")
+	}
+
+	clr := color.NRGBA{R: 255, G: 0, B: 0, A: 255}
+	a.currentImage.SetNRGBA(0, 0, clr)
+	if a.currentImage.NRGBAAt(0, 0) != clr {
+		t.Fatal("setup failed")
+	}
+
+	_, err := a.ResetImage()
+	if err != nil {
+		t.Fatalf("ResetImage failed: %v", err)
+	}
+
+	if a.currentImage.NRGBAAt(0, 0) == clr {
+		t.Fatal("ResetImage did not restore preloaded original pixel")
+	}
+}
+
+func TestTrimBordersRect_FindsBorder(t *testing.T) {
+	a := newTestApp(10, 10)
+	for i := 0; i < 10; i++ {
+		a.currentImage.SetNRGBA(i, 0, color.NRGBA{R: 250, G: 250, B: 250, A: 255})
+		a.currentImage.SetNRGBA(i, 9, color.NRGBA{R: 250, G: 250, B: 250, A: 255})
+		a.currentImage.SetNRGBA(0, i, color.NRGBA{R: 250, G: 250, B: 250, A: 255})
+		a.currentImage.SetNRGBA(9, i, color.NRGBA{R: 250, G: 250, B: 250, A: 255})
+	}
+	r := trimBordersRect(a.currentImage)
+	if r != image.Rect(1, 1, 9, 9) {
+		t.Fatalf("expected trim rect 1,1,9,9 got %v", r)
+	}
+}
+
+func TestWorkflow_ComplexStateMachine(t *testing.T) {
+	a := newTestApp(20, 20)
+	original := cloneImage(a.originalImage)
+
+	// Border trim phase.
+	for i := 0; i < 20; i++ {
+		a.currentImage.SetNRGBA(i, 0, color.NRGBA{R: 245, G: 245, B: 245, A: 255})
+		a.currentImage.SetNRGBA(i, 19, color.NRGBA{R: 245, G: 245, B: 245, A: 255})
+		a.currentImage.SetNRGBA(0, i, color.NRGBA{R: 245, G: 245, B: 245, A: 255})
+		a.currentImage.SetNRGBA(19, i, color.NRGBA{R: 245, G: 245, B: 245, A: 255})
+	}
+	res, err := a.TrimBorders()
+	if err != nil {
+		t.Fatalf("TrimBorders failed: %v", err)
+	}
+	if res.Width != 18 || res.Height != 18 {
+		t.Fatalf("TrimBorders unexpected bounds %dx%d", res.Width, res.Height)
+	}
+
+	// Normal crop phase.
+	res, err = a.NormalCrop(NormalCropRequest{X1: 1, Y1: 1, X2: 10, Y2: 10})
+	if err != nil {
+		t.Fatalf("NormalCrop failed after TrimBorders: %v", err)
+	}
+	if res.Width != 9 || res.Height != 9 {
+		t.Fatalf("NormalCrop expected 9x9, got %dx%d", res.Width, res.Height)
+	}
+
+	// Levels/auto contrast phase.
+	_, err = a.SetLevels(SetLevelsRequest{Black: 20, White: 235})
+	if err != nil {
+		t.Fatalf("SetLevels failed: %v", err)
+	}
+	res, err = a.AutoContrast()
+	if err != nil {
+		t.Fatalf("AutoContrast failed: %v", err)
+	}
+
+	// Undo phase.
+	undoRes, err := a.Undo()
+	if err != nil {
+		t.Fatalf("Undo failed: %v", err)
+	}
+	if undoRes.Width != 9 || undoRes.Height != 9 {
+		t.Fatalf("Undo expected 9x9 after Undo, got %dx%d", undoRes.Width, undoRes.Height)
+	}
+
+	// Line mode phase.
+	for _, l := range linesForRect([2]int{1, 1}, [2]int{8, 1}, [2]int{8, 8}, [2]int{1, 8}) {
+		_, err = a.AddLine(l)
+		if err != nil {
+			t.Fatalf("AddLine failed: %v", err)
+		}
+	}
+	_, err = a.ProcessLines()
+	if err != nil {
+		t.Fatalf("ProcessLines failed: %v", err)
+	}
+	if a.warpedImage == nil {
+		t.Fatal("ProcessLines should set warpedImage")
+	}
+
+	// Corner mode phase (reset path).
+	_, err = a.ResetCorners()
+	if err != nil {
+		t.Fatalf("ResetCorners failed: %v", err)
+	}
+
+	// Disc mode phase (reset path). Should not require prior draw disc.
+	_, err = a.ResetDisc()
+	if err != nil {
+		t.Fatalf("ResetDisc failed: %v", err)
+	}
+
+	// Normal reset phase.
+	_, err = a.ResetNormal()
+	if err != nil {
+		t.Fatalf("ResetNormal failed: %v", err)
+	}
+	if a.warpedImage != nil {
+		t.Fatal("ResetNormal should clear warpedImage")
+	}
+
+	// Full image reset phase.
+	_, err = a.ResetImage()
+	if err != nil {
+		t.Fatalf("ResetImage failed: %v", err)
+	}
+	if a.currentImage.Bounds() != original.Bounds() {
+		t.Fatalf("ResetImage did not restore dimension; got %v, want %v", a.currentImage.Bounds(), original.Bounds())
+	}
+	if got, want := a.currentImage.NRGBAAt(0, 0), original.NRGBAAt(0, 0); got != want {
+		t.Fatalf("ResetImage did not restore pixel content; got %v, want %v", got, want)
+	}
+	if a.warpedImage != nil {
+		t.Fatal("ResetImage should clear warpedImage")
+	}
+	if len(a.undoStack) != 0 {
+		t.Fatalf("ResetImage should clear undo stack, got length %d", len(a.undoStack))
+	}
+}
+
 // ---- NormalCrop ----
 
 func TestNormalCrop_NoImage(t *testing.T) {
