@@ -107,3 +107,5 @@ export function TouchUpApply(arg1:string,arg2:number,arg3:number):Promise<main.P
 export function TrimBorders():Promise<main.ProcessResult>;
 
 export function Undo():Promise<main.ProcessResult>;
+
+export function UndoLastCorner():Promise<number>;

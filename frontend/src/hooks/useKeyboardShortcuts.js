@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import {
-  Crop, Rotate, ShiftDisc, RotateDisc, SetFeatherSize, GetPixelColor, ConfirmClose,
+  Crop, Rotate, ShiftDisc, RotateDisc, SetFeatherSize, GetPixelColor, ConfirmClose, UndoLastCorner,
 } from '../../wailsjs/go/main/App'
 import { Quit } from '../../wailsjs/runtime/runtime'
 
@@ -12,6 +12,7 @@ export function useKeyboardShortcuts({
   displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, handleLoadImage, canSave,
   normalRect, handleNormalCrop, handleUndo,
   unsavedChanges, setUnsavedChanges, confirmClose,
+  cornerState, setCornerState, setSelectedCornerPts,
 }) {
   useEffect(() => {
     const handleKeyDown = async (e) => {
@@ -100,6 +101,18 @@ export function useKeyboardShortcuts({
           if (active && (['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable)) return
           if (ctrlDragRef.current !== null || shiftDragRef.current !== null) return
           e.preventDefault()
+          // In corner mode, undo individual corner clicks before touching the backend undo stack.
+          // The 4th click triggers a warp (which pushes to backend undo), so only intercept 1–3.
+          if (mode === 'corner' && cornerState.cornerCount > 0 && cornerState.cornerCount < 4) {
+            const newCount = cornerState.cornerCount - 1
+            await UndoLastCorner()
+            setCornerState(s => ({ ...s, cornerCount: newCount }))
+            setSelectedCornerPts(prev => prev.slice(0, -1))
+            showStatus(newCount === 0
+              ? 'Corner selection cleared — click to select corners'
+              : `Corner ${newCount} of 4 selected`)
+            return
+          }
           await handleUndo()
           return
         }
@@ -171,5 +184,5 @@ export function useKeyboardShortcuts({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, canSave, handleLoadImage]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, canSave, handleLoadImage, cornerState.cornerCount]) // eslint-disable-line react-hooks/exhaustive-deps
 }
