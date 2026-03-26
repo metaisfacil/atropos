@@ -1331,7 +1331,8 @@ button.about-btn:hover {
 
 .compositor-preview-frame {
   flex: 1;
-  min-width: 0;  /* allow flex to shrink without collapsing max-width: 100% on the img */
+  min-width: 0;    /* explicit 0 so overflow: hidden below doesn't collapse the frame */
+  overflow: hidden; /* clip the image during rotation to prevent body scrollbar flicker */
   display: flex;
   align-items: center;
   justify-content: center;
