@@ -12,9 +12,10 @@ import (
 // had produced a warpedImage; restoring such an entry returns the app to the
 // initial cropping phase rather than a post-warp editing state.
 type undoEntry struct {
-	image         *image.NRGBA
-	rotationAngle *float64
-	preWarp       bool
+	image           *image.NRGBA
+	rotationAngle   *float64
+	preWarp         bool
+	selectedCorners []image.Point // in-progress corner clicks at save time (corner mode only)
 }
 
 // CropRequest specifies which edge to crop.
@@ -119,6 +120,14 @@ func (a *App) Undo() (*ProcessResult, error) {
 		// returns currentImage again (pre-crop state).
 		a.currentImage = entry.image
 		a.warpedImage = nil
+		// Restore any in-progress corner selection that was captured at save time.
+		if len(entry.selectedCorners) > 0 {
+			sc := make([]image.Point, len(entry.selectedCorners))
+			copy(sc, entry.selectedCorners)
+			a.selectedCorners = sc
+		} else {
+			a.selectedCorners = nil
+		}
 		// Clear disc state that may have been built up since the save.
 		a.discCenter = image.Point{}
 		a.discRadius = 0
@@ -129,7 +138,7 @@ func (a *App) Undo() (*ProcessResult, error) {
 		a.postDiscBlack = 0
 		a.postDiscWhite = 255
 		a.levelsBaseImage = nil
-		a.logf("Undo: restored pre-warp state")
+		a.logf("Undo: restored pre-warp state (selectedCorners=%d)", len(a.selectedCorners))
 	} else {
 		a.warpedImage = entry.image
 		if entry.rotationAngle != nil {
@@ -144,12 +153,24 @@ func (a *App) Undo() (*ProcessResult, error) {
 		return nil, err
 	}
 	b := img.Bounds()
-	return &ProcessResult{
+	res := &ProcessResult{
 		Preview:   preview,
 		Width:     b.Dx(),
 		Height:    b.Dy(),
 		Uncropped: entry.preWarp,
-	}, nil
+	}
+	if entry.preWarp {
+		if len(a.detectedCorners) > 0 {
+			res.Corners = a.detectedCorners
+		}
+		if len(a.selectedCorners) > 0 {
+			res.SelectedCorners = a.selectedCorners
+			res.Message = fmt.Sprintf("Corner %d of 4 selected", len(a.selectedCorners))
+		} else {
+			res.Message = "Crop undone — click 4 corners"
+		}
+	}
+	return res, nil
 }
 
 // Crop removes pixels from the specified edge of the warped image.

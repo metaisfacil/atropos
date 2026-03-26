@@ -382,6 +382,13 @@ func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
 
 	// 4 corners selected → perform perspective warp
 	a.saveUndo()
+	// Patch the freshly-pushed undo entry to remember the 3 in-progress corner
+	// clicks so that Undo() can restore them instead of starting from scratch.
+	if n := len(a.undoStack); n > 0 && len(a.selectedCorners) >= 4 {
+		prev := make([]image.Point, 3)
+		copy(prev, a.selectedCorners[:3])
+		a.undoStack[n-1].selectedCorners = prev
+	}
 	_, width, height, warpErr := a.warpFromCorners(a.selectedCorners[:4])
 	if warpErr != nil {
 		return nil, warpErr
@@ -428,6 +435,17 @@ func (a *App) RestoreCornerOverlay(req RestoreCornerOverlayRequest) (*ProcessRes
 		Message: fmt.Sprintf("Detected %d corners — click 4 corners", len(a.detectedCorners)),
 		Corners: a.detectedCorners,
 	}, nil
+}
+
+// UndoLastCorner removes the most recently selected corner from the
+// in-progress selection without resetting the full state. It is a no-op if
+// no corners are currently selected. Returns the number of corners remaining.
+func (a *App) UndoLastCorner() int {
+	if len(a.selectedCorners) > 0 {
+		a.selectedCorners = a.selectedCorners[:len(a.selectedCorners)-1]
+	}
+	a.logf("UndoLastCorner: %d corners remaining", len(a.selectedCorners))
+	return len(a.selectedCorners)
 }
 
 // ResetCorners clears any in-progress corner selection. The detected corners

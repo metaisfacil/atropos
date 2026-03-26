@@ -240,6 +240,7 @@ export default function App() {
     confirmClose: async () => {
       await window.go.main.App.ConfirmClose()
     },
+    cornerState, setCornerState, setSelectedCornerPts,
   })
 
   React.useEffect(() => {

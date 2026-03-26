@@ -213,3 +213,7 @@ export function TrimBorders() {
 export function Undo() {
   return window['go']['main']['App']['Undo']();
 }
+
+export function UndoLastCorner() {
+  return window['go']['main']['App']['UndoLastCorner']();
+}

@@ -405,6 +405,7 @@ export namespace main {
 	    black?: number;
 	    white?: number;
 	    corners?: image.Point[];
+	    selectedCorners?: image.Point[];
 	    uncropped?: boolean;
 	    unmaskedPreview?: string;
 	    discCenterX?: number;
@@ -428,6 +429,7 @@ export namespace main {
 	        this.black = source["black"];
 	        this.white = source["white"];
 	        this.corners = this.convertValues(source["corners"], image.Point);
+	        this.selectedCorners = this.convertValues(source["selectedCorners"], image.Point);
 	        this.uncropped = source["uncropped"];
 	        this.unmaskedPreview = source["unmaskedPreview"];
 	        this.discCenterX = source["discCenterX"];

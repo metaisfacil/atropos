@@ -566,10 +566,16 @@ export function useImageActions({
         // the frontend was actually in post-crop state to avoid clobbering
         // in-progress corner clicks or other pre-crop selections.
         if (mode === 'corner' && cornerState.cornerCount >= 4) {
-          setCornerState(s => ({ ...s, cornerCount: 0 }))
-          setSelectedCornerPts([])
+          const restoredCorners = res.selectedCorners ?? []
+          setCornerState(s => ({ ...s, cornerCount: restoredCorners.length }))
+          setSelectedCornerPts(restoredCorners)
           setCropSkipped(false)
           setUseTouchupTool(false)
+          // Restore detected corner dots if the backend still has them.
+          if (res.corners && res.corners.length > 0) {
+            setDetectedCornerPts(res.corners)
+            setCornersDetected(true)
+          }
         } else if (mode === 'disc' && discActive) {
           setDiscActive(false)
           setDragging(false)
