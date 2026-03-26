@@ -1,5 +1,128 @@
 import { describe, it, expect } from 'vitest'
-import { displayToImage, computeDiscShift } from './imageCoords'
+import { getDisplayScale, displayToImage, computeDiscShift } from './imageCoords'
+
+describe('getDisplayScale', () => {
+  it('returns correct scale factors for basic case', () => {
+    expect(getDisplayScale({ w: 2000, h: 1000 }, 400, 200)).toEqual({ scaleX: 5, scaleY: 5 })
+  })
+
+  it('returns null for null realImageDims', () => {
+    expect(getDisplayScale(null, 400, 200)).toBeNull()
+  })
+
+  it('returns null for zero-area realImageDims', () => {
+    expect(getDisplayScale({ w: 0, h: 500 }, 400, 200)).toBeNull()
+    expect(getDisplayScale({ w: 500, h: 0 }, 400, 200)).toBeNull()
+  })
+
+  it('returns null for zero client width or height', () => {
+    expect(getDisplayScale({ w: 1000, h: 1000 }, 0, 200)).toBeNull()
+    expect(getDisplayScale({ w: 1000, h: 1000 }, 400, 0)).toBeNull()
+  })
+
+  it('uses naturalImageDims for scale when provided and valid', () => {
+    // Real image is 3000×2000 but disc crop is 300×200; scale should be from 300×200
+    const scale = getDisplayScale({ w: 3000, h: 2000 }, 300, 200, { w: 300, h: 200 })
+    expect(scale).toEqual({ scaleX: 1, scaleY: 1 })
+  })
+
+  it('falls back to realImageDims when naturalImageDims has zero width', () => {
+    const scale = getDisplayScale({ w: 1000, h: 1000 }, 100, 100, { w: 0, h: 500 })
+    expect(scale).toEqual({ scaleX: 10, scaleY: 10 })
+  })
+
+  it('falls back to realImageDims when naturalImageDims is null', () => {
+    const scale = getDisplayScale({ w: 1000, h: 1000 }, 100, 100, null)
+    expect(scale).toEqual({ scaleX: 10, scaleY: 10 })
+  })
+
+  it('handles non-square images with independent x/y scale factors', () => {
+    const scale = getDisplayScale({ w: 1200, h: 900 }, 400, 300)
+    expect(scale).toEqual({ scaleX: 3, scaleY: 3 })
+  })
+})
+
+describe('displayToImage with naturalImageDims override', () => {
+  it('uses naturalImageDims for disc mode coordinate mapping', () => {
+    // Disc crop is 784×776, displayed at 392×388 (zoom ~0.5)
+    // scale = 784/392 = 2, 776/388 = 2
+    const pt = displayToImage(196, 194, { w: 2800, h: 2764 }, 392, 388, { w: 784, h: 776 })
+    expect(pt).toEqual({ x: 392, y: 388 })
+  })
+
+  it('falls back to realImageDims when naturalImageDims not given', () => {
+    const pt = displayToImage(50, 50, { w: 1000, h: 1000 }, 100, 100)
+    expect(pt).toEqual({ x: 500, y: 500 })
+  })
+
+  it('uses naturalImageDims even when realImageDims is much larger', () => {
+    // Confirms disc mode doesn't accidentally use full source dims for scale
+    const withNat  = displayToImage(10, 10, { w: 3000, h: 3000 }, 100, 100, { w: 200, h: 200 })
+    const withoutNat = displayToImage(10, 10, { w: 3000, h: 3000 }, 100, 100)
+    expect(withNat.x).not.toBe(withoutNat.x)
+    expect(withNat).toEqual({ x: 20, y: 20 })   // scale from 200/100
+    expect(withoutNat).toEqual({ x: 300, y: 300 }) // scale from 3000/100
+  })
+})
+
+describe('computeDiscShift clamping', () => {
+  // The formula negates the screen drag: desiredImgDx = -(screenDx * scaleX).
+  // Dragging right (positive screenDx) moves the disc LEFT in image space.
+
+  it('clamps disc center at left/top boundary', () => {
+    // Disc center at x=150, radius=100 → min allowed center = 100.
+    // Drag right (screenDx=+10000) → desiredImgDx ≈ -20000, clamped to dx=-50.
+    const result = computeDiscShift(
+      10000, 0,
+      { w: 1000, h: 1000 }, 100, 0,
+      { x: 150, y: 500 }, { x: 150, y: 500 },
+      500, 500, { w: 1000, h: 1000 },
+    )
+    expect(result).not.toBeNull()
+    expect(result.dx).toBe(-50)
+  })
+
+  it('clamps disc center at right/bottom boundary', () => {
+    // Disc center at x=850, radius=100 → max allowed center = 900.
+    // Drag left (screenDx=-10000) → desiredImgDx ≈ +20000, clamped to dx=+50.
+    const result = computeDiscShift(
+      -10000, 0,
+      { w: 1000, h: 1000 }, 100, 0,
+      { x: 850, y: 500 }, { x: 850, y: 500 },
+      500, 500, { w: 1000, h: 1000 },
+    )
+    expect(result).not.toBeNull()
+    expect(result.dx).toBe(50)
+  })
+
+  it('returns zero shift when disc center is already at boundary', () => {
+    // Center exactly at min (radius=100, center.x=100), drag right → still can't go further.
+    const result = computeDiscShift(
+      1000, 0,
+      { w: 1000, h: 1000 }, 100, 0,
+      { x: 100, y: 500 }, { x: 100, y: 500 },
+      500, 500, { w: 1000, h: 1000 },
+    )
+    expect(result).not.toBeNull()
+    expect(result.dx).toBe(0)
+    expect(result.liveDx).toBeCloseTo(0)  // may be -0 due to floating-point negation
+  })
+
+  it('liveDx/liveDy are zero when shift is clamped to zero on both axes', () => {
+    // Both axes at minimum boundary, dragging to push further past the boundary.
+    const result = computeDiscShift(
+      1000, 1000,
+      { w: 1000, h: 1000 }, 100, 0,
+      { x: 100, y: 100 }, { x: 100, y: 100 },
+      500, 500, { w: 1000, h: 1000 },
+    )
+    expect(result).not.toBeNull()
+    expect(result.dx).toBe(0)
+    expect(result.dy).toBe(0)
+    expect(result.liveDx).toBeCloseTo(0)  // may be -0 due to floating-point negation
+    expect(result.liveDy).toBeCloseTo(0)
+  })
+})
 
 describe('image coordinate helpers', () => {
   it('displayToImage uses explicit client size, not bounding rect', () => {
