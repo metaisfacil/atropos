@@ -759,21 +759,48 @@ func perspectiveTransformWithMask(src *image.NRGBA, srcPts, dstPts [4]image.Poin
 // ---- Rotation ----
 
 // rotate90 rotates an image 90 degrees. flipCode 0 = CCW, 1 = CW.
+// Uses direct Pix slice indexing (no bounds-checked method calls) and
+// splits the work across all available CPU cores.
 func rotate90(src *image.NRGBA, flipCode int) *image.NRGBA {
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
 	dst := image.NewNRGBA(image.Rect(0, 0, h, w))
 
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			c := src.NRGBAAt(b.Min.X+x, b.Min.Y+y)
-			if flipCode == 1 {
-				dst.SetNRGBA(h-1-y, x, c)
-			} else {
-				dst.SetNRGBA(y, w-1-x, c)
-			}
+	nCPU := goruntime.NumCPU()
+	var wg sync.WaitGroup
+	rowsPer := (h + nCPU - 1) / nCPU
+	for i := 0; i < nCPU; i++ {
+		y0, y1 := i*rowsPer, (i+1)*rowsPer
+		if y1 > h {
+			y1 = h
 		}
+		if y0 >= y1 {
+			break
+		}
+		wg.Add(1)
+		go func(y0, y1 int) {
+			defer wg.Done()
+			for y := y0; y < y1; y++ {
+				srcRowBase := (b.Min.Y+y)*src.Stride + b.Min.X*4
+				for x := 0; x < w; x++ {
+					si := srcRowBase + x*4
+					var di int
+					if flipCode == 1 {
+						// CW: src(x,y) → dst(h-1-y, x)
+						di = x*dst.Stride + (h-1-y)*4
+					} else {
+						// CCW: src(x,y) → dst(y, w-1-x)
+						di = (w-1-x)*dst.Stride + y*4
+					}
+					dst.Pix[di+0] = src.Pix[si+0]
+					dst.Pix[di+1] = src.Pix[si+1]
+					dst.Pix[di+2] = src.Pix[si+2]
+					dst.Pix[di+3] = src.Pix[si+3]
+				}
+			}
+		}(y0, y1)
 	}
+	wg.Wait()
 	return dst
 }
 

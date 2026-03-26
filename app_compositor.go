@@ -86,15 +86,34 @@ func (a *App) CompositorStitch(req CompositorStitchRequest) (*CompositorResult, 
 		paths = rev
 	}
 
-	// Decode all images.
-	imgs := make([]*image.NRGBA, len(paths))
+	// Decode all images in parallel — decoding is I/O + CPU bound and dominates
+	// total stitch time when images are large, so concurrent decoding is a
+	// significant win even for just 2 files.
+	type decodeResult struct {
+		idx int
+		img *image.NRGBA
+		err error
+	}
+	ch := make(chan decodeResult, len(paths))
 	for i, path := range paths {
-		raw, err := a.decodeImageFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode image %d (%q): %w", i, filepath.Base(path), err)
+		go func(i int, path string) {
+			raw, err := a.decodeImageFile(path)
+			if err != nil {
+				ch <- decodeResult{idx: i, err: fmt.Errorf("failed to decode image %d (%q): %w", i, filepath.Base(path), err)}
+				return
+			}
+			img := toNRGBA(raw)
+			a.logf("CompositorStitch: image %d decoded: %v", i, img.Bounds())
+			ch <- decodeResult{idx: i, img: img}
+		}(i, path)
+	}
+	imgs := make([]*image.NRGBA, len(paths))
+	for range paths {
+		r := <-ch
+		if r.err != nil {
+			return nil, r.err
 		}
-		imgs[i] = toNRGBA(raw)
-		a.logf("CompositorStitch: image %d decoded: %v", i, imgs[i].Bounds())
+		imgs[r.idx] = r.img
 	}
 
 	// Run the stitching algorithm.
