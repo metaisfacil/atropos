@@ -331,7 +331,7 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
                 onClick={handleLoadForCropping}
                 disabled={!hasResult || stitching || loading}
               >
-                Load output
+                {loading ? <span className="btn-spinner" /> : 'Load output'}
               </button>
             </DelayedHint>
             <button className="options-btn" onClick={onClose}>Close</button>
