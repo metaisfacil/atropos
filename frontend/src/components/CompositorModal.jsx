@@ -35,6 +35,7 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
   const [status, setStatus]         = useState('')
   const [preview, setPreview]       = useState(null)
   const [resultDims, setResultDims] = useState(null)
+  const [rotation, setRotation]     = useState(0)   // 0 | 90 | 180 | 270
 
   // ── Fade mount/unmount ───────────────────────────────────────────────────
   useEffect(() => {
@@ -137,6 +138,7 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
       const res = await CompositorStitch({ imagePaths: paths, orientation })
       setPreview(res.preview)
       setResultDims({ w: res.width, h: res.height })
+      setRotation(0)
       setStatus(res.message)
     } catch (err) {
       setStatus('Stitch failed: ' + (err?.message || String(err)))
@@ -147,7 +149,7 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
 
   async function handleLoadForCropping() {
     try {
-      const info = await CompositorLoadResult()
+      const info = await CompositorLoadResult({ rotationSteps: rotation / 90 })
       onLoad(info)
     } catch (err) {
       setStatus('Load failed: ' + (err?.message || String(err)))
@@ -266,13 +268,35 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
           {/* Preview */}
           {hasResult && (
             <div className="compositor-preview-wrap">
-              <img
-                src={preview}
-                alt="Stitched preview"
-                className="compositor-preview"
-              />
+              <div className="compositor-rotate-row">
+                <DelayedHint hint="Rotate 90° counter-clockwise.">
+                  <button
+                    className="compositor-rotate-btn"
+                    onClick={() => setRotation(r => (r + 270) % 360)}
+                  >↺</button>
+                </DelayedHint>
+                <div className={`compositor-preview-frame${rotation === 90 || rotation === 270 ? ' compositor-preview-frame--sideways' : ''}`}>
+                  <img
+                    src={preview}
+                    alt="Stitched preview"
+                    className="compositor-preview"
+                    style={{ transform: `rotate(${rotation}deg)` }}
+                  />
+                </div>
+                <DelayedHint hint="Rotate 90° clockwise.">
+                  <button
+                    className="compositor-rotate-btn"
+                    onClick={() => setRotation(r => (r + 90) % 360)}
+                  >↻</button>
+                </DelayedHint>
+              </div>
               {resultDims && (
-                <div className="compositor-dims">{resultDims.w} × {resultDims.h} px</div>
+                <div className="compositor-dims">
+                  {rotation % 180 === 0
+                    ? `${resultDims.w} × ${resultDims.h} px`
+                    : `${resultDims.h} × ${resultDims.w} px`}
+                  {rotation !== 0 && <span className="compositor-dims-rotation"> ({rotation}°)</span>}
+                </div>
               )}
             </div>
           )}
