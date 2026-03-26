@@ -1,5 +1,6 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { defineConfig as defineVitestConfig } from 'vitest/config'
 
 export default defineConfig({
   plugins: [react()],
@@ -19,5 +20,14 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
+  },
+})
+
+export const testConfig = defineVitestConfig({
+  test: {
+    environment: 'jsdom',
+    globals: false,      // or true if you prefer
+    setupFiles: './src/setupTests.js', // if needed
+    include: ['src/**/*.test.js', 'src/**/*.test.ts'],
   },
 })

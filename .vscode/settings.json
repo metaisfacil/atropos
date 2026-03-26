@@ -1,0 +1,8 @@
+{
+  "vitest.workspaceConfig": "./frontend/vite.config.js",
+  "vitest.ignoreWorkspace": true,
+  "vitest.rootConfig": "./frontend/vite.config.js",
+  "vitest.cliArguments": "run test:frontend -- --run",
+  "vitest.watchOnStartup": false,
+  "vitest.shellType": "terminal"
+}
