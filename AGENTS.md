@@ -69,6 +69,7 @@ Understand the image fields before editing anything:
 6. Using `el.offsetLeft/offsetTop` for persistent overlays is wrong; use the SVG overlay system.
 7. Setting `fitWidth` to 0 and waiting for `onLoad` during mode switch can cause the overlay to flood the canvas.
 8. Using IOPaint for warp out-of-bounds fill is wrong; PatchMatch is used for `applyWarpFill`.
+8a. `iopaintFill` does NOT send the full source image to the IOPaint server. It crops to the bounding box of the mask (+ 128 px margin), sends that crop as JPEG, then composites only the masked pixels from the response back onto a full clone of the source. The function always returns a full-size `*image.NRGBA`. Do not assume the returned image reflects IOPaint's view of the whole image.
 9. Forgetting `e.preventDefault()` for repeated keydown events allows browser behavior to fire on every repeat.
 10. Not clearing frontend-only selection state in `handleSkipCrop` leaves stale overlays visible.
 11. Omitting disc state from `LoadImage` / `RecropImage` resets can leak stale disc state into later operations.
@@ -77,6 +78,7 @@ Understand the image fields before editing anything:
 14. Disc translation must honor current disc rotation in both live preview and backend commit (use a shared transformation path and keep `discRotation` in sync).
 15. Not clearing `cornerEntryRef` in `resetImageState` causes the previous image's preview to flash back when loading a new image while in corner mode.
 16. Calling `setMode(m)` after async operations instead of at the top of `handleModeSwitch` causes mode buttons to lag behind all other visual changes.
+17. Setting `overflow: hidden` on the image wrapper div (a flex item inside `.canvas-area`) silently reduces its `min-width: auto` to 0 per the CSS flexbox spec, which allows flexbox to shrink the wrapper to fit the canvas and eliminates horizontal scroll entirely. Always pair `overflow: hidden` on that element with `flex-shrink: 0`.
 
 ## Where to Look
 
