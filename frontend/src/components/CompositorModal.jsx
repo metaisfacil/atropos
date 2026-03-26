@@ -149,7 +149,8 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
 
   async function handleLoadForCropping() {
     try {
-      const info = await CompositorLoadResult({ rotationSteps: rotation / 90 })
+      const steps = (((rotation / 90) % 4) + 4) % 4
+      const info = await CompositorLoadResult({ rotationSteps: steps })
       onLoad(info)
     } catch (err) {
       setStatus('Load failed: ' + (err?.message || String(err)))
@@ -272,10 +273,10 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
                 <DelayedHint hint="Rotate 90° counter-clockwise.">
                   <button
                     className="compositor-rotate-btn"
-                    onClick={() => setRotation(r => (r + 270) % 360)}
+                    onClick={() => setRotation(r => r - 90)}
                   >↺</button>
                 </DelayedHint>
-                <div className={`compositor-preview-frame${rotation === 90 || rotation === 270 ? ' compositor-preview-frame--sideways' : ''}`}>
+                <div className={`compositor-preview-frame${Math.abs(rotation) % 180 !== 0 ? ' compositor-preview-frame--sideways' : ''}`}>
                   <img
                     src={preview}
                     alt="Stitched preview"
@@ -286,18 +287,23 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
                 <DelayedHint hint="Rotate 90° clockwise.">
                   <button
                     className="compositor-rotate-btn"
-                    onClick={() => setRotation(r => (r + 90) % 360)}
+                    onClick={() => setRotation(r => r + 90)}
                   >↻</button>
                 </DelayedHint>
               </div>
-              {resultDims && (
-                <div className="compositor-dims">
-                  {rotation % 180 === 0
-                    ? `${resultDims.w} × ${resultDims.h} px`
-                    : `${resultDims.h} × ${resultDims.w} px`}
-                  {rotation !== 0 && <span className="compositor-dims-rotation"> ({rotation}°)</span>}
-                </div>
-              )}
+              {resultDims && (() => {
+                const normDeg = ((rotation % 360) + 360) % 360
+                const sideways = normDeg === 90 || normDeg === 270
+                const dispDeg  = normDeg === 0 ? 0 : (normDeg <= 180 ? normDeg : normDeg - 360)
+                return (
+                  <div className="compositor-dims">
+                    {sideways
+                      ? `${resultDims.h} × ${resultDims.w} px`
+                      : `${resultDims.w} × ${resultDims.h} px`}
+                    {dispDeg !== 0 && <span className="compositor-dims-rotation"> ({dispDeg > 0 ? '+' : ''}{dispDeg}°)</span>}
+                  </div>
+                )
+              })()}
             </div>
           )}
         </div>
