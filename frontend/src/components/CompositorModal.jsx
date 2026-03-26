@@ -322,7 +322,7 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
                 onClick={handleStitch}
                 disabled={!canStitch}
               >
-                {stitching ? 'Stitching…' : 'Stitch images'}
+                {stitching ? <span className="btn-spinner" /> : 'Stitch images'}
               </button>
             </DelayedHint>
             <DelayedHint hint="Load the stitched result as the active image for cropping and adjustment.">
