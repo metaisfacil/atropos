@@ -508,7 +508,7 @@ export default function App() {
           style={spacePanMode ? { cursor: 'grab' } : undefined}
         >
           {preview ? (
-            <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0, margin: 'auto', overflow: 'hidden' }}>
+            <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0, margin: 'auto', overflow: 'hidden', flexShrink: 0 }}>
               <img
                 ref={imgRef}
                 src={discLiveActive && discNoMaskPreview ? discNoMaskPreview : preview}

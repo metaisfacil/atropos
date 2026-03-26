@@ -60,13 +60,16 @@ export function useZoomPan({ imgRef, mode, discActive, featherSize, setFeatherSi
       setZoom(z => {
         const newZ = Math.min(5, Math.max(0.1, z * factor))
         if (newZ === z) return z
-        const rect      = el.getBoundingClientRect()
-        const cursorX   = e.clientX - rect.left + el.scrollLeft
-        const cursorY   = e.clientY - rect.top  + el.scrollTop
-        const ratio     = newZ / z
+        const canvasRect = el.getBoundingClientRect()
+        const imgEl      = imgRef.current
+        const imgRect    = imgEl ? imgEl.getBoundingClientRect() : canvasRect
+        const ratio      = newZ / z
+        // Cursor position relative to the image's own left/top edge, accounting
+        // for any centering margin (margin:auto) that offsets the image within
+        // the canvas container when the image is smaller than the viewport.
         pendingScrollRef.current = {
-          left: cursorX * ratio - (e.clientX - rect.left),
-          top:  cursorY * ratio - (e.clientY - rect.top),
+          left: (e.clientX - imgRect.left) * ratio - (e.clientX - canvasRect.left),
+          top:  (e.clientY - imgRect.top)  * ratio - (e.clientY - canvasRect.top),
         }
         return newZ
       })
