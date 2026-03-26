@@ -99,6 +99,18 @@ export namespace main {
 	        this.height = source["height"];
 	    }
 	}
+	export class CompositorLoadResultRequest {
+	    rotationSteps: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CompositorLoadResultRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.rotationSteps = source["rotationSteps"];
+	    }
+	}
 	export class CompositorResult {
 	    preview: string;
 	    width: number;

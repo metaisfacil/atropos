@@ -26,8 +26,8 @@ export function ClickCorner(arg1) {
   return window['go']['main']['App']['ClickCorner'](arg1);
 }
 
-export function CompositorLoadResult() {
-  return window['go']['main']['App']['CompositorLoadResult']();
+export function CompositorLoadResult(arg1) {
+  return window['go']['main']['App']['CompositorLoadResult'](arg1);
 }
 
 export function CompositorOpenFilesDialog() {

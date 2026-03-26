@@ -1305,17 +1305,60 @@ button.about-btn:hover {
   gap: 6px;
 }
 
+.compositor-rotate-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.compositor-rotate-btn {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: #3e3e42;
+  color: #e0e0e0;
+  border: 1px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.compositor-rotate-btn:hover { background: #505056; }
+
+.compositor-preview-frame {
+  flex: 1;
+  min-width: 0;  /* allow flex to shrink without collapsing max-width: 100% on the img */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .compositor-preview {
   max-width: 100%;
   max-height: 280px;
   border: 1px solid #3e3e42;
   border-radius: 3px;
   object-fit: contain;
+  transition: transform 0.15s ease;
+}
+
+/* Constrain rotated image so its visual height stays within the preview area */
+.compositor-preview-frame--sideways .compositor-preview {
+  max-width: 280px;
+  max-height: 280px;
 }
 
 .compositor-dims {
   font-size: 11px;
   color: #888;
+}
+
+.compositor-dims-rotation {
+  color: #666;
 }
 
 .compositor-footer {

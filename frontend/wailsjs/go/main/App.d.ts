@@ -14,7 +14,7 @@ export function ClearLines():Promise<main.ProcessResult>;
 
 export function ClickCorner(arg1:main.ClickCornerRequest):Promise<main.ClickCornerResult>;
 
-export function CompositorLoadResult():Promise<main.ImageInfo>;
+export function CompositorLoadResult(arg1:main.CompositorLoadResultRequest):Promise<main.ImageInfo>;
 
 export function CompositorOpenFilesDialog():Promise<Array<string>>;
 

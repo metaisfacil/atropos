@@ -124,11 +124,20 @@ func (a *App) CompositorStitch(req CompositorStitchRequest) (*CompositorResult, 
 	}, nil
 }
 
+// CompositorLoadResultRequest carries optional post-processing for the
+// compositor output before it enters the editing pipeline.
+type CompositorLoadResultRequest struct {
+	// RotationSteps is the number of 90-degree clockwise rotations to apply
+	// to the stitched image before loading it.  0 = no rotation, 1 = 90° CW,
+	// 2 = 180°, 3 = 270° CW.
+	RotationSteps int `json:"rotationSteps"`
+}
+
 // CompositorLoadResult promotes the cached stitched image into the main editing
 // pipeline exactly as if it had been opened from disk with LoadImage.  After
 // this call the compositor result becomes the active image and the user can
 // apply any of the normal crop/adjust modes to it.
-func (a *App) CompositorLoadResult() (*ImageInfo, error) {
+func (a *App) CompositorLoadResult(req CompositorLoadResultRequest) (*ImageInfo, error) {
 	a.compositorMu.Lock()
 	result := a.compositorResult
 	a.compositorMu.Unlock()
@@ -143,8 +152,14 @@ func (a *App) CompositorLoadResult() (*ImageInfo, error) {
 	defer a.loadMu.Unlock()
 	a.cancelTouchup()
 
-	a.originalImage = cloneImage(result)
-	a.currentImage = cloneImage(result)
+	img := cloneImage(result)
+	steps := ((req.RotationSteps % 4) + 4) % 4
+	for i := 0; i < steps; i++ {
+		img = rotate90(img, 1) // 1 = CW
+	}
+
+	a.originalImage = img
+	a.currentImage = cloneImage(img)
 	a.warpedImage = nil
 	a.levelsBaseImage = nil
 	a.imageLoaded = true
@@ -167,9 +182,9 @@ func (a *App) CompositorLoadResult() (*ImageInfo, error) {
 		return nil, fmt.Errorf("preview encoding failed: %w", err)
 	}
 
-	b := result.Bounds()
+	b := img.Bounds()
 	runtime.WindowSetTitle(a.ctx, AppBaseTitle()+" — [Compositor Result]")
-	a.logf("CompositorLoadResult: loaded %dx%d stitched image into editing pipeline", b.Dx(), b.Dy())
+	a.logf("CompositorLoadResult: loaded %dx%d stitched image into editing pipeline (rotationSteps=%d)", b.Dx(), b.Dy(), steps)
 	return &ImageInfo{
 		Width:                 b.Dx(),
 		Height:                b.Dy(),
