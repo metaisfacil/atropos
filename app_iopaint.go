@@ -67,7 +67,8 @@ type iopaintRequest struct {
 func (a *App) iopaintFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha) (*image.NRGBA, error) {
 	// Encode source image as PNG, then base64.
 	var imgBuf bytes.Buffer
-	if err := png.Encode(&imgBuf, src); err != nil {
+	pngEnc := png.Encoder{CompressionLevel: png.BestSpeed}
+	if err := pngEnc.Encode(&imgBuf, src); err != nil {
 		return nil, fmt.Errorf("iopaint: encode source image: %w", err)
 	}
 	imgB64 := "data:image/png;base64," + base64.StdEncoding.EncodeToString(imgBuf.Bytes())
@@ -83,7 +84,7 @@ func (a *App) iopaintFill(ctx context.Context, src *image.NRGBA, mask *image.Alp
 		}
 	}
 	var maskBuf bytes.Buffer
-	if err := png.Encode(&maskBuf, maskGray); err != nil {
+	if err := pngEnc.Encode(&maskBuf, maskGray); err != nil {
 		return nil, fmt.Errorf("iopaint: encode mask: %w", err)
 	}
 	maskB64 := "data:image/png;base64," + base64.StdEncoding.EncodeToString(maskBuf.Bytes())
