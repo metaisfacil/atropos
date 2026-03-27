@@ -1,7 +1,18 @@
+@keyframes expandGrid {
+  from { grid-template-rows: 0fr; }
+  to { grid-template-rows: 1fr; }
+}
+
+@keyframes collapseGrid {
+  from { grid-template-rows: 1fr; }
+  to { grid-template-rows: 0fr; }
+}
+
 .app {
   display: flex;
   height: 100vh;
   background: #1e1e1e;
+  scrollbar-gutter: stable;
 }
 
 .sidebar {
@@ -14,6 +25,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0; /* allow children with flex:1 to shrink */
+  scrollbar-gutter: stable;
 }
 
 .sidebar-resize-handle {
@@ -59,20 +71,25 @@
 /* Mode panels: fade/slide when switching modes */
 .mode-panel {
   width: 100%;
-  transition: opacity 180ms ease-in-out, transform 180ms ease-in-out;
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: opacity 180ms ease-in-out, transform 180ms ease-in-out, grid-template-rows 180ms ease-in-out;
   opacity: 0;
   transform: translateX(6px);
   pointer-events: none;
   visibility: hidden;
   overflow: hidden;
-  max-height: 0;
+}
+.mode-panel > * {
+  min-height: 0;
+  overflow: hidden;
 }
 .mode-panel.active {
+  grid-template-rows: 1fr;
   opacity: 1;
   transform: translateX(0);
   pointer-events: auto;
   visibility: visible;
-  max-height: 2000px;
 }
 
 /* WebKit scrollbar styling for the inner scroll area */
@@ -276,6 +293,7 @@ button.save-btn:hover {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  scrollbar-gutter: stable;
 }
 
 .keyboard-shortcuts > .shortcut-title {
@@ -393,27 +411,43 @@ button.save-btn:hover {
   padding-bottom: 6px;
 }
 
+/* Outer grid wrapper: animates the row from 0fr (collapsed) to 1fr (open),
+   which smoothly reveals the content at its true height rather than snapping
+   to a large max-height ceiling. */
+.keyboard-shortcuts-content-outer {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 260ms cubic-bezier(.2,0,.1,1);
+  overflow: hidden;
+}
+.keyboard-shortcuts.expanded .keyboard-shortcuts-content-outer {
+  grid-template-rows: 1fr !important;
+}
+
 .keyboard-shortcuts-content {
-  flex: 1 1 auto;
-  /* start collapsed: zero height, transparent, slightly lifted */
-  max-height: 0;
+  /* Required so the grid can crush this to 0 height when collapsed */
+  min-height: 0;
+  /* Fade/slide in — height is controlled by the outer grid wrapper */
   opacity: 0;
   transform: translateY(-6px);
-  overflow: hidden; /* will switch to auto when open */
+  overflow: hidden;
   scrollbar-gutter: stable both-edges;
   padding-right: 6px; /* avoid content under the scrollbar */
+  max-height: 0;
   transition: max-height 260ms cubic-bezier(.2,0,.1,1), opacity 200ms ease-in-out, transform 200ms ease-in-out;
 }
 
 /* Open state: allow scrolling and full opacity/position.
-   Base height uses viewport fraction; per-panel heights shrink when multiple panels are open. */
-.keyboard-shortcuts.expanded > .keyboard-shortcuts-content,
+   max-height caps content so it doesn't overflow the sidebar; it also
+   participates in the simultaneous shrink when a second panel opens (the
+   CSS variable drops from 30vh to 18vh, triggering the max-height transition
+   on both panels at the same frame). */
 .keyboard-shortcuts .keyboard-shortcuts-content.open {
-  min-height: 80px;
   max-height: var(--keyboard-shortcuts-max-height, 30vh);
   opacity: 1;
   transform: translateY(0);
-  overflow: auto;
+  overflow: hidden;
+  overflow-y: auto;
 }
 
 /* When two bottom sections are expanded, reduce each section’s height. */

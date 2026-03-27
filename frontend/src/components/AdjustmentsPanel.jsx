@@ -108,7 +108,8 @@ export default function AdjustmentsPanel({
         Adjustments <span className="shortcut-toggle">{adjPanelOpen ? '▾' : '▸'}</span>
       </div>
 
-      <div className={`keyboard-shortcuts-content ${adjPanelOpen ? 'open' : 'closed'}`}>
+      <div className="keyboard-shortcuts-content-outer">
+        <div className={`keyboard-shortcuts-content ${adjPanelOpen ? 'open' : 'closed'}`}>
           <div className="adj-btn-grid">
             <DelayedHint hint="Resize the image by width/height or scale percentage.">
               <button
@@ -231,6 +232,7 @@ export default function AdjustmentsPanel({
               <span className="level-value">{whitePoint}</span>
           </div>
         </div>
+      </div>
     </div>
   )
 }
