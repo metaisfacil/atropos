@@ -6,19 +6,18 @@ import (
 	"image/draw"
 	"math"
 	"math/rand"
-	"runtime"
-	"sync"
 	"time"
 )
 
-// PatchMatch-style approximate nearest-neighbour field used for a simple
-// content-aware fill. This is a pragmatic, self-contained implementation
-// suitable for a touch-up brush preview and initial commit behavior.
+// pt is a 2-D integer point used throughout the PatchMatch algorithm.
+type pt struct{ x, y int }
 
-// PatchMatchFill fills regions marked in mask (alpha>0) in src and returns
-// a new `*image.NRGBA` with filled pixels. patchSize should be odd (e.g. 7).
-// iterations controls the number of propagation/random-search passes.
-// ctx is checked between iterations; a cancellation returns (nil, ctx.Err()).
+// PatchMatchFill fills the region marked in mask (alpha > 0) using a
+// PatchMatch nearest-neighbour field.  patchSize should be odd (e.g. 7).
+// iterations controls the number of forward/reverse propagation passes per
+// EM step.  The function runs numEM EM iterations: each step refines the
+// reconstruction using the previous step's output as additional context,
+// letting good matches propagate from the boundary into large holes.
 func PatchMatchFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha, patchSize, iterations int) (*image.NRGBA, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -31,116 +30,109 @@ func PatchMatchFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha, pa
 	h := bounds.Dy()
 	half := patchSize / 2
 
-	// Destination starts as a copy of src.
-	dst := image.NewNRGBA(bounds)
-	draw.Draw(dst, bounds, src, bounds.Min, draw.Src)
-
-	// Helper to test whether a patch centered at (cx,cy) lies fully inside image
-	inBounds := func(cx, cy int) bool {
-		return cx-half >= 0 && cy-half >= 0 && cx+half < w && cy+half < h
-	}
-
-	// helper to read alpha quickly (returns 0 if mask is nil)
-	alphaAt := func(m *image.Alpha, x, y int) uint8 {
-		if m == nil {
+	alphaAt := func(x, y int) uint8 {
+		if mask == nil {
 			return 0
 		}
-		bounds := m.Bounds()
-		if x < bounds.Min.X || y < bounds.Min.Y || x >= bounds.Max.X || y >= bounds.Max.Y {
+		mb := mask.Bounds()
+		if x < mb.Min.X || y < mb.Min.Y || x >= mb.Max.X || y >= mb.Max.Y {
 			return 0
 		}
-		return m.Pix[(y-bounds.Min.Y)*m.Stride+(x-bounds.Min.X)]
+		return mask.Pix[(y-mb.Min.Y)*mask.Stride+(x-mb.Min.X)]
 	}
 
-	// Build list of target centers (centres whose center pixel is masked)
-	type pt struct{ x, y int }
+	inBounds := func(x, y int) bool {
+		return x >= half && y >= half && x < w-half && y < h-half
+	}
+
+	// ── Collect targets and compute mask bounding box ────────────────────────
 	var targets []pt
-	for y := half; y < h-half; y++ {
-		if y%64 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
-		for x := half; x < w-half; x++ {
-			if alphaAt(mask, x, y) > 0 {
+	bbMinX, bbMinY, bbMaxX, bbMaxY := w, h, 0, 0
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if alphaAt(x, y) > 0 {
 				targets = append(targets, pt{x, y})
+				if x < bbMinX {
+					bbMinX = x
+				}
+				if y < bbMinY {
+					bbMinY = y
+				}
+				if x > bbMaxX {
+					bbMaxX = x
+				}
+				if y > bbMaxY {
+					bbMaxY = y
+				}
 			}
 		}
 	}
 	if len(targets) == 0 {
+		dst := image.NewNRGBA(bounds)
+		draw.Draw(dst, bounds, src, bounds.Min, draw.Src)
 		return dst, nil
 	}
 
-	// Build list of valid source centers (patches that do not overlap the mask)
+	// Active region: mask bbox expanded by patchSize so propagation can reach
+	// all masked pixels from their unmasked neighbours.
+	ax0 := clamp(bbMinX-patchSize, half, w-half-1)
+	ay0 := clamp(bbMinY-patchSize, half, h-half-1)
+	ax1 := clamp(bbMaxX+patchSize, half, w-half-1)
+	ay1 := clamp(bbMaxY+patchSize, half, h-half-1)
+
+	// ── Build valid-source set ────────────────────────────────────────────────
+	// A source patch is valid if none of its pixels are originally masked.
+	validSrc := make([]bool, w*h)
 	var sources []pt
 	for y := half; y < h-half; y++ {
-		if y%64 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
 		for x := half; x < w-half; x++ {
 			ok := true
-			for dy := -half; dy <= half && ok; dy++ {
+		outerLoop:
+			for dy := -half; dy <= half; dy++ {
 				for dx := -half; dx <= half; dx++ {
-					if alphaAt(mask, x+dx, y+dy) > 0 {
+					if alphaAt(x+dx, y+dy) > 0 {
 						ok = false
-						break
+						break outerLoop
 					}
 				}
 			}
 			if ok {
+				validSrc[y*w+x] = true
 				sources = append(sources, pt{x, y})
 			}
 		}
 	}
 	if len(sources) == 0 {
-		// no valid sources; nothing sensible to do
+		dst := image.NewNRGBA(bounds)
+		draw.Draw(dst, bounds, src, bounds.Min, draw.Src)
 		return dst, nil
 	}
 
-	rand.Seed(time.Now().UnixNano())
+	rand.Seed(time.Now().UnixNano()) //nolint:staticcheck
 
-	// NNF: slice indexed by target index -> source center
-	nnf := make([]pt, len(targets))
-
-	// cost cache for each target
-	cost := make([]float64, len(targets))
-
-	// compute SSD between a target patch at (tx,ty) and source patch at (sx,sy)
-	patchSSD := func(tx, ty, sx, sy int) float64 {
-		var s float64
-		var count int
-		for dy := -half; dy <= half; dy++ {
-			for dx := -half; dx <= half; dx++ {
-				px := tx + dx
-				py := ty + dy
-				if alphaAt(mask, px, py) > 0 {
-					// unknown at target; skip
-					continue
-				}
-				sxp := sx + dx
-				syp := sy + dy
-				sp := src.Pix[(syp*w+sxp)*4 : (syp*w+sxp)*4+4]
-				tp := src.Pix[(py*w+px)*4 : (py*w+px)*4+4]
-				dr := float64(int(tp[0]) - int(sp[0]))
-				dg := float64(int(tp[1]) - int(sp[1]))
-				db := float64(int(tp[2]) - int(sp[2]))
-				s += dr*dr + dg*dg + db*db
-				count++
-			}
-		}
-		if count == 0 {
-			return math.MaxFloat64
-		}
-		return s / float64(count)
+	// ── Working image and resolved map ───────────────────────────────────────
+	// working holds the current best estimate of the full image.
+	// Masked pixels start as zeros (unresolved); they are filled in by the
+	// reconstruction step and used as context in subsequent EM iterations.
+	working := image.NewNRGBA(bounds)
+	draw.Draw(working, bounds, src, bounds.Min, draw.Src)
+	for _, t := range targets {
+		idx := (t.y*w + t.x) * 4
+		working.Pix[idx] = 0
+		working.Pix[idx+1] = 0
+		working.Pix[idx+2] = 0
+		working.Pix[idx+3] = 0
 	}
 
-	// initialize nnf randomly
-	for i, t := range targets {
-		s := sources[rand.Intn(len(sources))]
-		nnf[i] = s
-		cost[i] = patchSSD(t.x, t.y, s.x, s.y)
+	// resolved[y*w+x] is true when the pixel value in working is meaningful.
+	// Initially only unmasked pixels are resolved.
+	resolved := make([]bool, w*h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if alphaAt(x, y) == 0 {
+				resolved[y*w+x] = true
+			}
+		}
 	}
 
 	maxDim := w
@@ -148,264 +140,240 @@ func PatchMatchFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha, pa
 		maxDim = h
 	}
 
-	// PatchMatch main loop — parallelised by partitioning targets across workers.
-	workers := runtime.NumCPU()
-	if workers < 1 {
-		workers = 1
-	}
+	nnf := make([]pt, w*h)
+	cost := make([]float64, w*h)
 
-	for it := 0; it < iterations; it++ {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err() // cancelled between iterations
-		default:
-		}
-		// Snapshot current field and cost for read-only access during this iteration.
-		srcNnf := make([]pt, len(nnf))
-		srcCost := make([]float64, len(cost))
-		copy(srcNnf, nnf)
-		copy(srcCost, cost)
+	// ── EM loop ───────────────────────────────────────────────────────────────
+	// Each EM iteration:
+	//   E-step: compute nearest-neighbour field using current working image
+	//   M-step: reconstruct masked pixels via similarity-weighted patch voting
+	//
+	// After iteration 0, all masked pixels have initial estimates in working.
+	// Subsequent iterations benefit from this context: the patchSSD can compare
+	// full patches (not just the unmasked fringe), enabling better propagation
+	// into the interior of large holes.
+	const numEM = 3
 
-		newNnf := make([]pt, len(nnf))
-		newCost := make([]float64, len(cost))
-
-		done := ctx.Done() // nil for context.Background() — select default always fires
-		var wg sync.WaitGroup
-		wg.Add(workers)
-		for wi := 0; wi < workers; wi++ {
-			start := wi * len(targets) / workers
-			end := (wi + 1) * len(targets) / workers
-			go func(start, end int) {
-				defer wg.Done()
-				for i := start; i < end; i++ {
-					select {
-					case <-done:
-						return
-					default:
-					}
-					t := targets[i]
-					cx, cy := t.x, t.y
-					best := srcNnf[i]
-					bestCost := srcCost[i]
-
-					// propagation proposals from neighbors (read from snapshot)
-					for _, nIdx := range []int{i - 1, i - len(targets)} {
-						if nIdx < 0 || nIdx >= len(targets) {
-							continue
-						}
-						n := targets[nIdx]
-						ns := srcNnf[nIdx]
-						cand := pt{ns.x + (cx - n.x), ns.y + (cy - n.y)}
-						if !inBounds(cand.x, cand.y) {
-							continue
-						}
-						c := patchSSD(cx, cy, cand.x, cand.y)
-						if c < bestCost {
-							bestCost = c
-							best = cand
-						}
-					}
-
-					// random search
-					r := maxDim
-					for r >= 1 {
-						minx := clamp(best.x-r, half, w-half-1)
-						maxx := clamp(best.x+r, half, w-half-1)
-						miny := clamp(best.y-r, half, h-half-1)
-						maxy := clamp(best.y+r, half, h-half-1)
-						rx := rand.Intn(maxx-minx+1) + minx
-						ry := rand.Intn(maxy-miny+1) + miny
-						c := patchSSD(cx, cy, rx, ry)
-						if c < bestCost {
-							bestCost = c
-							best = pt{rx, ry}
-						}
-						r /= 2
-					}
-
-					newNnf[i] = best
-					newCost[i] = bestCost
-				}
-			}(start, end)
-		}
-		wg.Wait()
+	for emIt := 0; emIt < numEM; emIt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 
-		// Reverse pass: process indices in reverse order but still partitioned
-		// across workers. We reuse srcNnf/srcCost for proposals and write
-		// again into newNnf/newCost (overwriting previous forward results
-		// for indices processed here).
-		wg.Add(workers)
-		for wi := 0; wi < workers; wi++ {
-			start := wi * len(targets) / workers
-			end := (wi + 1) * len(targets) / workers
-			go func(start, end int) {
-				defer wg.Done()
-				for ii := end - 1; ii >= start; ii-- {
-					select {
-					case <-done:
-						return
-					default:
+		// patchSSD compares working[target patch] vs src[source patch].
+		// Target pixels not yet resolved are skipped (NaN treatment).
+		// Returns MaxFloat64 when no comparable pixels exist.
+		patchSSD := func(tx, ty, sx, sy int) float64 {
+			var s float64
+			var count int
+			for dy := -half; dy <= half; dy++ {
+				for dx := -half; dx <= half; dx++ {
+					tpx, tpy := tx+dx, ty+dy
+					if !resolved[tpy*w+tpx] {
+						continue
 					}
-					t := targets[ii]
-					cx, cy := t.x, t.y
-					best := srcNnf[ii]
-					bestCost := srcCost[ii]
-
-					for _, nIdx := range []int{ii + 1, ii + len(targets)} {
-						if nIdx < 0 || nIdx >= len(targets) {
-							continue
-						}
-						n := targets[nIdx]
-						ns := srcNnf[nIdx]
-						cand := pt{ns.x + (cx - n.x), ns.y + (cy - n.y)}
-						if !inBounds(cand.x, cand.y) {
-							continue
-						}
-						c := patchSSD(cx, cy, cand.x, cand.y)
-						if c < bestCost {
-							bestCost = c
-							best = cand
-						}
-					}
-
-					r := maxDim
-					for r >= 1 {
-						minx := clamp(best.x-r, half, w-half-1)
-						maxx := clamp(best.x+r, half, w-half-1)
-						miny := clamp(best.y-r, half, h-half-1)
-						maxy := clamp(best.y+r, half, h-half-1)
-						rx := rand.Intn(maxx-minx+1) + minx
-						ry := rand.Intn(maxy-miny+1) + miny
-						c := patchSSD(cx, cy, rx, ry)
-						if c < bestCost {
-							bestCost = c
-							best = pt{rx, ry}
-						}
-						r /= 2
-					}
-
-					newNnf[ii] = best
-					newCost[ii] = bestCost
+					tp := working.Pix[(tpy*w+tpx)*4:]
+					sp := src.Pix[((sy+dy)*w+(sx+dx))*4:]
+					dr := float64(int(tp[0]) - int(sp[0]))
+					dg := float64(int(tp[1]) - int(sp[1]))
+					db := float64(int(tp[2]) - int(sp[2]))
+					s += dr*dr + dg*dg + db*db
+					count++
 				}
-			}(start, end)
+			}
+			if count == 0 {
+				return math.MaxFloat64
+			}
+			return s / float64(count)
 		}
-		wg.Wait()
-		if err := ctx.Err(); err != nil {
-			return nil, err
+
+		// Initialise NNF: identity for valid-source pixels, random otherwise.
+		// The identity constraint anchors the known region so propagation
+		// carries correct offsets into the masked area (same idea as the C++
+		// reference: "force the link between unmasked patches in source/target").
+		for i := range cost {
+			cost[i] = math.MaxFloat64
+		}
+		for y := ay0; y <= ay1; y++ {
+			for x := ax0; x <= ax1; x++ {
+				if validSrc[y*w+x] {
+					nnf[y*w+x] = pt{x, y}
+					cost[y*w+x] = 0
+				} else {
+					s := sources[rand.Intn(len(sources))]
+					nnf[y*w+x] = s
+					cost[y*w+x] = patchSSD(x, y, s.x, s.y)
+				}
+			}
 		}
 
-		// swap in new arrays
-		nnf = newNnf
-		cost = newCost
-	}
+		tryImprove := func(tx, ty, cx, cy int, best *pt, bestCost *float64) {
+			if !inBounds(cx, cy) || !validSrc[cy*w+cx] {
+				return
+			}
+			c := patchSSD(tx, ty, cx, cy)
+			if c < *bestCost {
+				*bestCost = c
+				*best = pt{cx, cy}
+			}
+		}
 
-	// Reconstruction: average contributions from mapped source patches for each masked pixel
-	// Reconstruction: parallel accumulation. Each worker gets a partition
-	// of targets and writes into its local accumulators which are merged
-	// afterwards to avoid fine-grained synchronization.
-	workers = runtime.NumCPU()
-	if workers < 1 {
-		workers = 1
-	}
+		randomSearch := func(tx, ty int, best *pt, bestCost *float64) {
+			r := maxDim
+			for r >= 1 {
+				minx := clamp(best.x-r, half, w-half-1)
+				maxx := clamp(best.x+r, half, w-half-1)
+				miny := clamp(best.y-r, half, h-half-1)
+				maxy := clamp(best.y+r, half, h-half-1)
+				if maxx > minx && maxy > miny {
+					rx := rand.Intn(maxx-minx+1) + minx
+					ry := rand.Intn(maxy-miny+1) + miny
+					tryImprove(tx, ty, rx, ry, best, bestCost)
+				}
+				r /= 2
+			}
+		}
 
-	// per-worker accumulators
-	accRw := make([][]uint32, workers)
-	accGw := make([][]uint32, workers)
-	accBw := make([][]uint32, workers)
-	accAw := make([][]uint32, workers)
-	countw := make([][]uint32, workers)
-	for wi := 0; wi < workers; wi++ {
-		accRw[wi] = make([]uint32, w*h)
-		accGw[wi] = make([]uint32, w*h)
-		accBw[wi] = make([]uint32, w*h)
-		accAw[wi] = make([]uint32, w*h)
-		countw[wi] = make([]uint32, w*h)
-	}
+		// ── PatchMatch propagation iterations ────────────────────────────────
+		// Alternating forward/reverse passes.  Skip validSrc pixels — they hold
+		// the identity mapping and need no improvement.
+		for it := 0; it < iterations; it++ {
+			if it%2 == 0 {
+				// Forward pass: top-left → bottom-right
+				for y := ay0; y <= ay1; y++ {
+					for x := ax0; x <= ax1; x++ {
+						if validSrc[y*w+x] {
+							continue
+						}
+						idx := y*w + x
+						best := nnf[idx]
+						bestCost := cost[idx]
+						if x > ax0 {
+							ns := nnf[y*w+(x-1)]
+							tryImprove(x, y, ns.x+1, ns.y, &best, &bestCost)
+						}
+						if y > ay0 {
+							ns := nnf[(y-1)*w+x]
+							tryImprove(x, y, ns.x, ns.y+1, &best, &bestCost)
+						}
+						randomSearch(x, y, &best, &bestCost)
+						nnf[idx] = best
+						cost[idx] = bestCost
+					}
+				}
+			} else {
+				// Reverse pass: bottom-right → top-left
+				for y := ay1; y >= ay0; y-- {
+					for x := ax1; x >= ax0; x-- {
+						if validSrc[y*w+x] {
+							continue
+						}
+						idx := y*w + x
+						best := nnf[idx]
+						bestCost := cost[idx]
+						if x < ax1 {
+							ns := nnf[y*w+(x+1)]
+							tryImprove(x, y, ns.x-1, ns.y, &best, &bestCost)
+						}
+						if y < ay1 {
+							ns := nnf[(y+1)*w+x]
+							tryImprove(x, y, ns.x, ns.y-1, &best, &bestCost)
+						}
+						randomSearch(x, y, &best, &bestCost)
+						nnf[idx] = best
+						cost[idx] = bestCost
+					}
+				}
+			}
+		}
 
-	var wg sync.WaitGroup
-	wg.Add(workers)
-	for wi := 0; wi < workers; wi++ {
-		start := wi * len(targets) / workers
-		end := (wi + 1) * len(targets) / workers
-		go func(wi, start, end int) {
-			defer wg.Done()
-			aR := accRw[wi]
-			aG := accGw[wi]
-			aB := accBw[wi]
-			aA := accAw[wi]
-			cT := countw[wi]
-			for i := start; i < end; i++ {
-				s := nnf[i]
-				t := targets[i]
+		// ── Similarity-weighted patch-voting reconstruction (M-step) ─────────
+		// Patches with lower cost receive exponentially higher weight, so good
+		// matches dominate and poor ones (e.g. unmatched interior early on)
+		// contribute little.  The exponent is normalised by the mean cost of
+		// non-identity patches so it adapts to the image content.
+		var costSum float64
+		var costCount int
+		for y := ay0; y <= ay1; y++ {
+			for x := ax0; x <= ax1; x++ {
+				if !validSrc[y*w+x] {
+					c := cost[y*w+x]
+					if c < math.MaxFloat64 {
+						costSum += c
+						costCount++
+					}
+				}
+			}
+		}
+		costNorm := 1.0
+		if costCount > 0 && costSum > 0 {
+			costNorm = costSum / float64(costCount)
+		}
+
+		accR := make([]float64, w*h)
+		accG := make([]float64, w*h)
+		accB := make([]float64, w*h)
+		accWt := make([]float64, w*h)
+
+		// Iterate ALL active-region pixels as patch centres (including unmasked
+		// pixels near the boundary).  A non-masked centre q contributes its
+		// local neighbourhood to any masked pixel inside its footprint, which
+		// naturally blends the fill into the seam.
+		for y := ay0; y <= ay1; y++ {
+			for x := ax0; x <= ax1; x++ {
+				s := nnf[y*w+x]
+				c := cost[y*w+x]
+				if c == math.MaxFloat64 {
+					continue
+				}
+				simWeight := math.Exp(-c / costNorm)
+				if simWeight < 1e-10 {
+					continue
+				}
 				for dy := -half; dy <= half; dy++ {
 					for dx := -half; dx <= half; dx++ {
-						tx := t.x + dx
-						ty := t.y + dy
-						if alphaAt(mask, tx, ty) == 0 {
+						px, py := x+dx, y+dy
+						if alphaAt(px, py) == 0 {
+							continue // only fill masked pixels
+						}
+						sx2, sy2 := s.x+dx, s.y+dy
+						if sx2 < 0 || sy2 < 0 || sx2 >= w || sy2 >= h {
 							continue
 						}
-						sx := s.x + dx
-						sy := s.y + dy
-						sp := src.Pix[(sy*w+sx)*4 : (sy*w+sx)*4+4]
-						idx := ty*w + tx
-						aR[idx] += uint32(sp[0])
-						aG[idx] += uint32(sp[1])
-						aB[idx] += uint32(sp[2])
-						aA[idx] += uint32(sp[3])
-						cT[idx]++
+						sp := src.Pix[(sy2*w+sx2)*4:]
+						pidx := py*w + px
+						accR[pidx] += simWeight * float64(sp[0])
+						accG[pidx] += simWeight * float64(sp[1])
+						accB[pidx] += simWeight * float64(sp[2])
+						accWt[pidx] += simWeight
 					}
 				}
 			}
-		}(wi, start, end)
-	}
-	wg.Wait()
+		}
 
-	// merge per-worker accumulators into single arrays
-	accR := make([]uint32, w*h)
-	accG := make([]uint32, w*h)
-	accB := make([]uint32, w*h)
-	accA := make([]uint32, w*h)
-	count := make([]uint32, w*h)
-	for wi := 0; wi < workers; wi++ {
-		aR := accRw[wi]
-		aG := accGw[wi]
-		aB := accBw[wi]
-		aA := accAw[wi]
-		cT := countw[wi]
-		for i := 0; i < w*h; i++ {
-			if cT[i] == 0 {
-				continue
+		// Update working image; mark all reconstructed pixels as resolved so
+		// subsequent EM iterations can use them as context.
+		for _, t := range targets {
+			idx := t.y*w + t.x
+			if accWt[idx] > 0 {
+				working.Pix[idx*4+0] = uint8(accR[idx] / accWt[idx])
+				working.Pix[idx*4+1] = uint8(accG[idx] / accWt[idx])
+				working.Pix[idx*4+2] = uint8(accB[idx] / accWt[idx])
+				working.Pix[idx*4+3] = 255
+				resolved[idx] = true
 			}
-			accR[i] += aR[i]
-			accG[i] += aG[i]
-			accB[i] += aB[i]
-			accA[i] += aA[i]
-			count[i] += cT[i]
 		}
 	}
 
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			if alphaAt(mask, x, y) == 0 {
-				continue
-			}
-			idx := y*w + x
-			if count[idx] == 0 {
-				// fallback — copy original
-				p := src.Pix[idx*4 : idx*4+4]
-				dst.Pix[idx*4+0] = p[0]
-				dst.Pix[idx*4+1] = p[1]
-				dst.Pix[idx*4+2] = p[2]
-				dst.Pix[idx*4+3] = p[3]
-			} else {
-				dst.Pix[idx*4+0] = uint8(accR[idx] / count[idx])
-				dst.Pix[idx*4+1] = uint8(accG[idx] / count[idx])
-				dst.Pix[idx*4+2] = uint8(accB[idx] / count[idx])
-				dst.Pix[idx*4+3] = uint8(accA[idx] / count[idx])
-			}
+	// ── Build output ──────────────────────────────────────────────────────────
+	dst := image.NewNRGBA(bounds)
+	draw.Draw(dst, bounds, src, bounds.Min, draw.Src)
+	for _, t := range targets {
+		idx := t.y*w + t.x
+		if resolved[idx] {
+			dst.Pix[idx*4+0] = working.Pix[idx*4+0]
+			dst.Pix[idx*4+1] = working.Pix[idx*4+1]
+			dst.Pix[idx*4+2] = working.Pix[idx*4+2]
+			dst.Pix[idx*4+3] = 255
 		}
 	}
 
