@@ -18,14 +18,16 @@ export default function ToolsPanel({ toolsOpen, setToolsOpen, onOpenCompositor }
         Tools <span className="shortcut-toggle">{toolsOpen ? '▾' : '▸'}</span>
       </div>
 
-      <div className={`keyboard-shortcuts-content ${toolsOpen ? 'open' : 'closed'}`}>
-        <div className="tools-panel-body">
-          <button className="tools-panel-btn" onClick={onOpenCompositor}>
-            Image Compositor
-          </button>
-          <p className="tools-panel-hint">
-            Stitch multiple overlapping scan segments into a single continuous image.
-          </p>
+      <div className="keyboard-shortcuts-content-outer">
+        <div className={`keyboard-shortcuts-content ${toolsOpen ? 'open' : 'closed'}`}>
+          <div className="tools-panel-body">
+            <button className="tools-panel-btn" onClick={onOpenCompositor}>
+              Image Compositor
+            </button>
+            <p className="tools-panel-hint">
+              Stitch multiple overlapping scan segments into a single continuous image.
+            </p>
+          </div>
         </div>
       </div>
     </div>

@@ -131,6 +131,18 @@ export default function App() {
   const [compositorOpen, setCompositorOpen]   = useState(false)
   const [toolsOpen, setToolsOpen]             = useState(false)
 
+  // ── Refs ───────────────────────────────────────────────────────────────────
+  const sidebarRef = useRef(null)
+
+  // Synchronize CSS variable with open panel count so all panels shrink in sync
+  // when a new one opens (avoids CSS :has() timing delays)
+  useEffect(() => {
+    if (!sidebarRef.current) return
+    const openCount = (shortcutsOpen ? 1 : 0) + (adjPanelOpen ? 1 : 0) + (toolsOpen ? 1 : 0)
+    const maxHeight = openCount === 0 ? '30vh' : openCount === 1 ? '30vh' : openCount === 2 ? '18vh' : '12vh'
+    sidebarRef.current.style.setProperty('--keyboard-shortcuts-max-height', maxHeight)
+  }, [shortcutsOpen, adjPanelOpen, toolsOpen])
+
   // ── Hooks ─────────────────────────────────────────────────────────────────
   const { imageInfo, imageInfoVisible, showStatus } = useStatusMessage()
 
@@ -266,7 +278,7 @@ export default function App() {
         </div>
       )}
 
-      <aside className="sidebar" style={{ width: sidebarWidth }}>
+      <aside ref={sidebarRef} className="sidebar" style={{ width: sidebarWidth }}>
         <div
           className="sidebar-resize-handle"
           onMouseDown={onSidebarResizeStart}
