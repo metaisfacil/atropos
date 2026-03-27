@@ -1,6 +1,6 @@
 import React from 'react'
 
-// ShortcutsPanel renders the collapsible keyboard-shortcuts reference at the
+// ShortcutsPanel renders the collapsible accordion-panel reference at the
 // bottom of the sidebar.
 // Props:
 //   shortcutsOpen / setShortcutsOpen
@@ -12,17 +12,17 @@ export default function ShortcutsPanel({ shortcutsOpen, setShortcutsOpen, mode, 
   const cls = (active) => `shortcut-item${active ? '' : ' shortcut-item--disabled'}`
 
   return (
-    <div className={`keyboard-shortcuts ${shortcutsOpen ? 'expanded' : ''}`}>
+    <div className={`accordion-panel ${shortcutsOpen ? 'expanded' : ''}`}>
       <div
-        className="shortcut-title"
+        className="accordion-title"
         onClick={() => setShortcutsOpen((s) => !s)}
         style={{ cursor: 'pointer', userSelect: 'none' }}
       >
-        Shortcuts <span className="shortcut-toggle">{shortcutsOpen ? '▾' : '▸'}</span>
+        Shortcuts <span className="accordion-toggle">{shortcutsOpen ? '▾' : '▸'}</span>
       </div>
 
-      <div className="keyboard-shortcuts-content-outer">
-        <div className={`keyboard-shortcuts-content ${shortcutsOpen ? 'open' : 'closed'}`}>
+      <div className="accordion-content-outer">
+        <div className={`accordion-content ${shortcutsOpen ? 'open' : 'closed'}`}>
           <div className={cls(canSave)}>
             <div className="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div>
             <div className="caption">Crop edges</div>

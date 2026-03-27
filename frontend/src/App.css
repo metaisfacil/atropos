@@ -311,7 +311,7 @@ button.save-btn:hover {
   scrollbar-gutter: stable;
 }
 
-.keyboard-shortcuts > .shortcut-title {
+.accordion-panel > .accordion-title {
   position: sticky;
   top: 0;
   z-index: 4;
@@ -349,7 +349,7 @@ button.save-btn:hover {
   margin-bottom: 0;
 }
 
-.keyboard-shortcuts {
+.accordion-panel {
   /* The island panel itself: rounded top and subtle shadow. The inner
      content area scrolls separately so the header stays visible. */
   background: #2d2d30;
@@ -360,7 +360,7 @@ button.save-btn:hover {
   font-size: 11px;
   margin-bottom: 8px;
   /* allow the content area to expand when opened; we'll animate the
-     inner `.keyboard-shortcuts-content` for a smooth ease-in. */
+     inner `.accordion-content` for a smooth ease-in. */
   display: flex;
   flex-direction: column;
 }
@@ -410,7 +410,7 @@ button.save-btn:hover {
 }
 
 /* Keep the section header visible while the section content scrolls */
-.keyboard-shortcuts > .shortcut-title {
+.accordion-panel > .accordion-title {
   position: sticky;
   top: 0;
   z-index: 3;
@@ -421,7 +421,7 @@ button.save-btn:hover {
 }
 
 /* Only show header divider and extra bottom padding when the section is expanded */
-.keyboard-shortcuts.expanded > .shortcut-title {
+.accordion-panel.expanded > .accordion-title {
   border-bottom: 1px solid rgba(62,62,66,0.6);
   padding-bottom: 6px;
 }
@@ -429,17 +429,17 @@ button.save-btn:hover {
 /* Outer grid wrapper: animates the row from 0fr (collapsed) to 1fr (open),
    which smoothly reveals the content at its true height rather than snapping
    to a large max-height ceiling. */
-.keyboard-shortcuts-content-outer {
+.accordion-content-outer {
   display: grid;
   grid-template-rows: 0fr;
   transition: grid-template-rows 260ms cubic-bezier(.2,0,.1,1);
   overflow: hidden;
 }
-.keyboard-shortcuts.expanded .keyboard-shortcuts-content-outer {
+.accordion-panel.expanded .accordion-content-outer {
   grid-template-rows: 1fr !important;
 }
 
-.keyboard-shortcuts-content {
+.accordion-content {
   /* Required so the grid can crush this to 0 height when collapsed */
   min-height: 0;
   /* Fade/slide in — height is controlled by the outer grid wrapper */
@@ -457,7 +457,7 @@ button.save-btn:hover {
    participates in the simultaneous shrink when a second panel opens (the
    CSS variable drops from 30vh to 18vh, triggering the max-height transition
    on both panels at the same frame). */
-.keyboard-shortcuts .keyboard-shortcuts-content.open {
+.accordion-panel .accordion-content.open {
   max-height: var(--keyboard-shortcuts-max-height, 30vh);
   opacity: 1;
   transform: translateY(0);
@@ -466,28 +466,28 @@ button.save-btn:hover {
 }
 
 /* When two bottom sections are expanded, reduce each section’s height. */
-.sidebar:has(.keyboard-shortcuts.expanded + .keyboard-shortcuts.expanded),
-.sidebar:has(.keyboard-shortcuts.expanded + .keyboard-shortcuts + .keyboard-shortcuts.expanded),
-.sidebar:has(.keyboard-shortcuts + .keyboard-shortcuts.expanded + .keyboard-shortcuts.expanded) {
+.sidebar:has(.accordion-panel.expanded + .accordion-panel.expanded),
+.sidebar:has(.accordion-panel.expanded + .accordion-panel + .accordion-panel.expanded),
+.sidebar:has(.accordion-panel + .accordion-panel.expanded + .accordion-panel.expanded) {
   --keyboard-shortcuts-max-height: 18vh;
 }
 
 /* When all three bottom sections are expanded, reduce further. */
-.sidebar:has(.keyboard-shortcuts.expanded + .keyboard-shortcuts.expanded + .keyboard-shortcuts.expanded) {
+.sidebar:has(.accordion-panel.expanded + .accordion-panel.expanded + .accordion-panel.expanded) {
   --keyboard-shortcuts-max-height: 12vh;
 }
 
 /* Mode-influence fallback (when a single mode panel is active). */
-.sidebar:has(.mode-panel.corner.active) .keyboard-shortcuts-content {
+.sidebar:has(.mode-panel.corner.active) .accordion-content {
   --keyboard-shortcuts-max-height: 28vh;
 }
-.sidebar:has(.mode-panel.disc.active) .keyboard-shortcuts-content {
+.sidebar:has(.mode-panel.disc.active) .accordion-content {
   --keyboard-shortcuts-max-height: 40vh;
 }
-.sidebar:has(.mode-panel.line.active) .keyboard-shortcuts-content {
+.sidebar:has(.mode-panel.line.active) .accordion-content {
   --keyboard-shortcuts-max-height: 38vh;
 }
-.sidebar:has(.mode-panel.normal.active) .keyboard-shortcuts-content {
+.sidebar:has(.mode-panel.normal.active) .accordion-content {
   --keyboard-shortcuts-max-height: 32vh;
 }
 
@@ -507,22 +507,30 @@ button.save-btn:hover {
 }
 
 /* Scrollbar styling for the inner content area */
-.keyboard-shortcuts-content::-webkit-scrollbar {
+.accordion-content::-webkit-scrollbar {
   width: 10px;
 }
-.keyboard-shortcuts-content::-webkit-scrollbar-track {
+.accordion-content::-webkit-scrollbar-track {
   background: transparent;
 }
-.keyboard-shortcuts-content::-webkit-scrollbar-thumb {
+.accordion-content::-webkit-scrollbar-thumb {
   background: #3e3e42;
   border-radius: 5px;
 }
-.keyboard-shortcuts-content::-webkit-scrollbar-thumb:hover {
+.accordion-content::-webkit-scrollbar-thumb:hover {
   background: #555;
 }
 
-.shortcut-title {
+.accordion-title {
   font-weight: bold;
+}
+
+/* Collapsible accordion toggle arrow */
+.accordion-toggle {
+  float: right;
+  font-size: 18px;
+  color: #858585;
+  line-height: 1;
 }
 
 .shortcut-item {
@@ -615,14 +623,6 @@ button.reset-btn-danger:hover {
 
 button.reset-btn-danger:active {
   background: #8b1e13;
-}
-
-/* Collapsible shortcuts toggle arrow */
-.shortcut-toggle {
-  float: right;
-  font-size: 18px;
-  color: #858585;
-  line-height: 1;
 }
 
 /* Drop target highlight */

@@ -9,17 +9,17 @@ import React from 'react'
 //   onOpenCompositor          — called when the Compositor button is clicked
 export default function ToolsPanel({ toolsOpen, setToolsOpen, onOpenCompositor }) {
   return (
-    <div className={`keyboard-shortcuts ${toolsOpen ? 'expanded' : ''}`}>
+    <div className={`accordion-panel ${toolsOpen ? 'expanded' : ''}`}>
       <div
-        className="shortcut-title"
+        className="accordion-title"
         onClick={() => setToolsOpen(s => !s)}
         style={{ cursor: 'pointer', userSelect: 'none' }}
       >
-        Tools <span className="shortcut-toggle">{toolsOpen ? '▾' : '▸'}</span>
+        Tools <span className="accordion-toggle">{toolsOpen ? '▾' : '▸'}</span>
       </div>
 
-      <div className="keyboard-shortcuts-content-outer">
-        <div className={`keyboard-shortcuts-content ${toolsOpen ? 'open' : 'closed'}`}>
+      <div className="accordion-content-outer">
+        <div className={`accordion-content ${toolsOpen ? 'open' : 'closed'}`}>
           <div className="tools-panel-body">
             <button className="tools-panel-btn" onClick={onOpenCompositor}>
               Image Compositor
