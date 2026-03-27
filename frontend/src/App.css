@@ -405,14 +405,41 @@ button.save-btn:hover {
   transition: max-height 260ms cubic-bezier(.2,0,.1,1), opacity 200ms ease-in-out, transform 200ms ease-in-out;
 }
 
-/* Open state: allow scrolling and full opacity/position */
+/* Open state: allow scrolling and full opacity/position.
+   Base height uses viewport fraction; per-panel heights shrink when multiple panels are open. */
 .keyboard-shortcuts.expanded > .keyboard-shortcuts-content,
 .keyboard-shortcuts .keyboard-shortcuts-content.open {
   min-height: 80px;
-  max-height: 2000px;
+  max-height: var(--keyboard-shortcuts-max-height, 30vh);
   opacity: 1;
   transform: translateY(0);
   overflow: auto;
+}
+
+/* When two bottom sections are expanded, reduce each section’s height. */
+.sidebar:has(.keyboard-shortcuts.expanded + .keyboard-shortcuts.expanded),
+.sidebar:has(.keyboard-shortcuts.expanded + .keyboard-shortcuts + .keyboard-shortcuts.expanded),
+.sidebar:has(.keyboard-shortcuts + .keyboard-shortcuts.expanded + .keyboard-shortcuts.expanded) {
+  --keyboard-shortcuts-max-height: 18vh;
+}
+
+/* When all three bottom sections are expanded, reduce further. */
+.sidebar:has(.keyboard-shortcuts.expanded + .keyboard-shortcuts.expanded + .keyboard-shortcuts.expanded) {
+  --keyboard-shortcuts-max-height: 12vh;
+}
+
+/* Mode-influence fallback (when a single mode panel is active). */
+.sidebar:has(.mode-panel.corner.active) .keyboard-shortcuts-content {
+  --keyboard-shortcuts-max-height: 28vh;
+}
+.sidebar:has(.mode-panel.disc.active) .keyboard-shortcuts-content {
+  --keyboard-shortcuts-max-height: 40vh;
+}
+.sidebar:has(.mode-panel.line.active) .keyboard-shortcuts-content {
+  --keyboard-shortcuts-max-height: 38vh;
+}
+.sidebar:has(.mode-panel.normal.active) .keyboard-shortcuts-content {
+  --keyboard-shortcuts-max-height: 32vh;
 }
 
 /* Touch-up brush radius slider: animate open/closed using max-height/opacity/transform */
