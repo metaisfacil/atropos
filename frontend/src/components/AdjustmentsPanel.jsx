@@ -99,17 +99,17 @@ export default function AdjustmentsPanel({
   }
 
   return (
-    <div className={`keyboard-shortcuts adj-panel ${adjPanelOpen ? 'expanded' : ''}`}>
+    <div className={`accordion-panel adj-panel ${adjPanelOpen ? 'expanded' : ''}`}>
       <div
-        className="shortcut-title adj-panel-header"
+        className="accordion-title adj-panel-header"
         onClick={() => setAdjPanelOpen((o) => !o)}
         style={{ cursor: 'pointer', userSelect: 'none' }}
       >
-        Adjustments <span className="shortcut-toggle">{adjPanelOpen ? '▾' : '▸'}</span>
+        Adjustments <span className="accordion-toggle">{adjPanelOpen ? '▾' : '▸'}</span>
       </div>
 
-      <div className="keyboard-shortcuts-content-outer">
-        <div className={`keyboard-shortcuts-content ${adjPanelOpen ? 'open' : 'closed'}`}>
+      <div className="accordion-content-outer">
+        <div className={`accordion-content ${adjPanelOpen ? 'open' : 'closed'}`}>
           <div className="adj-btn-grid">
             <DelayedHint hint="Resize the image by width/height or scale percentage.">
               <button
