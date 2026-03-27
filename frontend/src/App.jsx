@@ -338,14 +338,14 @@ export default function App() {
             <div className="sidebar-actions">
               {mode === 'corner' && (
                 <DelayedHint hint="Run corner detection, then click 4 corners to apply the perspective crop.">
-                  <button className="primary" onClick={handleDetectCorners} disabled={!imageLoaded || loading || cropSkipped}>
+                  <button className="primary mode-action-btn" onClick={handleDetectCorners} disabled={!imageLoaded || loading || cropSkipped}>
                     Detect
                   </button>
                 </DelayedHint>
               )}
               {mode === 'normal' && (
                 <DelayedHint hint="Apply a drawn rectangle as a crop to the image. You can also press Enter.">
-                  <button className="primary" onClick={handleNormalCrop} disabled={!imageLoaded || loading || !normalRect}>
+                  <button className="primary mode-action-btn" onClick={handleNormalCrop} disabled={!imageLoaded || loading || !normalRect}>
                     Crop
                   </button>
                 </DelayedHint>
