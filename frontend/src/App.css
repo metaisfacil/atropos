@@ -311,6 +311,8 @@ button.save-btn:hover {
   scrollbar-gutter: stable;
 }
 
+/* ── Accordion panels ──────────────────────────────────────────────────────── */
+
 .accordion-panel > .accordion-title {
   position: sticky;
   top: 0;
@@ -1276,8 +1278,7 @@ button.about-btn:hover {
   background: #555;
 }
 
-/* ── Compositor Modal ─────────────────────────────────────────────────────── */
-
+/* ── Compositor modal ─────────────────────────────────────────────────────── */
 
 .compositor-dialog {
   width: 600px;
@@ -1470,7 +1471,7 @@ button.about-btn:hover {
 }
 
 
-/* ── Tools Panel ──────────────────────────────────────────────────────────── */
+/* ── Tools panel ──────────────────────────────────────────────────────────── */
 
 .tools-panel-body {
   display: flex;
