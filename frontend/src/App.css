@@ -8,6 +8,21 @@
   to { grid-template-rows: 0fr; }
 }
 
+@keyframes fadeInButton {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.mode-action-btn {
+  animation: fadeInButton 260ms ease-in-out forwards;
+}
+
 .app {
   display: flex;
   height: 100vh;
