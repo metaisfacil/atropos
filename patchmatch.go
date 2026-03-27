@@ -6,6 +6,8 @@ import (
 	"image/draw"
 	"math"
 	"math/rand"
+	"runtime"
+	"sync"
 	"time"
 )
 
@@ -162,8 +164,22 @@ func PatchMatchFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha, pa
 		// patchSSD compares working[target patch] vs src[source patch].
 		// Target pixels not yet resolved are skipped (NaN treatment).
 		// Returns MaxFloat64 when no comparable pixels exist.
-		patchSSD := func(tx, ty, sx, sy int) float64 {
-			var s float64
+		//
+		// Uses int64 accumulation (exact for uint8 differences) and early
+		// termination: since SSD terms are non-negative, if the running sum s
+		// already satisfies s >= cutoff*patchArea the final average cannot beat
+		// cutoff — so we bail immediately.  This produces the same result as
+		// the naive loop because tryImprove only cares whether the return value
+		// is less than *bestCost; both MaxFloat64 and the true cost reject the
+		// candidate when they are >= bestCost.
+		patchArea := patchSize * patchSize
+		patchSSD := func(tx, ty, sx, sy int, cutoff float64) float64 {
+			const maxPerPx = 3 * 255 * 255
+			budget := int64(maxPerPx)*int64(patchArea) + 1 // safe default
+			if cutoff < float64(int64(maxPerPx)*int64(patchArea)) {
+				budget = int64(cutoff*float64(patchArea)) + 1
+			}
+			var s int64
 			var count int
 			for dy := -half; dy <= half; dy++ {
 				for dx := -half; dx <= half; dx++ {
@@ -173,17 +189,20 @@ func PatchMatchFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha, pa
 					}
 					tp := working.Pix[(tpy*w+tpx)*4:]
 					sp := src.Pix[((sy+dy)*w+(sx+dx))*4:]
-					dr := float64(int(tp[0]) - int(sp[0]))
-					dg := float64(int(tp[1]) - int(sp[1]))
-					db := float64(int(tp[2]) - int(sp[2]))
-					s += dr*dr + dg*dg + db*db
+					dr := int(tp[0]) - int(sp[0])
+					dg := int(tp[1]) - int(sp[1])
+					db := int(tp[2]) - int(sp[2])
+					s += int64(dr*dr + dg*dg + db*db)
 					count++
+					if s >= budget {
+						return math.MaxFloat64
+					}
 				}
 			}
 			if count == 0 {
 				return math.MaxFloat64
 			}
-			return s / float64(count)
+			return float64(s) / float64(count)
 		}
 
 		// Initialise NNF: identity for valid-source pixels, random otherwise.
@@ -201,7 +220,7 @@ func PatchMatchFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha, pa
 				} else {
 					s := sources[rand.Intn(len(sources))]
 					nnf[y*w+x] = s
-					cost[y*w+x] = patchSSD(x, y, s.x, s.y)
+					cost[y*w+x] = patchSSD(x, y, s.x, s.y, math.MaxFloat64)
 				}
 			}
 		}
@@ -210,7 +229,7 @@ func PatchMatchFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha, pa
 			if !inBounds(cx, cy) || !validSrc[cy*w+cx] {
 				return
 			}
-			c := patchSSD(tx, ty, cx, cy)
+			c := patchSSD(tx, ty, cx, cy, *bestCost)
 			if c < *bestCost {
 				*bestCost = c
 				*best = pt{cx, cy}
@@ -287,10 +306,8 @@ func PatchMatchFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha, pa
 		}
 
 		// ── Similarity-weighted patch-voting reconstruction (M-step) ─────────
-		// Patches with lower cost receive exponentially higher weight, so good
-		// matches dominate and poor ones (e.g. unmatched interior early on)
-		// contribute little.  The exponent is normalised by the mean cost of
-		// non-identity patches so it adapts to the image content.
+		// Similarity weights are precomputed once per active-region pixel so
+		// the exp() call is not repeated inside the inner reconstruction loop.
 		var costSum float64
 		var costCount int
 		for y := ay0; y <= ay1; y++ {
@@ -309,59 +326,83 @@ func PatchMatchFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha, pa
 			costNorm = costSum / float64(costCount)
 		}
 
-		accR := make([]float64, w*h)
-		accG := make([]float64, w*h)
-		accB := make([]float64, w*h)
-		accWt := make([]float64, w*h)
-
-		// Iterate ALL active-region pixels as patch centres (including unmasked
-		// pixels near the boundary).  A non-masked centre q contributes its
-		// local neighbourhood to any masked pixel inside its footprint, which
-		// naturally blends the fill into the seam.
+		simWeights := make([]float64, w*h)
 		for y := ay0; y <= ay1; y++ {
 			for x := ax0; x <= ax1; x++ {
-				s := nnf[y*w+x]
 				c := cost[y*w+x]
-				if c == math.MaxFloat64 {
-					continue
-				}
-				simWeight := math.Exp(-c / costNorm)
-				if simWeight < 1e-10 {
-					continue
-				}
-				for dy := -half; dy <= half; dy++ {
-					for dx := -half; dx <= half; dx++ {
-						px, py := x+dx, y+dy
-						if alphaAt(px, py) == 0 {
-							continue // only fill masked pixels
-						}
-						sx2, sy2 := s.x+dx, s.y+dy
-						if sx2 < 0 || sy2 < 0 || sx2 >= w || sy2 >= h {
-							continue
-						}
-						sp := src.Pix[(sy2*w+sx2)*4:]
-						pidx := py*w + px
-						accR[pidx] += simWeight * float64(sp[0])
-						accG[pidx] += simWeight * float64(sp[1])
-						accB[pidx] += simWeight * float64(sp[2])
-						accWt[pidx] += simWeight
-					}
+				if c < math.MaxFloat64 {
+					simWeights[y*w+x] = math.Exp(-c / costNorm)
 				}
 			}
 		}
 
-		// Update working image; mark all reconstructed pixels as resolved so
-		// subsequent EM iterations can use them as context.
-		for _, t := range targets {
-			idx := t.y*w + t.x
-			if accWt[idx] > 0 {
-				working.Pix[idx*4+0] = uint8(accR[idx] / accWt[idx])
-				working.Pix[idx*4+1] = uint8(accG[idx] / accWt[idx])
-				working.Pix[idx*4+2] = uint8(accB[idx] / accWt[idx])
-				working.Pix[idx*4+3] = 255
-				resolved[idx] = true
+		// Pull-based parallel reconstruction: each goroutine owns a disjoint
+		// chunk of target (masked) pixels and writes only to those pixels.
+		// For each masked pixel p, we gather votes from every patch centre q
+		// whose footprint includes p — this is the set of q within ±half of p.
+		// Reads are from nnf, simWeights, src (all immutable here); writes go
+		// to disjoint slices of working.Pix.  No accumulators, no data races.
+		//
+		// Mathematical equivalence with the push loop above: the set of
+		// (centre q, output pixel p) pairs visited is identical; the weights
+		// and source colours are identical; only the summation order differs
+		// (which for float64 can shift results by ≤ 1 ULP in the final uint8).
+		numCPU := runtime.NumCPU()
+		chunkSize := (len(targets) + numCPU - 1) / numCPU
+		var wg sync.WaitGroup
+		for worker := 0; worker < numCPU; worker++ {
+			start := worker * chunkSize
+			end := start + chunkSize
+			if end > len(targets) {
+				end = len(targets)
 			}
+			if start >= end {
+				continue
+			}
+			wg.Add(1)
+			go func(tStart, tEnd int) {
+				defer wg.Done()
+				for ti := tStart; ti < tEnd; ti++ {
+					t := targets[ti]
+					px, py := t.x, t.y
+					var accR, accG, accB, accWt float64
+					for qy := py - half; qy <= py+half; qy++ {
+						if qy < ay0 || qy > ay1 {
+							continue
+						}
+						for qx := px - half; qx <= px+half; qx++ {
+							if qx < ax0 || qx > ax1 {
+								continue
+							}
+							simW := simWeights[qy*w+qx]
+							if simW < 1e-10 {
+								continue
+							}
+							s := nnf[qy*w+qx]
+							sx2 := s.x + (px - qx)
+							sy2 := s.y + (py - qy)
+							if sx2 < 0 || sy2 < 0 || sx2 >= w || sy2 >= h {
+								continue
+							}
+							sp := src.Pix[(sy2*w+sx2)*4:]
+							accR += simW * float64(sp[0])
+							accG += simW * float64(sp[1])
+							accB += simW * float64(sp[2])
+							accWt += simW
+						}
+					}
+					if accWt > 0 {
+						idx := py*w + px
+						working.Pix[idx*4+0] = uint8(accR / accWt)
+						working.Pix[idx*4+1] = uint8(accG / accWt)
+						working.Pix[idx*4+2] = uint8(accB / accWt)
+						working.Pix[idx*4+3] = 255
+						resolved[idx] = true
+					}
+				}
+			}(start, end)
 		}
+		wg.Wait()
 	}
 
 	// ── Build output ──────────────────────────────────────────────────────────
