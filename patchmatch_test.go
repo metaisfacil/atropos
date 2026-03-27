@@ -130,3 +130,75 @@ func TestPatchMatchFillMidOperationCancel(t *testing.T) {
 		t.Errorf("cancellation took %v; expected well under 2 s", elapsed)
 	}
 }
+
+// TestPatchMatchChunkedFill verifies that patchMatchChunkedFill crops to the
+// mask bounding box + margin and fills only masked pixels, returning a full-size result.
+func TestPatchMatchChunkedFill(t *testing.T) {
+	w, h := 2000, 1500
+	src := image.NewNRGBA(image.Rect(0, 0, w, h))
+	// Fill background with a solid colour
+	draw.Draw(src, src.Bounds(), &image.Uniform{color.NRGBA{180, 120, 80, 255}}, image.Point{}, draw.Src)
+
+	// Create a mask in the centre with a small region to fill
+	mask := image.NewAlpha(src.Bounds())
+	maskCx, maskCy := w/2, h/2
+	maskRadius := 30
+	for y := maskCy - maskRadius; y < maskCy+maskRadius; y++ {
+		for x := maskCx - maskRadius; x < maskCx+maskRadius; x++ {
+			if x >= 0 && x < w && y >= 0 && y < h {
+				mask.Pix[y*mask.Stride+x] = 255
+				// Zero out the source to simulate missing pixels
+				src.Pix[(y*w+x)*4+0] = 0
+				src.Pix[(y*w+x)*4+1] = 0
+				src.Pix[(y*w+x)*4+2] = 0
+				src.Pix[(y*w+x)*4+3] = 255
+			}
+		}
+	}
+
+	out, err := patchMatchChunkedFill(context.Background(), src, mask, 7, 4)
+	if err != nil {
+		t.Fatalf("patchMatchChunkedFill returned error: %v", err)
+	}
+	if out == nil {
+		t.Fatal("patchMatchChunkedFill returned nil")
+	}
+
+	// Verify result is full-size
+	if out.Bounds() != src.Bounds() {
+		t.Errorf("expected result bounds %v, got %v", src.Bounds(), out.Bounds())
+	}
+
+	// Verify at least one masked pixel was filled (changed from black)
+	changed := false
+	for y := maskCy - maskRadius; y < maskCy+maskRadius && !changed; y++ {
+		for x := maskCx - maskRadius; x < maskCx+maskRadius; x++ {
+			if x >= 0 && x < w && y >= 0 && y < h {
+				idx := (y*w + x) * 4
+				if out.Pix[idx] != 0 || out.Pix[idx+1] != 0 || out.Pix[idx+2] != 0 {
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	if !changed {
+		t.Fatalf("expected at least one masked pixel to be filled")
+	}
+
+	// Verify that unmasked pixels in the unmasked region remain unchanged
+	unchanged := true
+	unmaskX, unmaskY := 10, 10
+	if unmaskX < maskCx-maskRadius-1 && unmaskY < maskCy-maskRadius-1 {
+		origIdx := (unmaskY*w + unmaskX) * 4
+		outIdx := (unmaskY*w + unmaskX) * 4
+		if out.Pix[outIdx+0] != src.Pix[origIdx+0] ||
+			out.Pix[outIdx+1] != src.Pix[origIdx+1] ||
+			out.Pix[outIdx+2] != src.Pix[origIdx+2] {
+			unchanged = false
+		}
+	}
+	if !unchanged {
+		t.Fatalf("expected unmasked pixels to remain unchanged")
+	}
+}
