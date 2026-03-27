@@ -12,6 +12,48 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+// patchMatchChunkedFill is like PatchMatchFill but crops to the bounding box
+// of the mask (+ margin) before calling PatchMatchFill, then composites only
+// the filled masked pixels back into a full-size clone of src.
+// A larger margin than IOPaint (256 px vs 128 px) is used so PatchMatch has
+// sufficient unmasked context from which to draw source patches.
+func patchMatchChunkedFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha,
+	patchSize, iterations int) (*image.NRGBA, error) {
+
+	const cropMargin = 256
+	crop, hasMask := maskBoundingBox(mask, cropMargin, src.Bounds())
+	if !hasMask {
+		return toNRGBA(src), nil
+	}
+
+	// Re-origin the sub-image so PatchMatchFill's (y*w+x)*4 indexing works.
+	cropSrc := toNRGBA(src.SubImage(crop))
+
+	// Translate mask to the same (0,0)-origin coordinate space.
+	cropMask := image.NewAlpha(image.Rect(0, 0, crop.Dx(), crop.Dy()))
+	for y := crop.Min.Y; y < crop.Max.Y; y++ {
+		for x := crop.Min.X; x < crop.Max.X; x++ {
+			cropMask.SetAlpha(x-crop.Min.X, y-crop.Min.Y, mask.AlphaAt(x, y))
+		}
+	}
+
+	filled, err := PatchMatchFill(ctx, cropSrc, cropMask, patchSize, iterations)
+	if err != nil {
+		return nil, err
+	}
+
+	// Composite filled pixels back into a full-size clone of src.
+	result := toNRGBA(src)
+	for y := crop.Min.Y; y < crop.Max.Y; y++ {
+		for x := crop.Min.X; x < crop.Max.X; x++ {
+			if mask.AlphaAt(x, y).A > 0 {
+				result.SetNRGBA(x, y, filled.NRGBAAt(x-crop.Min.X, y-crop.Min.Y))
+			}
+		}
+	}
+	return result, nil
+}
+
 // buildMask decodes a base64-encoded PNG mask (white/opaque = fill region) and
 // returns an *image.Alpha sized to match the current working image.
 func (a *App) buildMask(maskB64 string) (*image.Alpha, error) {
@@ -156,7 +198,7 @@ func (a *App) TouchUpApply(maskB64 string, patchSize int, iterations int) (*Proc
 		if a.touchupBackend == "iopaint" {
 			out, fillErr = a.iopaintFill(ctx, srcImg, mask)
 		} else {
-			out, fillErr = PatchMatchFill(ctx, srcImg, mask, patchSize, iterations)
+			out, fillErr = patchMatchChunkedFill(ctx, srcImg, mask, patchSize, iterations)
 		}
 		a.logf("TouchUpApply goroutine: fill returned, err=%v", fillErr)
 
