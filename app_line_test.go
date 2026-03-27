@@ -21,7 +21,10 @@ func linesForRect(tl, tr, br, bl [2]int) []LineAddRequest {
 // addRectLines is a helper that adds 4 edge lines for a fixed test rectangle.
 func addRectLines(a *App) {
 	for _, l := range linesForRect([2]int{10, 10}, [2]int{90, 10}, [2]int{90, 70}, [2]int{10, 70}) {
-		a.AddLine(l)
+		_, err := a.AddLine(l)
+		if err != nil {
+			panic("addRectLines: AddLine returned error: " + err.Error())
+		}
 	}
 }
 
@@ -32,7 +35,10 @@ func TestAddLine_AppendsLine(t *testing.T) {
 	if len(a.lines) != 0 {
 		t.Fatal("lines should start empty")
 	}
-	a.AddLine(LineAddRequest{X1: 0, Y1: 0, X2: 100, Y2: 100})
+	_, err := a.AddLine(LineAddRequest{X1: 0, Y1: 0, X2: 100, Y2: 100})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(a.lines) != 1 {
 		t.Fatalf("expected 1 line, got %d", len(a.lines))
 	}
@@ -40,8 +46,14 @@ func TestAddLine_AppendsLine(t *testing.T) {
 
 func TestAddLine_MessageFormat(t *testing.T) {
 	a := newTestApp(200, 200)
-	a.AddLine(LineAddRequest{X1: 0, Y1: 0, X2: 100, Y2: 0})
-	res, _ := a.AddLine(LineAddRequest{X1: 0, Y1: 100, X2: 100, Y2: 100})
+	_, err := a.AddLine(LineAddRequest{X1: 0, Y1: 0, X2: 100, Y2: 0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	res, err := a.AddLine(LineAddRequest{X1: 0, Y1: 100, X2: 100, Y2: 100})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if res.Message != "Lines: 2/4" {
 		t.Fatalf("expected 'Lines: 2/4', got %q", res.Message)
 	}
@@ -49,7 +61,10 @@ func TestAddLine_MessageFormat(t *testing.T) {
 
 func TestAddLine_StoresEndpoints(t *testing.T) {
 	a := newTestApp(200, 200)
-	a.AddLine(LineAddRequest{X1: 10, Y1: 20, X2: 30, Y2: 40})
+	_, err := a.AddLine(LineAddRequest{X1: 10, Y1: 20, X2: 30, Y2: 40})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(a.lines[0]) != 2 {
 		t.Fatal("line should have 2 endpoints")
 	}
@@ -85,7 +100,10 @@ func TestProcessLines_TooFewLines(t *testing.T) {
 func TestProcessLines_ThreeLinesError(t *testing.T) {
 	a := newTestApp(200, 200)
 	for i := 0; i < 3; i++ {
-		a.AddLine(LineAddRequest{X1: 0, Y1: i * 30, X2: 100, Y2: i * 30})
+		_, err := a.AddLine(LineAddRequest{X1: 0, Y1: i * 30, X2: 100, Y2: i * 30})
+		if err != nil {
+			t.Fatalf("unexpected error adding line %d: %v", i, err)
+		}
 	}
 	_, err := a.ProcessLines()
 	if err == nil {
@@ -108,7 +126,10 @@ func TestProcessLines_ProducesWarpedImage(t *testing.T) {
 func TestProcessLines_ClearsLines(t *testing.T) {
 	a := newTestApp(200, 200)
 	addRectLines(a)
-	a.ProcessLines()
+	_, err := a.ProcessLines()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(a.lines) != 0 {
 		t.Fatalf("lines should be cleared after ProcessLines, got %d", len(a.lines))
 	}
@@ -118,7 +139,10 @@ func TestProcessLines_SavesUndo(t *testing.T) {
 	a := newTestApp(200, 200)
 	before := len(a.undoStack)
 	addRectLines(a)
-	a.ProcessLines()
+	_, err := a.ProcessLines()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(a.undoStack) != before+1 {
 		t.Fatalf("expected undo stack +1, got %d→%d", before, len(a.undoStack))
 	}
@@ -175,7 +199,10 @@ func TestProcessLines_UsesOriginalImageNotCurrentImage(t *testing.T) {
 func TestProcessLines_UndoRestoresPreviousState(t *testing.T) {
 	a := newTestApp(200, 200)
 	addRectLines(a)
-	a.ProcessLines()
+	_, err := a.ProcessLines()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	// Undo should restore the state captured before ProcessLines ran.
 	res, err := a.Undo()
@@ -191,9 +218,18 @@ func TestProcessLines_UndoRestoresPreviousState(t *testing.T) {
 
 func TestClearLines_ClearsLinesSlice(t *testing.T) {
 	a := newTestApp(200, 200)
-	a.AddLine(LineAddRequest{X1: 0, Y1: 0, X2: 100, Y2: 0})
-	a.AddLine(LineAddRequest{X1: 0, Y1: 100, X2: 100, Y2: 100})
-	a.ClearLines()
+	_, err := a.AddLine(LineAddRequest{X1: 0, Y1: 0, X2: 100, Y2: 0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_, err = a.AddLine(LineAddRequest{X1: 0, Y1: 100, X2: 100, Y2: 100})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_, err = a.ClearLines()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(a.lines) != 0 {
 		t.Fatalf("lines should be empty after ClearLines, got %d", len(a.lines))
 	}
@@ -202,7 +238,10 @@ func TestClearLines_ClearsLinesSlice(t *testing.T) {
 func TestClearLines_ClearsWarpedImage(t *testing.T) {
 	a := newTestApp(200, 200)
 	a.warpedImage = cloneImage(a.currentImage)
-	a.ClearLines()
+	_, err := a.ClearLines()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.warpedImage != nil {
 		t.Fatal("warpedImage should be nil after ClearLines")
 	}

@@ -50,7 +50,6 @@ type App struct {
 	// Processing state
 	detectedCorners []image.Point
 	selectedCorners []image.Point
-	cornerDotRadius int
 	lines           [][]image.Point
 	discCenter      image.Point
 	discRadius      int

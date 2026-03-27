@@ -162,7 +162,10 @@ func TestClickCorner_FourthClickReturnsNonZeroDims(t *testing.T) {
 func TestResetCorners_ClearsSelectedCorners(t *testing.T) {
 	a := newLoadedTestApp(200, 200)
 	a.selectedCorners = []image.Point{{10, 10}, {50, 50}}
-	a.ResetCorners()
+	_, err := a.ResetCorners()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(a.selectedCorners) != 0 {
 		t.Fatal("selectedCorners should be nil after ResetCorners")
 	}
@@ -171,7 +174,10 @@ func TestResetCorners_ClearsSelectedCorners(t *testing.T) {
 func TestResetCorners_ClearsWarpedImage(t *testing.T) {
 	a := newLoadedTestApp(200, 200)
 	a.warpedImage = cloneImage(a.currentImage)
-	a.ResetCorners()
+	_, err := a.ResetCorners()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.warpedImage != nil {
 		t.Fatal("warpedImage should be nil after ResetCorners")
 	}
@@ -180,7 +186,10 @@ func TestResetCorners_ClearsWarpedImage(t *testing.T) {
 func TestResetCorners_PreservesDetectedCorners(t *testing.T) {
 	a := newLoadedTestApp(200, 200)
 	a.detectedCorners = []image.Point{{10, 10}, {50, 50}, {80, 80}}
-	a.ResetCorners()
+	_, err := a.ResetCorners()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(a.detectedCorners) != 3 {
 		t.Fatalf("detectedCorners should be preserved, got %d", len(a.detectedCorners))
 	}
@@ -317,7 +326,10 @@ func TestSkipCrop_SetsWarpedImage(t *testing.T) {
 
 func TestSkipCrop_WarpedImageIsCloneNotSamePointer(t *testing.T) {
 	a := newTestApp(100, 80)
-	a.SkipCrop()
+	_, err := a.SkipCrop()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.warpedImage == a.currentImage {
 		t.Fatal("warpedImage should be a clone, not the same pointer as currentImage")
 	}
@@ -337,7 +349,10 @@ func TestSkipCrop_ReturnsDims(t *testing.T) {
 func TestSkipCrop_ClearsSelectedCorners(t *testing.T) {
 	a := newTestApp(100, 100)
 	a.selectedCorners = []image.Point{{10, 10}, {50, 50}}
-	a.SkipCrop()
+	_, err := a.SkipCrop()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(a.selectedCorners) != 0 {
 		t.Fatal("selectedCorners should be cleared after SkipCrop")
 	}
@@ -345,7 +360,10 @@ func TestSkipCrop_ClearsSelectedCorners(t *testing.T) {
 
 func TestSkipCrop_Message(t *testing.T) {
 	a := newTestApp(100, 80)
-	res, _ := a.SkipCrop()
+	res, err := a.SkipCrop()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if res.Message != "Crop skipped — image ready to save" {
 		t.Fatalf("unexpected message: %q", res.Message)
 	}

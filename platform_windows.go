@@ -65,6 +65,7 @@ func webviewDataPathLocked(dir string) bool {
 		}
 		return false
 	}
-	windows.CloseHandle(h)
+	// Best-effort close; ignore errors because we already checked the lock state.
+	_ = windows.CloseHandle(h)
 	return false
 }

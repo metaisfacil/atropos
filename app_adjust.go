@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"image"
 )
@@ -179,7 +180,7 @@ func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
 	if a.warpedImage == nil {
 		const msg = "Crop: no warped image"
 		a.logf(msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 	a.saveUndo()
 
@@ -225,7 +226,7 @@ func (a *App) Rotate(req RotateRequest) (*ProcessResult, error) {
 	if a.warpedImage == nil {
 		const msg = "Rotate: no warped image"
 		a.logf(msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 	a.saveUndo()
 
@@ -380,7 +381,7 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 	if a.warpedImage == nil {
 		const msg = "TrimBorders: no processed image"
 		a.logf(msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 
 	img := a.warpedImage

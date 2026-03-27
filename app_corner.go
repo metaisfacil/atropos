@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"math"
@@ -154,7 +155,7 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	if !a.imageLoaded {
 		const msg = "DetectCorners: no image loaded"
 		a.logf(msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 
 	// Register a cancellable context so CancelCornerDetect() can abort this call.

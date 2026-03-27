@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -69,7 +70,7 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	if !a.loadMu.TryLock() {
 		const msg = "LoadImage: rejected, another load is already in progress"
 		a.logf(msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 	defer a.loadMu.Unlock()
 	a.cancelTouchup()
@@ -81,13 +82,12 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	if err != nil {
 		msg := fmt.Sprintf("LoadImage: decode error: %v", err)
 		a.logf(msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 	a.logf("LoadImage: decode took %v", time.Since(t0))
 
 	t1 := time.Now()
 	nrgba := toNRGBA(src)
-	src = nil // allow GC to reclaim decoded image
 	a.logf("LoadImage: toNRGBA took %v", time.Since(t1))
 
 	t2 := time.Now()
@@ -103,7 +103,7 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	if err != nil {
 		msg := fmt.Sprintf("LoadImage: base64 error: %v", err)
 		a.logf(msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 	a.logf("LoadImage: preview took %v", time.Since(t3))
 
@@ -219,7 +219,7 @@ func (a *App) decodeViaMagick(path, outFmt string) (image.Image, error) {
 	if runErr := cmd.Run(); runErr != nil {
 		msg := fmt.Sprintf("decodeViaMagick: magick failed: %v stderr=%s", runErr, stderr.String())
 		a.logf(msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 
 	a.logf("decodeViaMagick: magick produced %d bytes of %s", stdout.Len(), outFmt)
@@ -227,7 +227,7 @@ func (a *App) decodeViaMagick(path, outFmt string) (image.Image, error) {
 	if decErr != nil {
 		msg := fmt.Sprintf("decodeViaMagick: bmp decode failed: %v", decErr)
 		a.logf(msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 
 	a.logf("decodeViaMagick: OK, bounds=%v", img.Bounds())
@@ -245,7 +245,7 @@ func (a *App) SaveImage(req SaveRequest) (*ProcessResult, error) {
 	if a.warpedImage == nil {
 		const msg = "SaveImage: no image to save"
 		a.logf(msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 
 	f, err := os.Create(req.OutputPath)
@@ -272,7 +272,7 @@ func (a *App) SaveImage(req SaveRequest) (*ProcessResult, error) {
 	if err != nil {
 		msg := fmt.Sprintf("SaveImage: encode error: %v", err)
 		a.logf(msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 
 	a.logf("SaveImage: saved successfully to %s", req.OutputPath)
@@ -302,7 +302,7 @@ func (a *App) LoadImageBytes(req LoadImageBytesRequest) (*ImageInfo, error) {
 	if !a.loadMu.TryLock() {
 		const msg = "LoadImageBytes: rejected, another load is already in progress"
 		a.logf(msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 	defer a.loadMu.Unlock()
 	a.cancelTouchup()
@@ -314,13 +314,12 @@ func (a *App) LoadImageBytes(req LoadImageBytesRequest) (*ImageInfo, error) {
 	if err != nil {
 		msg := fmt.Sprintf("LoadImageBytes: decode error: %v", err)
 		a.logf(msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 	a.logf("LoadImageBytes: decode took %v", time.Since(t0))
 
 	t1 := time.Now()
 	nrgba := toNRGBA(src)
-	src = nil
 	a.logf("LoadImageBytes: toNRGBA took %v", time.Since(t1))
 
 	t2 := time.Now()
@@ -336,7 +335,7 @@ func (a *App) LoadImageBytes(req LoadImageBytesRequest) (*ImageInfo, error) {
 	if err != nil {
 		msg := fmt.Sprintf("LoadImageBytes: base64 error: %v", err)
 		a.logf(msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 	a.logf("LoadImageBytes: preview took %v", time.Since(t3))
 

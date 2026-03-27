@@ -38,7 +38,10 @@ func TestDrawDisc_SetsDiscCenter(t *testing.T) {
 
 func TestDrawDisc_SetsDiscRadius(t *testing.T) {
 	a := newTestApp(200, 200)
-	a.DrawDisc(DiscDrawRequest{CenterX: 50, CenterY: 50, Radius: 35})
+	_, err := a.DrawDisc(DiscDrawRequest{CenterX: 50, CenterY: 50, Radius: 35})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.discRadius != 35 {
 		t.Fatalf("discRadius should be 35, got %d", a.discRadius)
 	}
@@ -58,7 +61,10 @@ func TestDrawDisc_SnapshotsDiscBaseImage(t *testing.T) {
 func TestDrawDisc_ResetsRotationAngle(t *testing.T) {
 	a := newTestApp(200, 200)
 	a.rotationAngle = 45.0
-	a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 50})
+	_, err := a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 50})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.rotationAngle != 0 {
 		t.Fatalf("rotationAngle should be reset to 0, got %f", a.rotationAngle)
 	}
@@ -68,7 +74,10 @@ func TestDrawDisc_ResetsPostDiscLevels(t *testing.T) {
 	a := newTestApp(200, 200)
 	a.postDiscBlack = 50
 	a.postDiscWhite = 200
-	a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 50})
+	_, err := a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 50})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.postDiscBlack != 0 || a.postDiscWhite != 255 {
 		t.Fatalf("post-disc levels should reset to (0,255), got (%d,%d)", a.postDiscBlack, a.postDiscWhite)
 	}
@@ -77,7 +86,10 @@ func TestDrawDisc_ResetsPostDiscLevels(t *testing.T) {
 func TestDrawDisc_ResetsLevelsBaseImage(t *testing.T) {
 	a := newTestApp(200, 200)
 	a.levelsBaseImage = cloneImage(a.currentImage)
-	a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 50})
+	_, err := a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 50})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.levelsBaseImage != nil {
 		t.Fatal("levelsBaseImage should be nil after DrawDisc")
 	}
@@ -108,7 +120,10 @@ func TestDrawDisc_PreviewIsDataURI(t *testing.T) {
 func TestDrawDisc_SavesUndo(t *testing.T) {
 	a := newTestApp(200, 200)
 	before := len(a.undoStack)
-	a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 50})
+	_, err := a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 50})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(a.undoStack) != before+1 {
 		t.Fatalf("expected undo stack +1, got %d→%d", before, len(a.undoStack))
 	}
@@ -127,7 +142,10 @@ func TestResetDisc_NoImage(t *testing.T) {
 func TestResetDisc_ClearsDiscRadius(t *testing.T) {
 	a := newTestApp(200, 200)
 	drawTestDisc(t, a)
-	a.ResetDisc()
+	_, err := a.ResetDisc()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.discRadius != 0 {
 		t.Fatalf("discRadius should be 0 after ResetDisc, got %d", a.discRadius)
 	}
@@ -136,7 +154,10 @@ func TestResetDisc_ClearsDiscRadius(t *testing.T) {
 func TestResetDisc_ClearsDiscBaseImage(t *testing.T) {
 	a := newTestApp(200, 200)
 	drawTestDisc(t, a)
-	a.ResetDisc()
+	_, err := a.ResetDisc()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.discBaseImage != nil {
 		t.Fatal("discBaseImage should be nil after ResetDisc")
 	}
@@ -146,7 +167,10 @@ func TestResetDisc_ClearsRotationAngle(t *testing.T) {
 	a := newTestApp(200, 200)
 	drawTestDisc(t, a)
 	a.rotationAngle = 15.0
-	a.ResetDisc()
+	_, err := a.ResetDisc()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.rotationAngle != 0 {
 		t.Fatalf("rotationAngle should be 0 after ResetDisc, got %f", a.rotationAngle)
 	}
@@ -155,7 +179,10 @@ func TestResetDisc_ClearsRotationAngle(t *testing.T) {
 func TestResetDisc_ClearsWarpedImage(t *testing.T) {
 	a := newTestApp(200, 200)
 	drawTestDisc(t, a)
-	a.ResetDisc()
+	_, err := a.ResetDisc()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.warpedImage != nil {
 		t.Fatal("warpedImage should be nil after ResetDisc")
 	}
@@ -165,7 +192,10 @@ func TestResetDisc_ClearsLevelsBaseImage(t *testing.T) {
 	a := newTestApp(200, 200)
 	drawTestDisc(t, a)
 	a.levelsBaseImage = cloneImage(a.currentImage)
-	a.ResetDisc()
+	_, err := a.ResetDisc()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.levelsBaseImage != nil {
 		t.Fatal("levelsBaseImage should be nil after ResetDisc")
 	}
@@ -176,7 +206,10 @@ func TestResetDisc_ResetsPostDiscLevels(t *testing.T) {
 	drawTestDisc(t, a)
 	a.postDiscBlack = 50
 	a.postDiscWhite = 200
-	a.ResetDisc()
+	_, err := a.ResetDisc()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.postDiscBlack != 0 || a.postDiscWhite != 255 {
 		t.Fatalf("post-disc levels should reset to (0,255), got (%d,%d)", a.postDiscBlack, a.postDiscWhite)
 	}
@@ -225,8 +258,14 @@ func TestRotateDisc_NoDisc(t *testing.T) {
 func TestRotateDisc_AccumulatesAngle(t *testing.T) {
 	a := newTestApp(200, 200)
 	drawTestDisc(t, a)
-	a.RotateDisc(DiscRotateRequest{Angle: 15.0})
-	a.RotateDisc(DiscRotateRequest{Angle: 10.0})
+	_, err := a.RotateDisc(DiscRotateRequest{Angle: 15.0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_, err = a.RotateDisc(DiscRotateRequest{Angle: 10.0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.rotationAngle != 25.0 {
 		t.Fatalf("expected rotationAngle=25.0, got %f", a.rotationAngle)
 	}
@@ -248,7 +287,10 @@ func TestRotateDisc_UpdatesWarpedImage(t *testing.T) {
 	a := newTestApp(200, 200)
 	drawTestDisc(t, a)
 	before := a.warpedImage
-	a.RotateDisc(DiscRotateRequest{Angle: 5.0})
+	_, err := a.RotateDisc(DiscRotateRequest{Angle: 5.0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	// redrawDisc always allocates a new image; the pointer must differ.
 	if a.warpedImage == before {
 		t.Fatal("warpedImage should be a new allocation after RotateDisc")
@@ -267,8 +309,14 @@ func TestShiftDisc_NoDisc(t *testing.T) {
 
 func TestShiftDisc_MovesCenter(t *testing.T) {
 	a := newTestApp(200, 200)
-	a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 30})
-	a.ShiftDisc(ShiftDiscRequest{DX: 10, DY: -5})
+	_, err := a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 30})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_, err = a.ShiftDisc(ShiftDiscRequest{DX: 10, DY: -5})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.discCenter.X != 110 || a.discCenter.Y != 95 {
 		t.Fatalf("expected center (110,95), got %v", a.discCenter)
 	}
@@ -288,9 +336,18 @@ func TestShiftDisc_ReturnsPreview(t *testing.T) {
 
 func TestShiftDisc_AccumulatesOffset(t *testing.T) {
 	a := newTestApp(200, 200)
-	a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 30})
-	a.ShiftDisc(ShiftDiscRequest{DX: 5, DY: 3})
-	a.ShiftDisc(ShiftDiscRequest{DX: -2, DY: 7})
+	_, err := a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 30})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_, err = a.ShiftDisc(ShiftDiscRequest{DX: 5, DY: 3})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_, err = a.ShiftDisc(ShiftDiscRequest{DX: -2, DY: 7})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.discCenter.X != 103 || a.discCenter.Y != 110 {
 		t.Fatalf("expected center (103,110), got %v", a.discCenter)
 	}
@@ -300,7 +357,10 @@ func TestShiftDisc_AccumulatesOffset(t *testing.T) {
 
 func TestSetFeatherSize_NegativeClampsToZero(t *testing.T) {
 	a := newTestApp(200, 200)
-	a.SetFeatherSize(FeatherSizeRequest{Size: -10})
+	_, err := a.SetFeatherSize(FeatherSizeRequest{Size: -10})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.featherSize != 0 {
 		t.Fatalf("negative feather should clamp to 0, got %d", a.featherSize)
 	}
@@ -308,7 +368,10 @@ func TestSetFeatherSize_NegativeClampsToZero(t *testing.T) {
 
 func TestSetFeatherSize_UpdatesValue(t *testing.T) {
 	a := newTestApp(200, 200)
-	a.SetFeatherSize(FeatherSizeRequest{Size: 25})
+	_, err := a.SetFeatherSize(FeatherSizeRequest{Size: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.featherSize != 25 {
 		t.Fatalf("expected featherSize=25, got %d", a.featherSize)
 	}
@@ -326,7 +389,10 @@ func TestSetFeatherSize_WithDiscRedrawsDisc(t *testing.T) {
 	a := newTestApp(200, 200)
 	drawTestDisc(t, a)
 	before := a.warpedImage
-	a.SetFeatherSize(FeatherSizeRequest{Size: 5})
+	_, err := a.SetFeatherSize(FeatherSizeRequest{Size: 5})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.warpedImage == before {
 		t.Fatal("warpedImage should be updated after SetFeatherSize with active disc")
 	}
@@ -380,7 +446,10 @@ func TestGetPixelColor_WithDiscRedrawsDisc(t *testing.T) {
 	a := newTestApp(200, 200)
 	drawTestDisc(t, a)
 	before := a.warpedImage
-	a.GetPixelColor(PixelColorRequest{X: 10, Y: 10})
+	_, err := a.GetPixelColor(PixelColorRequest{X: 10, Y: 10})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.warpedImage == before {
 		t.Fatal("warpedImage should be updated after GetPixelColor with active disc")
 	}
@@ -400,7 +469,10 @@ func TestStraightEdgeRotate_SubtractsAngleFromRotation(t *testing.T) {
 	a := newTestApp(200, 200)
 	drawTestDisc(t, a)
 	a.rotationAngle = 0
-	a.StraightEdgeRotate(StraightEdgeRotateRequest{AngleDeg: 10.0})
+	_, err := a.StraightEdgeRotate(StraightEdgeRotateRequest{AngleDeg: 10.0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.rotationAngle != -10.0 {
 		t.Fatalf("expected rotationAngle=-10.0, got %f", a.rotationAngle)
 	}
@@ -410,7 +482,10 @@ func TestStraightEdgeRotate_AccumulatesWithExistingAngle(t *testing.T) {
 	a := newTestApp(200, 200)
 	drawTestDisc(t, a)
 	a.rotationAngle = 5.0
-	a.StraightEdgeRotate(StraightEdgeRotateRequest{AngleDeg: 3.0})
+	_, err := a.StraightEdgeRotate(StraightEdgeRotateRequest{AngleDeg: 3.0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if a.rotationAngle != 2.0 {
 		t.Fatalf("expected rotationAngle=2.0, got %f", a.rotationAngle)
 	}
@@ -421,7 +496,10 @@ func TestStraightEdgeRotate_SavesDiscRotationUndo(t *testing.T) {
 	drawTestDisc(t, a)
 	// Clear the undo entry left by DrawDisc for a clean count.
 	a.undoStack = nil
-	a.StraightEdgeRotate(StraightEdgeRotateRequest{AngleDeg: 5.0})
+	_, err := a.StraightEdgeRotate(StraightEdgeRotateRequest{AngleDeg: 5.0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(a.undoStack) != 1 {
 		t.Fatalf("expected 1 undo entry after StraightEdgeRotate, got %d", len(a.undoStack))
 	}
