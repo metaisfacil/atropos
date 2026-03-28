@@ -495,9 +495,9 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 // re-application of Descreen will never silently discard an intervening
 // adjustment.
 //
-//   thresh — distance-weighted log-magnitude threshold (0–200; default 92)
-//   radius — dilation/blur radius for the suppression mask (1–20; default 6)
-//   middle — DC neighbourhood preservation ratio (1–10; default 4)
+//	thresh — distance-weighted log-magnitude threshold (0–200; default 92)
+//	radius — dilation/blur radius for the suppression mask (1–20; default 6)
+//	middle — DC neighbourhood preservation ratio (1–10; default 4)
 func (a *App) Descreen(req DescreenRequest) (*ProcessResult, error) {
 	a.logf("Descreen: thresh=%d radius=%d middle=%d highlight=%d", req.Thresh, req.Radius, req.Middle, req.Highlight)
 
