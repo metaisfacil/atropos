@@ -138,12 +138,13 @@ func (a *App) cancelTouchup() {
 
 // touchUpDoneEvent is the payload sent on the "touchup-done" Wails event.
 type touchUpDoneEvent struct {
-	Cancelled bool   `json:"cancelled,omitempty"`
-	Error     string `json:"error,omitempty"`
-	Preview   string `json:"preview,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Width     int    `json:"width,omitempty"`
-	Height    int    `json:"height,omitempty"`
+	Cancelled     bool   `json:"cancelled,omitempty"`
+	Error         string `json:"error,omitempty"`
+	Preview       string `json:"preview,omitempty"`
+	Message       string `json:"message,omitempty"`
+	Width         int    `json:"width,omitempty"`
+	Height        int    `json:"height,omitempty"`
+	DescreenReset bool   `json:"descreenReset,omitempty"`
 }
 
 // TouchUpApply builds the mask synchronously (fast), then launches a goroutine
@@ -218,6 +219,7 @@ func (a *App) TouchUpApply(maskB64 string, patchSize int, iterations int) (*Proc
 			return
 		}
 
+		descreenReset := a.descreenResultImage != nil
 		a.saveUndo()
 		a.setWorkingImage(out)
 
@@ -227,7 +229,7 @@ func (a *App) TouchUpApply(maskB64 string, patchSize int, iterations int) (*Proc
 			return
 		}
 		b := out.Bounds()
-		emit(touchUpDoneEvent{Preview: preview, Message: "Touch-up applied.", Width: b.Dx(), Height: b.Dy()})
+		emit(touchUpDoneEvent{Preview: preview, Message: "Touch-up applied.", Width: b.Dx(), Height: b.Dy(), DescreenReset: descreenReset})
 	}()
 
 	return &ProcessResult{Message: "running"}, nil

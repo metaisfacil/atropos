@@ -26,6 +26,8 @@ export default function AdjustmentsPanel({
   postCropAvailable,
   useTouchupTool,
   setUseTouchupTool,
+  useDescreenTool,
+  setUseDescreenTool,
   brushSize,
   setBrushSize,
   mode,
@@ -79,7 +81,6 @@ export default function AdjustmentsPanel({
 
   const [resizeModalOpen, setResizeModalOpen] = useState(false)
 
-  const [useDescreenTool, setUseDescreenTool] = useState(false)
   const [descreenThresh, setDescreenThresh] = useState(92)
   const [descreenRadius, setDescreenRadius] = useState(6)
   const [descreenMiddle, setDescreenMiddle] = useState(4)
@@ -94,6 +95,7 @@ export default function AdjustmentsPanel({
       const result = await Descreen({ thresh: descreenThresh, radius: descreenRadius, middle: descreenMiddle, highlight: descreenHighlight })
       if (result?.preview) setPreview(result.preview)
       handleDescreenReset(result)
+      setUseDescreenTool(false)
     } catch (err) {
       console.error('Descreen error:', err)
     } finally {

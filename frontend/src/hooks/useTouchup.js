@@ -5,7 +5,7 @@ export function useTouchup({
   imageLoaded, loading, setLoading, showStatus,
   realImageDims, touchupBackend, setErrorMessage, setPreview, onDragEnd,
   flushPendingSaveRef,
-  touchupRemainsActive, setUseTouchupTool,
+  touchupRemainsActive, setUseTouchupTool, setUseDescreenTool,
   setUnsavedChanges,
   touchupDraggingRef,
 }) {
@@ -95,6 +95,9 @@ export function useTouchup({
   touchupDoneHandlerRef.current = (data) => {
     setLoading(false)
     if (data?.cancelled) return
+    if (data?.descreenReset || data?.preview) {
+      setUseDescreenTool?.(false)
+    }
     if (data?.error) {
       showStatus('')
       const hint = touchupBackend === 'iopaint'

@@ -125,6 +125,7 @@ export default function App() {
   const [whitePoint, setWhitePoint] = useState(255)
   const [useStretchPreprocess, setUseStretchPreprocess] = useState(true)
   const [useTouchupTool, setUseTouchupTool] = useState(false)
+  const [useDescreenTool, setUseDescreenTool] = useState(false)
   const [useStraightEdgeTool, setUseStraightEdgeTool] = useState(false)
   const [optionsOpen, setOptionsOpen]         = useState(false)
   const [aboutOpen,   setAboutOpen]           = useState(false)
@@ -183,7 +184,7 @@ export default function App() {
     setErrorMessage, setPreview,
     onDragEnd: () => { setDragging(false); setDragStart(null); setDragCurrent(null) },
     flushPendingSaveRef,
-    touchupRemainsActive, setUseTouchupTool,
+    touchupRemainsActive, setUseTouchupTool, setUseDescreenTool,
     setUnsavedChanges,
     touchupDraggingRef,
   })
@@ -413,6 +414,8 @@ export default function App() {
             }
             useTouchupTool={useTouchupTool}
             setUseTouchupTool={setUseTouchupTool}
+            useDescreenTool={useDescreenTool}
+            setUseDescreenTool={setUseDescreenTool}
             touchupStrokes={touchupStrokes}
             commitTouchup={commitTouchup}
             clearTouchup={clearTouchup}
