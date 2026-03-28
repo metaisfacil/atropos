@@ -163,7 +163,7 @@ func TestApplyDescreen_PreservesDimensions(t *testing.T) {
 			src.SetNRGBA(x, y, color.NRGBA{R: 128, G: 100, B: 80, A: 255})
 		}
 	}
-	dst := applyDescreen(src, 92, 6, 4, nil)
+	dst := applyDescreen(src, 92, 6, 4, 100, nil)
 	if dst.Bounds().Dx() != 64 || dst.Bounds().Dy() != 48 {
 		t.Fatalf("expected 64×48, got %d×%d", dst.Bounds().Dx(), dst.Bounds().Dy())
 	}
@@ -176,7 +176,7 @@ func TestApplyDescreen_PreservesAlpha(t *testing.T) {
 			src.SetNRGBA(x, y, color.NRGBA{R: 200, G: 150, B: 100, A: 200})
 		}
 	}
-	dst := applyDescreen(src, 92, 6, 4, nil)
+	dst := applyDescreen(src, 92, 6, 4, 100, nil)
 	for y := 0; y < 32; y++ {
 		for x := 0; x < 32; x++ {
 			if a := dst.NRGBAAt(x, y).A; a != 200 {
@@ -194,7 +194,7 @@ func TestApplyDescreen_UniformImagePreserved(t *testing.T) {
 			src.SetNRGBA(x, y, color.NRGBA{R: 180, G: 120, B: 60, A: 255})
 		}
 	}
-	dst := applyDescreen(src, 92, 6, 4, nil)
+	dst := applyDescreen(src, 92, 6, 4, 100, nil)
 	// Allow ±2 rounding tolerance from FFT round-trip.
 	for y := 0; y < 32; y++ {
 		for x := 0; x < 32; x++ {

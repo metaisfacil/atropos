@@ -75,6 +75,7 @@ export default function AdjustmentsPanel({
   const [descreenThresh, setDescreenThresh] = useState(92)
   const [descreenRadius, setDescreenRadius] = useState(6)
   const [descreenMiddle, setDescreenMiddle] = useState(4)
+  const [descreenHighlight, setDescreenHighlight] = useState(0)
   const [descreenPending, setDescreenPending] = useState(false)
 
   const applyDescreen = async () => {
@@ -82,7 +83,7 @@ export default function AdjustmentsPanel({
     setDescreenPending(true)
     setLoading(true)
     try {
-      const result = await Descreen({ thresh: descreenThresh, radius: descreenRadius, middle: descreenMiddle })
+      const result = await Descreen({ thresh: descreenThresh, radius: descreenRadius, middle: descreenMiddle, highlight: descreenHighlight })
       if (result?.preview) setPreview(result.preview)
     } catch (err) {
       console.error('Descreen error:', err)
@@ -208,6 +209,13 @@ export default function AdjustmentsPanel({
                 <label className="level-label">Middle</label>
                 <input className="level-range" type="range" min="1" max="10" value={descreenMiddle} onChange={(e) => setDescreenMiddle(Number(e.target.value))} />
                 <span className="level-value">{descreenMiddle}</span>
+              </div>
+            </DelayedHint>
+            <DelayedHint hint="Highlight restoration. At minimum (0) the descreened result is used as-is. Increasing this blends original highlights back over bright areas to hide any screen-pattern artifact left in near-white regions.">
+              <div className="shortcut-item level-row">
+                <label className="level-label">Highs</label>
+                <input className="level-range" type="range" min="0" max="100" value={descreenHighlight} onChange={(e) => setDescreenHighlight(Number(e.target.value))} />
+                <span className="level-value">{descreenHighlight}</span>
               </div>
             </DelayedHint>
             <div className="shortcut-item">

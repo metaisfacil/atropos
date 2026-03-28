@@ -195,6 +195,7 @@ export namespace main {
 	    thresh: number;
 	    radius: number;
 	    middle: number;
+	    highlight: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new DescreenRequest(source);
@@ -205,6 +206,7 @@ export namespace main {
 	        this.thresh = source["thresh"];
 	        this.radius = source["radius"];
 	        this.middle = source["middle"];
+	        this.highlight = source["highlight"];
 	    }
 	}
 	export class DiscDrawRequest {
