@@ -508,6 +508,10 @@ button.save-btn:hover {
   overflow: visible;
 }
 
+.touchup-slider.descreen-controls.open {
+  max-height: 200px; /* enough for 3 sliders + apply button */
+}
+
 /* Scrollbar styling for the inner content area */
 .accordion-content::-webkit-scrollbar {
   width: 10px;

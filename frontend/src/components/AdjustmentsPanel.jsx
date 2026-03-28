@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { AutoContrast, SetLevels, TrimBorders, ResizeImage } from '../../wailsjs/go/main/App'
+import { AutoContrast, SetLevels, TrimBorders, ResizeImage, Descreen } from '../../wailsjs/go/main/App'
 import DelayedHint from './DelayedHint'
 import ResizeModal from './ResizeModal'
 
@@ -70,6 +70,27 @@ export default function AdjustmentsPanel({
   }
 
   const [resizeModalOpen, setResizeModalOpen] = useState(false)
+
+  const [useDescreenTool, setUseDescreenTool] = useState(false)
+  const [descreenThresh, setDescreenThresh] = useState(92)
+  const [descreenRadius, setDescreenRadius] = useState(6)
+  const [descreenMiddle, setDescreenMiddle] = useState(4)
+  const [descreenPending, setDescreenPending] = useState(false)
+
+  const applyDescreen = async () => {
+    if (!imageLoaded) return
+    setDescreenPending(true)
+    setLoading(true)
+    try {
+      const result = await Descreen({ thresh: descreenThresh, radius: descreenRadius, middle: descreenMiddle })
+      if (result?.preview) setPreview(result.preview)
+    } catch (err) {
+      console.error('Descreen error:', err)
+    } finally {
+      setDescreenPending(false)
+      setLoading(false)
+    }
+  }
 
   const applyResize = async (width, height) => {
     if (!imageLoaded) return
@@ -154,6 +175,51 @@ export default function AdjustmentsPanel({
                 {autoContrastPending ? 'Auto-contrast…' : 'Auto-contrast'}
               </button>
             </DelayedHint>
+
+            <DelayedHint hint="FFT-based halftone descreen filter. Removes dot/line screen patterns from scanned printed images. Toggle to reveal controls, then click Apply.">
+              <button
+                className={`adjustments-btn ${useDescreenTool ? 'active' : ''}`}
+                onClick={() => setUseDescreenTool((v) => !v)}
+                disabled={!imageLoaded || !postCropAvailable}
+                aria-pressed={useDescreenTool}
+              >
+                Descreen
+              </button>
+            </DelayedHint>
+          </div>
+
+          <div className={`touchup-slider descreen-controls ${useDescreenTool ? 'open' : 'closed'}`}>
+            <DelayedHint hint="Threshold for the distance-weighted log-magnitude spectrum. Higher values filter only the strongest screen patterns; lower values are more aggressive.">
+              <div className="shortcut-item level-row">
+                <label className="level-label">Thresh</label>
+                <input className="level-range" type="range" min="50" max="150" value={descreenThresh} onChange={(e) => setDescreenThresh(Number(e.target.value))} />
+                <span className="level-value">{descreenThresh}</span>
+              </div>
+            </DelayedHint>
+            <DelayedHint hint="Radius used to dilate and blur the suppression mask around detected screen peaks. Larger values remove more of the surrounding frequency content.">
+              <div className="shortcut-item level-row">
+                <label className="level-label">Radius</label>
+                <input className="level-range" type="range" min="1" max="20" value={descreenRadius} onChange={(e) => setDescreenRadius(Number(e.target.value))} />
+                <span className="level-value">{descreenRadius}</span>
+              </div>
+            </DelayedHint>
+            <DelayedHint hint="Controls the size of the protected DC region at the centre of the spectrum. Higher values preserve more low-frequency content and reduce blurring of broad tones.">
+              <div className="shortcut-item level-row">
+                <label className="level-label">Middle</label>
+                <input className="level-range" type="range" min="1" max="10" value={descreenMiddle} onChange={(e) => setDescreenMiddle(Number(e.target.value))} />
+                <span className="level-value">{descreenMiddle}</span>
+              </div>
+            </DelayedHint>
+            <div className="shortcut-item">
+              <button
+                className="adjustments-btn"
+                onClick={applyDescreen}
+                disabled={descreenPending || !imageLoaded || !postCropAvailable}
+                style={{ width: '100%' }}
+              >
+                {descreenPending ? 'Descreening…' : 'Apply descreen'}
+              </button>
+            </div>
           </div>
 
           <div className={`touchup-slider ${useTouchupTool ? 'open' : 'closed'}`}>

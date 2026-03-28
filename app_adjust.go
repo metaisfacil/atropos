@@ -41,6 +41,13 @@ type SetLevelsRequest struct {
 	White int `json:"white"`
 }
 
+// DescreenRequest carries parameters for the FFT-based descreen filter.
+type DescreenRequest struct {
+	Thresh int `json:"thresh"`
+	Radius int `json:"radius"`
+	Middle int `json:"middle"`
+}
+
 // workingImage returns the image that adjustment operations should act on.
 // Once a warp/crop/disc operation has produced a warpedImage that is what
 // the user is editing; before any such operation it is currentImage.
@@ -454,6 +461,38 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 		Message: fmt.Sprintf("Trimmed borders (top=%d, bottom=%d, left=%d, right=%d)", top, h-bottom, left, w-right),
 		Width:   nb.Dx(),
 		Height:  nb.Dy(),
+	}, nil
+}
+
+// Descreen applies the FFT-based halftone descreen filter to the working
+// image and commits the result. It calls saveUndo() before modifying the
+// image so that the operation can be reversed with Undo().
+//
+//   thresh — distance-weighted log-magnitude threshold (0–200; default 92)
+//   radius — dilation/blur radius for the suppression mask (1–20; default 6)
+//   middle — DC neighbourhood preservation ratio (1–10; default 4)
+func (a *App) Descreen(req DescreenRequest) (*ProcessResult, error) {
+	a.logf("Descreen: thresh=%d radius=%d middle=%d", req.Thresh, req.Radius, req.Middle)
+
+	src := a.workingImage()
+	if src == nil {
+		return nil, fmt.Errorf("no image loaded")
+	}
+
+	a.saveUndo()
+	filtered := applyDescreen(src, req.Thresh, req.Radius, req.Middle)
+	a.setWorkingImage(filtered)
+
+	preview, err := imageToBase64(filtered)
+	if err != nil {
+		return nil, err
+	}
+	rb := filtered.Bounds()
+	return &ProcessResult{
+		Preview: preview,
+		Message: fmt.Sprintf("Descreen applied (thresh=%d, radius=%d, middle=%d)", req.Thresh, req.Radius, req.Middle),
+		Width:   rb.Dx(),
+		Height:  rb.Dy(),
 	}, nil
 }
 
