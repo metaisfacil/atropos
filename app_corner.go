@@ -52,14 +52,15 @@ type ClickCornerRequest struct {
 // On the 4th click Done is true, Preview contains the warped image, and
 // Width/Height reflect the new image dimensions.
 type ClickCornerResult struct {
-	Preview  string `json:"preview"`
-	Message  string `json:"message"`
-	Count    int    `json:"count"`
-	Done     bool   `json:"done"`
-	SnappedX int    `json:"snappedX"`
-	SnappedY int    `json:"snappedY"`
-	Width    int    `json:"width"`
-	Height   int    `json:"height"`
+	Preview       string `json:"preview"`
+	Message       string `json:"message"`
+	Count         int    `json:"count"`
+	Done          bool   `json:"done"`
+	SnappedX      int    `json:"snappedX"`
+	SnappedY      int    `json:"snappedY"`
+	Width         int    `json:"width"`
+	Height        int    `json:"height"`
+	DescreenReset bool   `json:"descreenReset,omitempty"`
 }
 
 // warpFromCorners sorts 4 corner points and applies a perspective transform,
@@ -350,6 +351,7 @@ func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
 		return nil, fmt.Errorf("no image loaded")
 	}
 
+	descreenReset := a.descreenResultImage != nil
 	// Snap to nearest detected corner unless custom mode
 	pt := image.Pt(req.X, req.Y)
 	if !req.Custom && len(a.detectedCorners) > 0 {
@@ -403,12 +405,13 @@ func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
 
 	a.logf("ClickCorner: warp complete %dx%d", width, height)
 	return &ClickCornerResult{
-		Preview: preview,
-		Message: fmt.Sprintf("Perspective corrected to %d×%d", width, height),
-		Count:   4,
-		Done:    true,
-		Width:   width,
-		Height:  height,
+		Preview:       preview,
+		Message:       fmt.Sprintf("Perspective corrected to %d×%d", width, height),
+		Count:         4,
+		Done:          true,
+		Width:         width,
+		Height:        height,
+		DescreenReset: descreenReset,
 	}, nil
 }
 
@@ -453,6 +456,7 @@ func (a *App) UndoLastCorner() int {
 // are preserved and returned so the frontend can restore its SVG overlay.
 func (a *App) ResetCorners() (*ProcessResult, error) {
 	a.logf("ResetCorners")
+	descreenReset := a.descreenResultImage != nil
 	a.cancelTouchup()
 	a.selectedCorners = nil
 	a.warpedImage = nil
@@ -463,11 +467,12 @@ func (a *App) ResetCorners() (*ProcessResult, error) {
 	}
 	b := a.currentImage.Bounds()
 	return &ProcessResult{
-		Preview: preview,
-		Width:   b.Dx(),
-		Height:  b.Dy(),
-		Message: fmt.Sprintf("Reset — %d corners detected, click to select", len(a.detectedCorners)),
-		Corners: a.detectedCorners,
+		Preview:       preview,
+		Width:         b.Dx(),
+		Height:        b.Dy(),
+		Message:       fmt.Sprintf("Reset — %d corners detected, click to select", len(a.detectedCorners)),
+		Corners:       a.detectedCorners,
+		DescreenReset: descreenReset,
 	}, nil
 }
 
@@ -478,6 +483,7 @@ func (a *App) SkipCrop() (*ProcessResult, error) {
 	if a.currentImage == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
+	descreenReset := a.descreenResultImage != nil
 	a.warpedImage = cloneImage(a.currentImage)
 	a.selectedCorners = nil
 
@@ -487,9 +493,10 @@ func (a *App) SkipCrop() (*ProcessResult, error) {
 	}
 	b := a.warpedImage.Bounds()
 	return &ProcessResult{
-		Preview: preview,
-		Width:   b.Dx(),
-		Height:  b.Dy(),
-		Message: "Crop skipped — image ready to save",
+		Preview:       preview,
+		Width:         b.Dx(),
+		Height:        b.Dy(),
+		Message:       "Crop skipped — image ready to save",
+		DescreenReset: descreenReset,
 	}, nil
 }
