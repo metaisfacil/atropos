@@ -5,6 +5,7 @@ import (
 	"math"
 	"runtime"
 	"sync"
+	"time"
 )
 
 // ============================================================
@@ -177,66 +178,70 @@ func nextPow2FFT(n int) int {
 // ---- Morphological dilation --------------------------------
 
 // dilate2dFFT applies morphological dilation to the float32 array
-// src (rows×cols, row-major) using an elliptical structuring element
-// with half-radii (kw, kh).  Boundary pixels are clamped.
+// src (rows×cols, row-major) using a rectangular structuring element
+// with half-radii (kw, kh) via separable horizontal then vertical 1-D
+// max passes.  This is O(H×W×(kw+kh)) rather than the naive O(H×W×kw×kh).
+// Boundary pixels are clamped.
 // workers controls how many goroutines process row chunks concurrently.
 func dilate2dFFT(src []float32, rows, cols, kw, kh, workers int) []float32 {
-	dst := make([]float32, rows*cols)
-
-	// Precompute which (dy,dx) offsets are inside the ellipse.
-	// This is done once outside the parallel region.
-	type pt struct{ dy, dx int }
-	var se []pt
-	var offset float64
-	if kw > 0 && kh > 0 {
-		offset = float64(kw+kh) / 2.0 / float64(kw*kh)
-	}
-	for dy := -kh; dy <= kh; dy++ {
-		for dx := -kw; dx <= kw; dx++ {
-			var ex, ey float64
-			if kw > 0 {
-				ex = float64(dx) / float64(kw)
-			}
-			if kh > 0 {
-				ey = float64(dy) / float64(kh)
-			}
-			if ex*ex+ey*ey-offset <= 1.0 {
-				se = append(se, pt{dy, dx})
-			}
-		}
-	}
-	if len(se) == 0 {
+	if kw <= 0 && kh <= 0 {
+		dst := make([]float32, rows*cols)
 		copy(dst, src)
 		return dst
 	}
 
-	// Each row of the output depends only on src (read-only), so rows
-	// can be processed independently across worker goroutines.
-	pFor(rows, workers, func(sy, ey int) {
-		for y := sy; y < ey; y++ {
-			for x := 0; x < cols; x++ {
-				maxVal := float32(0)
-				for _, p := range se {
-					ny := y + p.dy
-					nx := x + p.dx
-					if ny < 0 {
-						ny = 0
-					} else if ny >= rows {
-						ny = rows - 1
+	// Horizontal pass: src → tmp (each row is independent).
+	tmp := make([]float32, rows*cols)
+	if kw > 0 {
+		pFor(rows, workers, func(sy, ey int) {
+			for y := sy; y < ey; y++ {
+				for x := 0; x < cols; x++ {
+					maxVal := float32(0)
+					for dx := -kw; dx <= kw; dx++ {
+						nx := x + dx
+						if nx < 0 {
+							nx = 0
+						} else if nx >= cols {
+							nx = cols - 1
+						}
+						if v := src[y*cols+nx]; v > maxVal {
+							maxVal = v
+						}
 					}
-					if nx < 0 {
-						nx = 0
-					} else if nx >= cols {
-						nx = cols - 1
-					}
-					if v := src[ny*cols+nx]; v > maxVal {
-						maxVal = v
-					}
+					tmp[y*cols+x] = maxVal
 				}
-				dst[y*cols+x] = maxVal
 			}
-		}
-	})
+		})
+	} else {
+		copy(tmp, src)
+	}
+
+	// Vertical pass: tmp → dst (each row of dst is independent).
+	dst := make([]float32, rows*cols)
+	if kh > 0 {
+		pFor(rows, workers, func(sy, ey int) {
+			for y := sy; y < ey; y++ {
+				for x := 0; x < cols; x++ {
+					maxVal := float32(0)
+					for dy := -kh; dy <= kh; dy++ {
+						ny := y + dy
+						if ny < 0 {
+							ny = 0
+						} else if ny >= rows {
+							ny = rows - 1
+						}
+						if v := tmp[ny*cols+x]; v > maxVal {
+							maxVal = v
+						}
+					}
+					dst[y*cols+x] = maxVal
+				}
+			}
+		})
+	} else {
+		copy(dst, tmp)
+	}
+
 	return dst
 }
 
@@ -317,7 +322,10 @@ func gaussianBlur2dFFT(src []float32, rows, cols int, sigma float64, workers int
 //   radius — dilation/blur radius for the peak mask (1–20; default 6)
 //   middle — DC neighbourhood preservation ratio (1–10; default 4)
 //            larger = larger protected region around DC
-func applyDescreen(src *image.NRGBA, thresh, radius, middle int) *image.NRGBA {
+//   logf   — optional logger (may be nil); receives per-phase timing lines
+func applyDescreen(src *image.NRGBA, thresh, radius, middle int, logf func(string, ...interface{})) *image.NRGBA {
+	totalStart := time.Now()
+
 	b := src.Bounds()
 	origRows := b.Dy()
 	origCols := b.Dx()
@@ -328,13 +336,23 @@ func applyDescreen(src *image.NRGBA, thresh, radius, middle int) *image.NRGBA {
 	N := paddedRows * paddedCols
 
 	nCPU := runtime.NumCPU()
-	// Each of the 3 channel goroutines gets nCPU workers for its inner loops.
-	// Go's scheduler keeps actual CPU usage at ~nCPU total.
-	innerW := nCPU
+	// Divide workers evenly across the 3 concurrent channel goroutines so
+	// that total goroutines ≈ nCPU rather than 3×nCPU competing for the
+	// same CPUs (especially important for memory-bound steps like dilation).
+	innerW := nCPU / 3
+	if innerW < 1 {
+		innerW = 1
+	}
+
+	if logf != nil {
+		logf("Descreen: start %dx%d → padded %dx%d, nCPU=%d",
+			origCols, origRows, paddedCols, paddedRows, nCPU)
+	}
 
 	// --- Normalization coefficients (computed once, shared read-only) ---
 	// coef[y][x] = max( (√|x−cx| + √|y−cy|)², 0.01 )
 	// Mirrors the Python normalize(h, w) helper.
+	t := time.Now()
 	coefs := make([]float64, N)
 	cy0 := paddedRows / 2
 	cx0 := paddedCols / 2
@@ -379,8 +397,12 @@ func applyDescreen(src *image.NRGBA, thresh, radius, middle int) *image.NRGBA {
 			}
 		}
 	})
+	if logf != nil {
+		logf("Descreen: setup (coefs+middleMask) %s", time.Since(t).Round(time.Millisecond))
+	}
 
 	// --- Extract R, G, B channels as float32 (parallel by row) ---
+	t = time.Now()
 	channels := [3][]float32{}
 	for ch := 0; ch < 3; ch++ {
 		channels[ch] = make([]float32, origRows*origCols)
@@ -395,21 +417,28 @@ func applyDescreen(src *image.NRGBA, thresh, radius, middle int) *image.NRGBA {
 			}
 		}
 	})
+	if logf != nil {
+		logf("Descreen: channel extract %s", time.Since(t).Round(time.Millisecond))
+	}
 
 	threshF := float32(thresh)
 
 	// --- Process the three colour channels concurrently ---
+	chNames := [3]string{"R", "G", "B"}
 	results := [3][]float32{}
 	var chanWG sync.WaitGroup
+	channelsStart := time.Now()
 	for ch := 0; ch < 3; ch++ {
 		chanWG.Add(1)
 		go func(ch int) {
 			defer chanWG.Done()
+			chStart := time.Now()
 
 			// Each channel goroutine owns its own FFT scratch buffer.
 			fftData := make([]complex128, N)
 
 			// Fill padded complex array (zero-pad right/bottom).
+			t := time.Now()
 			pFor(origRows, innerW, func(sy, ey int) {
 				for y := sy; y < ey; y++ {
 					// Zero the whole padded row first.
@@ -432,14 +461,22 @@ func applyDescreen(src *image.NRGBA, thresh, radius, middle int) *image.NRGBA {
 					}
 				}
 			})
+			if logf != nil {
+				logf("Descreen: [%s] pad fill %s", chNames[ch], time.Since(t).Round(time.Millisecond))
+			}
 
 			// Forward 2-D FFT.
+			t = time.Now()
 			fft2d(fftData, paddedRows, paddedCols, false, innerW)
+			if logf != nil {
+				logf("Descreen: [%s] fwd FFT %s", chNames[ch], time.Since(t).Round(time.Millisecond))
+			}
 
 			// Shift DC to centre.
 			fftShift2d(fftData, paddedRows, paddedCols)
 
 			// Compute distance-weighted log-magnitude spectrum and threshold.
+			t = time.Now()
 			threshMask := make([]float32, N)
 			pFor(N, innerW, func(s, e int) {
 				for i := s; i < e; i++ {
@@ -462,15 +499,27 @@ func applyDescreen(src *image.NRGBA, thresh, radius, middle int) *image.NRGBA {
 					threshMask[i] *= 1.0 - middleMask[i]
 				}
 			})
+			if logf != nil {
+				logf("Descreen: [%s] threshold+mask %s", chNames[ch], time.Since(t).Round(time.Millisecond))
+			}
 
 			// Dilate and Gaussian-blur the peak mask.
 			if radius > 0 {
+				t = time.Now()
 				threshMask = dilate2dFFT(threshMask, paddedRows, paddedCols, radius, radius, innerW)
+				if logf != nil {
+					logf("Descreen: [%s] dilate %s", chNames[ch], time.Since(t).Round(time.Millisecond))
+				}
+				t = time.Now()
 				sigma := float64(radius) / 3.0
 				threshMask = gaussianBlur2dFFT(threshMask, paddedRows, paddedCols, sigma, innerW)
+				if logf != nil {
+					logf("Descreen: [%s] blur %s", chNames[ch], time.Since(t).Round(time.Millisecond))
+				}
 			}
 
 			// Build suppression filter and apply to the complex FFT plane.
+			t = time.Now()
 			pFor(N, innerW, func(s, e int) {
 				for i := s; i < e; i++ {
 					filter := 1.0 - float64(threshMask[i])/255.0
@@ -481,8 +530,12 @@ func applyDescreen(src *image.NRGBA, thresh, radius, middle int) *image.NRGBA {
 			// Inverse shift and inverse FFT.
 			fftShift2d(fftData, paddedRows, paddedCols) // self-inverse for even sizes
 			fft2d(fftData, paddedRows, paddedCols, true, innerW)
+			if logf != nil {
+				logf("Descreen: [%s] filter+inv FFT %s", chNames[ch], time.Since(t).Round(time.Millisecond))
+			}
 
 			// Extract magnitudes for the original (unpadded) region.
+			t = time.Now()
 			out := make([]float32, origRows*origCols)
 			pFor(origRows, innerW, func(sy, ey int) {
 				for y := sy; y < ey; y++ {
@@ -494,12 +547,20 @@ func applyDescreen(src *image.NRGBA, thresh, radius, middle int) *image.NRGBA {
 					}
 				}
 			})
+			if logf != nil {
+				logf("Descreen: [%s] magnitude extract %s", chNames[ch], time.Since(t).Round(time.Millisecond))
+				logf("Descreen: [%s] total %s", chNames[ch], time.Since(chStart).Round(time.Millisecond))
+			}
 			results[ch] = out
 		}(ch)
 	}
 	chanWG.Wait()
+	if logf != nil {
+		logf("Descreen: all channels wall time %s", time.Since(channelsStart).Round(time.Millisecond))
+	}
 
 	// --- Write results to a new NRGBA image (parallel by row) ---
+	t = time.Now()
 	dst := image.NewNRGBA(b)
 	pFor(origRows, nCPU, func(sy, ey int) {
 		for y := sy; y < ey; y++ {
@@ -513,5 +574,9 @@ func applyDescreen(src *image.NRGBA, thresh, radius, middle int) *image.NRGBA {
 			}
 		}
 	})
+	if logf != nil {
+		logf("Descreen: write output %s", time.Since(t).Round(time.Millisecond))
+		logf("Descreen: total %s", time.Since(totalStart).Round(time.Millisecond))
+	}
 	return dst
 }
