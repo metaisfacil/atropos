@@ -500,7 +500,7 @@ func (a *App) Descreen(req DescreenRequest) (*ProcessResult, error) {
 		a.logf("Descreen: captured descreenBaseImage")
 	}
 
-	filtered := applyDescreen(a.descreenBaseImage, req.Thresh, req.Radius, req.Middle)
+	filtered := applyDescreen(a.descreenBaseImage, req.Thresh, req.Radius, req.Middle, a.logf)
 	a.setWorkingImage(filtered)
 
 	preview, err := imageToBase64(filtered)
