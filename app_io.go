@@ -29,6 +29,7 @@ func (a *App) resetPipelineState() {
 	a.warpedImage = nil
 	a.levelsBaseImage = nil
 	a.descreenBaseImage = nil
+	a.descreenResultImage = nil
 	a.selectedCorners = nil
 	a.detectedCorners = nil
 	a.lines = nil

@@ -35,6 +35,12 @@ export default function AdjustmentsPanel({
   realImageDims,
   setRealImageDims,
 }) {
+  const handleDescreenReset = (result) => {
+    if (result?.descreenReset) {
+      setUseDescreenTool(false)
+    }
+  }
+
   const applyTrimBorders = async () => {
     if (!imageLoaded) return
     setLoading(true)
@@ -42,6 +48,7 @@ export default function AdjustmentsPanel({
       const result = await TrimBorders()
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+      handleDescreenReset(result)
     } catch (err) {
       console.error('TrimBorders error:', err)
     } finally {
@@ -61,6 +68,7 @@ export default function AdjustmentsPanel({
         setBlackPoint(result.black)
         setWhitePoint(result.white)
       }
+      handleDescreenReset(result)
     } catch (err) {
       console.error('AutoContrast error:', err)
     } finally {
@@ -85,6 +93,7 @@ export default function AdjustmentsPanel({
     try {
       const result = await Descreen({ thresh: descreenThresh, radius: descreenRadius, middle: descreenMiddle, highlight: descreenHighlight })
       if (result?.preview) setPreview(result.preview)
+      handleDescreenReset(result)
     } catch (err) {
       console.error('Descreen error:', err)
     } finally {
@@ -100,6 +109,7 @@ export default function AdjustmentsPanel({
       const result = await ResizeImage({ width, height })
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+      handleDescreenReset(result)
     } catch (err) {
       console.error('ResizeImage error:', err)
     } finally {
@@ -113,6 +123,7 @@ export default function AdjustmentsPanel({
     try {
       const result = await SetLevels({ black: bp, white: wp })
       if (result?.preview) setPreview(result.preview)
+      handleDescreenReset(result)
     } catch (err) {
       console.error('SetLevels error:', err)
     } finally {

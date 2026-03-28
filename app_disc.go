@@ -76,6 +76,7 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 	if a.currentImage == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
+	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
 	a.discCenter = image.Pt(req.CenterX, req.CenterY)
 	a.discRadius = req.Radius
@@ -103,7 +104,12 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 		}
 	}
 
-	return a.redrawDisc()
+	result, err := a.redrawDisc()
+	if err != nil {
+		return nil, err
+	}
+	result.DescreenReset = descreenReset
+	return result, nil
 }
 
 // redrawDisc re-renders the disc crop using the current discCenter, discRadius,
@@ -120,6 +126,7 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 //  3. Re-applies postDiscBlack/White, so any levels the user set after the disc
 //     was committed survive every subsequent disc re-render.
 func (a *App) redrawDisc() (*ProcessResult, error) {
+	descreenReset := a.descreenResultImage != nil
 	base := a.discBaseImage
 	if base == nil {
 		// Safety fallback for callers that pre-date discBaseImage.
@@ -219,6 +226,7 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 		DiscBgR:         int(a.bgColor.R),
 		DiscBgG:         int(a.bgColor.G),
 		DiscBgB:         int(a.bgColor.B),
+		DescreenReset:   descreenReset,
 	}, nil
 }
 
@@ -363,6 +371,7 @@ func (a *App) resetDiscFields() {
 // ResetDisc clears the disc selection and restores the pre-disc image.
 func (a *App) ResetDisc() (*ProcessResult, error) {
 	a.logf("ResetDisc")
+	descreenReset := a.descreenResultImage != nil
 	a.cancelTouchup()
 	a.resetDiscFields()
 	a.warpedImage = nil
@@ -377,9 +386,10 @@ func (a *App) ResetDisc() (*ProcessResult, error) {
 	}
 	b := a.currentImage.Bounds()
 	return &ProcessResult{
-		Preview: preview,
-		Message: "Disc selection reset — draw a new circle",
-		Width:   b.Dx(),
-		Height:  b.Dy(),
+		Preview:       preview,
+		Message:       "Disc selection reset — draw a new circle",
+		Width:         b.Dx(),
+		Height:        b.Dy(),
+		DescreenReset: descreenReset,
 	}, nil
 }
