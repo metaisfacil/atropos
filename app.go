@@ -44,6 +44,14 @@ type App struct {
 	//   adjustment session starts from the current pixels.
 	levelsBaseImage *image.NRGBA
 
+	// `descreenBaseImage`:
+	//   A snapshot captured the first time Descreen is applied after a
+	//   committing operation. Subsequent descreen calls in the same session
+	//   apply to this base so that changing parameters always operates on
+	//   the same source image, not the already-processed result. Cleared by
+	//   saveUndo() so the next session starts from the then-current pixels.
+	descreenBaseImage *image.NRGBA
+
 	imageLoaded bool
 	undoStack   []undoEntry
 

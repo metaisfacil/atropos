@@ -83,9 +83,10 @@ func (a *App) saveUndo() {
 		img = cloneImage(a.currentImage)
 	}
 	a.undoStack = append(a.undoStack, undoEntry{image: img, preWarp: preWarp})
-	// Any committing operation invalidates the levels baseline so that the
-	// next SetLevels call re-snapshots from the new working image.
+	// Any committing operation invalidates both adjustment baselines so that
+	// the next SetLevels / Descreen call re-snapshots from the new working image.
 	a.levelsBaseImage = nil
+	a.descreenBaseImage = nil
 }
 
 // saveDiscRotationUndo is like saveUndo but also snapshots the current
@@ -146,6 +147,7 @@ func (a *App) Undo() (*ProcessResult, error) {
 		a.postDiscBlack = 0
 		a.postDiscWhite = 255
 		a.levelsBaseImage = nil
+		a.descreenBaseImage = nil
 		a.logf("Undo: restored pre-warp state (selectedCorners=%d)", len(a.selectedCorners))
 	} else {
 		a.warpedImage = entry.image
@@ -153,6 +155,7 @@ func (a *App) Undo() (*ProcessResult, error) {
 			a.rotationAngle = *entry.rotationAngle
 			a.logf("Undo: restored rotationAngle=%.3f°", a.rotationAngle)
 		}
+		a.descreenBaseImage = nil
 	}
 
 	img := a.workingImage()
@@ -465,8 +468,15 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 }
 
 // Descreen applies the FFT-based halftone descreen filter to the working
-// image and commits the result. It calls saveUndo() before modifying the
-// image so that the operation can be reversed with Undo().
+// image.
+//
+// Like SetLevels, subsequent calls within the same session apply to the same
+// base image (descreenBaseImage) so that the user can tweak parameters and
+// immediately see the effect on the original — without needing to undo
+// between attempts. saveUndo() is called only on the first application;
+// subsequent calls in the same session do not push additional undo entries.
+// Any committing operation (crop, rotate, auto-contrast, etc.) calls
+// saveUndo(), which clears descreenBaseImage and begins a new session.
 //
 //   thresh — distance-weighted log-magnitude threshold (0–200; default 92)
 //   radius — dilation/blur radius for the suppression mask (1–20; default 6)
@@ -474,13 +484,23 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 func (a *App) Descreen(req DescreenRequest) (*ProcessResult, error) {
 	a.logf("Descreen: thresh=%d radius=%d middle=%d", req.Thresh, req.Radius, req.Middle)
 
-	src := a.workingImage()
-	if src == nil {
+	if a.currentImage == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
 
-	a.saveUndo()
-	filtered := applyDescreen(src, req.Thresh, req.Radius, req.Middle)
+	// Snapshot the base on the first application; reuse on every subsequent
+	// call in the same session (same pattern as levelsBaseImage / SetLevels).
+	if a.descreenBaseImage == nil {
+		src := a.workingImage()
+		if src == nil {
+			return nil, fmt.Errorf("no image loaded")
+		}
+		a.saveUndo() // pushes undo entry and clears both baselines
+		a.descreenBaseImage = cloneImage(src)
+		a.logf("Descreen: captured descreenBaseImage")
+	}
+
+	filtered := applyDescreen(a.descreenBaseImage, req.Thresh, req.Radius, req.Middle)
 	a.setWorkingImage(filtered)
 
 	preview, err := imageToBase64(filtered)
