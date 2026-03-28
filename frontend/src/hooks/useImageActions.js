@@ -168,7 +168,7 @@ export function useImageActions({
     await applyLoadedImage(result, autoDetect)
   }
 
-  const loadImageFromBytes = async (arrayBuffer, sourceName = 'clipboard') => {
+  const loadImageFromBytes = async (arrayBuffer, sourceName = '[Clipboard Data]') => {
     CancelTouchup()
     setLoading(true)
     setLoadingFull(true)
@@ -255,7 +255,7 @@ export function useImageActions({
 
       try {
         const buffer = await file.arrayBuffer()
-        await loadImageFromBytes(buffer, file.name || 'clipboard')
+        await loadImageFromBytes(buffer, '[Clipboard Data]')
       } catch (err) {
         console.error('Clipboard image load error:', err)
         showError(err)
