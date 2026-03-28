@@ -476,14 +476,18 @@ func applyDescreen(src *image.NRGBA, thresh, radius, middle int, logf func(strin
 			fftShift2d(fftData, paddedRows, paddedCols)
 
 			// Compute distance-weighted log-magnitude spectrum and threshold.
+			// Dividing by N normalises for image size: bins with below-average
+			// energy yield spec ≤ 0 (not detected) regardless of resolution,
+			// so the threshold slider range 50–150 is meaningful for any image.
 			t = time.Now()
+			invN := 1.0 / float64(N)
 			threshMask := make([]float32, N)
 			pFor(N, innerW, func(s, e int) {
 				for i := s; i < e; i++ {
 					re := real(fftData[i])
 					im := imag(fftData[i])
 					mag := math.Sqrt(re*re + im*im)
-					spec := float32(20.0 * math.Log(math.Max(mag*coefs[i], 1e-10)))
+					spec := float32(20.0 * math.Log(math.Max(mag*coefs[i]*invN, 1e-10)))
 					if spec < 0 {
 						spec = 0
 					}
@@ -500,7 +504,17 @@ func applyDescreen(src *image.NRGBA, thresh, radius, middle int, logf func(strin
 				}
 			})
 			if logf != nil {
-				logf("Descreen: [%s] threshold+mask %s", chNames[ch], time.Since(t).Round(time.Millisecond))
+				// Count peaks remaining after DC exclusion — if zero, dilation and
+				// blur have nothing to work with and threshold/radius have no effect.
+				peakCount := 0
+				for _, v := range threshMask {
+					if v > 0 {
+						peakCount++
+					}
+				}
+				logf("Descreen: [%s] threshold+mask %s — %d peaks (%.2f%% of spectrum)",
+					chNames[ch], time.Since(t).Round(time.Millisecond),
+					peakCount, 100*float64(peakCount)/float64(N))
 			}
 
 			// Dilate and Gaussian-blur the peak mask.
