@@ -43,9 +43,10 @@ type SetLevelsRequest struct {
 
 // DescreenRequest carries parameters for the FFT-based descreen filter.
 type DescreenRequest struct {
-	Thresh int `json:"thresh"`
-	Radius int `json:"radius"`
-	Middle int `json:"middle"`
+	Thresh    int `json:"thresh"`
+	Radius    int `json:"radius"`
+	Middle    int `json:"middle"`
+	Highlight int `json:"highlight"`
 }
 
 // workingImage returns the image that adjustment operations should act on.
@@ -482,7 +483,8 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 //   radius — dilation/blur radius for the suppression mask (1–20; default 6)
 //   middle — DC neighbourhood preservation ratio (1–10; default 4)
 func (a *App) Descreen(req DescreenRequest) (*ProcessResult, error) {
-	a.logf("Descreen: thresh=%d radius=%d middle=%d", req.Thresh, req.Radius, req.Middle)
+	a.logf("Descreen: thresh=%d radius=%d middle=%d highlight=%d", req.Thresh, req.Radius, req.Middle, req.Highlight)
+
 
 	if a.currentImage == nil {
 		return nil, fmt.Errorf("no image loaded")
@@ -500,7 +502,7 @@ func (a *App) Descreen(req DescreenRequest) (*ProcessResult, error) {
 		a.logf("Descreen: captured descreenBaseImage")
 	}
 
-	filtered := applyDescreen(a.descreenBaseImage, req.Thresh, req.Radius, req.Middle, a.logf)
+	filtered := applyDescreen(a.descreenBaseImage, req.Thresh, req.Radius, req.Middle, req.Highlight, a.logf)
 	a.setWorkingImage(filtered)
 
 	preview, err := imageToBase64(filtered)
@@ -510,7 +512,7 @@ func (a *App) Descreen(req DescreenRequest) (*ProcessResult, error) {
 	rb := filtered.Bounds()
 	return &ProcessResult{
 		Preview: preview,
-		Message: fmt.Sprintf("Descreen applied (thresh=%d, radius=%d, middle=%d)", req.Thresh, req.Radius, req.Middle),
+		Message: fmt.Sprintf("Descreen applied (thresh=%d, radius=%d, middle=%d, highlight=%d)", req.Thresh, req.Radius, req.Middle, req.Highlight),
 		Width:   rb.Dx(),
 		Height:  rb.Dy(),
 	}, nil

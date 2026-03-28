@@ -317,13 +317,17 @@ func gaussianBlur2dFFT(src []float32, rows, cols int, sigma float64, workers int
 // and returns the result as a new *image.NRGBA.
 //
 // Parameters:
-//   thresh — threshold for the distance-weighted log-magnitude spectrum
-//            (0–200; higher = less aggressive filtering; default 92)
-//   radius — dilation/blur radius for the peak mask (1–20; default 6)
-//   middle — DC neighbourhood preservation ratio (1–10; default 4)
-//            larger = larger protected region around DC
-//   logf   — optional logger (may be nil); receives per-phase timing lines
-func applyDescreen(src *image.NRGBA, thresh, radius, middle int, logf func(string, ...interface{})) *image.NRGBA {
+//   thresh           — threshold for the distance-weighted log-magnitude spectrum
+//                      (0–200; higher = less aggressive filtering; default 92)
+//   radius           — dilation/blur radius for the peak mask (1–20; default 6)
+//   middle           — DC neighbourhood preservation ratio (1–10; default 4)
+//                      larger = larger protected region around DC
+//   highlightRestore — highlight restoration (0–100; 0 = pure descreen output;
+//                      higher values blend original highlights back over the
+//                      descreened result to hide screen-pattern artifacts in
+//                      near-white areas; default 0)
+//   logf             — optional logger (may be nil); receives per-phase timing lines
+func applyDescreen(src *image.NRGBA, thresh, radius, middle, highlightRestore int, logf func(string, ...interface{})) *image.NRGBA {
 	totalStart := time.Now()
 
 	b := src.Bounds()
@@ -574,16 +578,43 @@ func applyDescreen(src *image.NRGBA, thresh, radius, middle int, logf func(strin
 	}
 
 	// --- Write results to a new NRGBA image (parallel by row) ---
+	// When highlightRestore < 100, bright pixels are blended back toward the
+	// original so that near-white areas do not show the inverse screen artifact.
+	// blendStrength ranges from 0 (no effect at highlightRestore=0) to 1
+	// (full highlight restoration at highlightRestore=100).  The blend ramps
+	// linearly from 0 at luma=128 to blendStrength at luma=255, covering
+	// the top 50% of the tonal range.
 	t = time.Now()
+	blendStrength := float64(highlightRestore) / 100.0
 	dst := image.NewNRGBA(b)
 	pFor(origRows, nCPU, func(sy, ey int) {
 		for y := sy; y < ey; y++ {
 			for x := 0; x < origCols; x++ {
 				srcOff := (b.Min.Y+y)*src.Stride + (b.Min.X+x)*4
 				dstOff := (b.Min.Y+y)*dst.Stride + (b.Min.X+x)*4
-				dst.Pix[dstOff] = clampByte(int(results[0][y*origCols+x] + 0.5))
-				dst.Pix[dstOff+1] = clampByte(int(results[1][y*origCols+x] + 0.5))
-				dst.Pix[dstOff+2] = clampByte(int(results[2][y*origCols+x] + 0.5))
+				dr := clampByte(int(results[0][y*origCols+x] + 0.5))
+				dg := clampByte(int(results[1][y*origCols+x] + 0.5))
+				db := clampByte(int(results[2][y*origCols+x] + 0.5))
+				if blendStrength > 0 {
+					origR := float64(src.Pix[srcOff])
+					origG := float64(src.Pix[srcOff+1])
+					origB := float64(src.Pix[srcOff+2])
+					luma := 0.299*origR + 0.587*origG + 0.114*origB
+					// Ramp: 0 at luma≤128, blendStrength at luma=255.
+					hf := (luma - 128.0) / 127.0
+					if hf > 0 {
+						if hf > 1 {
+							hf = 1
+						}
+						blend := blendStrength * hf
+						dr = clampByte(int(float64(dr)*(1-blend) + origR*blend + 0.5))
+						dg = clampByte(int(float64(dg)*(1-blend) + origG*blend + 0.5))
+						db = clampByte(int(float64(db)*(1-blend) + origB*blend + 0.5))
+					}
+				}
+				dst.Pix[dstOff] = dr
+				dst.Pix[dstOff+1] = dg
+				dst.Pix[dstOff+2] = db
 				dst.Pix[dstOff+3] = src.Pix[srcOff+3] // preserve alpha
 			}
 		}
