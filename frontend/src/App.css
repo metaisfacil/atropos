@@ -856,13 +856,6 @@ button.options-close:hover {
   background: none;
 }
 
-.options-body {
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
 .options-section-title {
   font-size: 11px;
   text-transform: uppercase;
@@ -982,7 +975,7 @@ button.modal-cancel-btn:hover {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 10px;
 }
 
 .options-tabs {

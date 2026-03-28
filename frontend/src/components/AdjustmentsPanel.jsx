@@ -239,6 +239,7 @@ export default function AdjustmentsPanel({
                 {descreenPending ? 'Descreening…' : 'Apply descreen'}
               </button>
             </div>
+            <div style={{ marginTop: '10px' }}></div>
           </div>
 
           <div className={`touchup-slider ${useTouchupTool ? 'open' : 'closed'}`}>
@@ -247,6 +248,7 @@ export default function AdjustmentsPanel({
               <input className="level-range" type="range" min="4" max="200" value={brushSize} onChange={e => setBrushSize(Number(e.target.value))} />
               <span className="level-value">{brushSize}px</span>
             </div>
+            <div style={{ marginTop: '20px' }}></div>
           </div>
 
           {mode === 'disc' && (
