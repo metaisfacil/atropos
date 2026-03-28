@@ -191,6 +191,22 @@ export namespace main {
 	        this.direction = source["direction"];
 	    }
 	}
+	export class DescreenRequest {
+	    thresh: number;
+	    radius: number;
+	    middle: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DescreenRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.thresh = source["thresh"];
+	        this.radius = source["radius"];
+	        this.middle = source["middle"];
+	    }
+	}
 	export class DiscDrawRequest {
 	    centerX: number;
 	    centerY: number;
