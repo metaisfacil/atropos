@@ -346,7 +346,7 @@ func (a *App) LoadImageBytes(req LoadImageBytesRequest) (*ImageInfo, error) {
 		if req.Name != "" {
 			return req.Name
 		}
-		return "Clipboard"
+		return "[Clipboard Data]"
 	}())
 
 	return &ImageInfo{
