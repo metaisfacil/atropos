@@ -136,6 +136,7 @@ func (a *App) ProcessLines() (*ProcessResult, error) {
 	}
 	src := [4]image.Point{tl, tr, br, bl}
 
+	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
 
 	var warped *image.NRGBA
@@ -154,12 +155,13 @@ func (a *App) ProcessLines() (*ProcessResult, error) {
 		return nil, err
 	}
 	b := a.warpedImage.Bounds()
-	return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy()}, nil
+	return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy(), DescreenReset: descreenReset}, nil
 }
 
 // ClearLines removes all drawn lines and restores the pre-line image.
 func (a *App) ClearLines() (*ProcessResult, error) {
 	a.logf("ClearLines")
+	descreenReset := a.descreenResultImage != nil
 	a.cancelTouchup()
 	a.lines = nil
 	a.warpedImage = nil
@@ -173,9 +175,10 @@ func (a *App) ClearLines() (*ProcessResult, error) {
 	}
 	b := a.currentImage.Bounds()
 	return &ProcessResult{
-		Preview: preview,
-		Message: "Lines cleared — draw 4 new lines",
-		Width:   b.Dx(),
-		Height:  b.Dy(),
+		Preview:       preview,
+		Message:       "Lines cleared — draw 4 new lines",
+		Width:         b.Dx(),
+		Height:        b.Dy(),
+		DescreenReset: descreenReset,
 	}, nil
 }

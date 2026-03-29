@@ -178,7 +178,19 @@ func TestNormalCrop_SequentialCropsEachSaveUndo(t *testing.T) {
 		}
 	}
 	if len(a.undoStack) != 3 {
-		t.Fatalf("expected 3 undo entries after 3 crops, got %d", len(a.undoStack))
+		t.Fatalf("expected undo stack depth 3, got %d", len(a.undoStack))
+	}
+}
+
+func TestNormalCrop_SetsDescreenReset(t *testing.T) {
+	a := newTestApp(100, 80)
+	a.descreenResultImage = cloneImage(a.currentImage)
+	res, err := a.NormalCrop(NormalCropRequest{X1: 0, Y1: 0, X2: 50, Y2: 50})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.DescreenReset {
+		t.Fatal("expected DescreenReset=true when descreenResultImage was set before crop")
 	}
 }
 

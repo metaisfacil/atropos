@@ -78,6 +78,7 @@ func (a *App) NormalCrop(req NormalCropRequest) (*ProcessResult, error) {
 		return nil, fmt.Errorf("crop region is empty")
 	}
 
+	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
 	r := image.Rect(x1, y1, x2, y2)
 	a.setWorkingImage(subImage(img, r))
@@ -88,10 +89,11 @@ func (a *App) NormalCrop(req NormalCropRequest) (*ProcessResult, error) {
 	}
 	b2 := a.warpedImage.Bounds()
 	return &ProcessResult{
-		Preview: preview,
-		Width:   b2.Dx(),
-		Height:  b2.Dy(),
-		Message: fmt.Sprintf("Cropped to %d×%d", b2.Dx(), b2.Dy()),
+		Preview:       preview,
+		Width:         b2.Dx(),
+		Height:        b2.Dy(),
+		Message:       fmt.Sprintf("Cropped to %d×%d", b2.Dx(), b2.Dy()),
+		DescreenReset: descreenReset,
 	}, nil
 }
 
@@ -99,6 +101,7 @@ func (a *App) NormalCrop(req NormalCropRequest) (*ProcessResult, error) {
 // currentImage — consistent with ResetCorners / ClearLines / ResetDisc.
 func (a *App) ResetNormal() (*ProcessResult, error) {
 	a.logf("ResetNormal")
+	descreenReset := a.descreenResultImage != nil
 	a.cancelTouchup()
 	a.warpedImage = nil
 	img := a.workingImage()
@@ -111,9 +114,10 @@ func (a *App) ResetNormal() (*ProcessResult, error) {
 	}
 	b := img.Bounds()
 	return &ProcessResult{
-		Preview: preview,
-		Width:   b.Dx(),
-		Height:  b.Dy(),
-		Message: "Normal crop reset",
+		Preview:       preview,
+		Width:         b.Dx(),
+		Height:        b.Dy(),
+		Message:       "Normal crop reset",
+		DescreenReset: descreenReset,
 	}, nil
 }
