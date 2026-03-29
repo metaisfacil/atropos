@@ -157,6 +157,15 @@ func TestClickCorner_FourthClickReturnsNonZeroDims(t *testing.T) {
 	}
 }
 
+func TestClickCorner_FourthClickSetsDescreenReset(t *testing.T) {
+	a := newLoadedTestApp(200, 200)
+	a.descreenResultImage = cloneImage(a.currentImage)
+	res := clickFourCorners(t, a)
+	if !res.DescreenReset {
+		t.Fatal("expected DescreenReset=true after perspective warp when descreenResultImage was present")
+	}
+}
+
 // ---- ResetCorners ----
 
 func TestResetCorners_ClearsSelectedCorners(t *testing.T) {

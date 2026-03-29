@@ -54,6 +54,10 @@ export function Crop(arg1) {
   return window['go']['main']['App']['Crop'](arg1);
 }
 
+export function Descreen(arg1) {
+  return window['go']['main']['App']['Descreen'](arg1);
+}
+
 export function DetectCorners(arg1) {
   return window['go']['main']['App']['DetectCorners'](arg1);
 }

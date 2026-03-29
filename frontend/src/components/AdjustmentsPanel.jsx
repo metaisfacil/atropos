@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { AutoContrast, SetLevels, TrimBorders, ResizeImage } from '../../wailsjs/go/main/App'
+import { AutoContrast, SetLevels, TrimBorders, ResizeImage, Descreen } from '../../wailsjs/go/main/App'
 import DelayedHint from './DelayedHint'
 import ResizeModal from './ResizeModal'
 
@@ -26,6 +26,8 @@ export default function AdjustmentsPanel({
   postCropAvailable,
   useTouchupTool,
   setUseTouchupTool,
+  useDescreenTool,
+  setUseDescreenTool,
   brushSize,
   setBrushSize,
   mode,
@@ -35,6 +37,12 @@ export default function AdjustmentsPanel({
   realImageDims,
   setRealImageDims,
 }) {
+  const handleDescreenReset = (result) => {
+    if (result?.descreenReset) {
+      setUseDescreenTool(false)
+    }
+  }
+
   const applyTrimBorders = async () => {
     if (!imageLoaded) return
     setLoading(true)
@@ -42,6 +50,7 @@ export default function AdjustmentsPanel({
       const result = await TrimBorders()
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+      handleDescreenReset(result)
     } catch (err) {
       console.error('TrimBorders error:', err)
     } finally {
@@ -61,6 +70,7 @@ export default function AdjustmentsPanel({
         setBlackPoint(result.black)
         setWhitePoint(result.white)
       }
+      handleDescreenReset(result)
     } catch (err) {
       console.error('AutoContrast error:', err)
     } finally {
@@ -71,6 +81,29 @@ export default function AdjustmentsPanel({
 
   const [resizeModalOpen, setResizeModalOpen] = useState(false)
 
+  const [descreenThresh, setDescreenThresh] = useState(92)
+  const [descreenRadius, setDescreenRadius] = useState(6)
+  const [descreenMiddle, setDescreenMiddle] = useState(4)
+  const [descreenHighlight, setDescreenHighlight] = useState(0)
+  const [descreenPending, setDescreenPending] = useState(false)
+
+  const applyDescreen = async () => {
+    if (!imageLoaded) return
+    setDescreenPending(true)
+    setLoading(true)
+    try {
+      const result = await Descreen({ thresh: descreenThresh, radius: descreenRadius, middle: descreenMiddle, highlight: descreenHighlight })
+      if (result?.preview) setPreview(result.preview)
+      handleDescreenReset(result)
+      setUseDescreenTool(false)
+    } catch (err) {
+      console.error('Descreen error:', err)
+    } finally {
+      setDescreenPending(false)
+      setLoading(false)
+    }
+  }
+
   const applyResize = async (width, height) => {
     if (!imageLoaded) return
     setLoading(true)
@@ -78,6 +111,7 @@ export default function AdjustmentsPanel({
       const result = await ResizeImage({ width, height })
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+      handleDescreenReset(result)
     } catch (err) {
       console.error('ResizeImage error:', err)
     } finally {
@@ -91,6 +125,7 @@ export default function AdjustmentsPanel({
     try {
       const result = await SetLevels({ black: bp, white: wp })
       if (result?.preview) setPreview(result.preview)
+      handleDescreenReset(result)
     } catch (err) {
       console.error('SetLevels error:', err)
     } finally {
@@ -154,6 +189,59 @@ export default function AdjustmentsPanel({
                 {autoContrastPending ? 'Auto-contrast…' : 'Auto-contrast'}
               </button>
             </DelayedHint>
+
+            <DelayedHint hint="FFT-based halftone descreen filter. Removes dot/line screen patterns from scanned printed images. Toggle to reveal controls, then click Apply.">
+              <button
+                className={`adjustments-btn ${useDescreenTool ? 'active' : ''}`}
+                onClick={() => setUseDescreenTool((v) => !v)}
+                disabled={!imageLoaded || !postCropAvailable}
+                aria-pressed={useDescreenTool}
+              >
+                Descreen
+              </button>
+            </DelayedHint>
+          </div>
+
+          <div className={`touchup-slider descreen-controls ${useDescreenTool ? 'open' : 'closed'}`}>
+            <DelayedHint hint="Threshold for the distance-weighted log-magnitude spectrum. Higher values filter only the strongest screen patterns; lower values are more aggressive.">
+              <div className="shortcut-item level-row">
+                <label className="level-label">Thresh</label>
+                <input className="level-range" type="range" min="50" max="150" value={descreenThresh} onChange={(e) => setDescreenThresh(Number(e.target.value))} />
+                <span className="level-value">{descreenThresh}</span>
+              </div>
+            </DelayedHint>
+            <DelayedHint hint="Radius used to dilate and blur the suppression mask around detected screen peaks. Larger values remove more of the surrounding frequency content.">
+              <div className="shortcut-item level-row">
+                <label className="level-label">Radius</label>
+                <input className="level-range" type="range" min="1" max="20" value={descreenRadius} onChange={(e) => setDescreenRadius(Number(e.target.value))} />
+                <span className="level-value">{descreenRadius}</span>
+              </div>
+            </DelayedHint>
+            <DelayedHint hint="Controls the size of the protected DC region at the centre of the spectrum. Higher values preserve more low-frequency content and reduce blurring of broad tones.">
+              <div className="shortcut-item level-row">
+                <label className="level-label">Middle</label>
+                <input className="level-range" type="range" min="1" max="10" value={descreenMiddle} onChange={(e) => setDescreenMiddle(Number(e.target.value))} />
+                <span className="level-value">{descreenMiddle}</span>
+              </div>
+            </DelayedHint>
+            <DelayedHint hint="Highlight restoration. At minimum (0) the descreened result is used as-is. Increasing this blends original highlights back over bright areas to hide any screen-pattern artifact left in near-white regions.">
+              <div className="shortcut-item level-row">
+                <label className="level-label">Highs</label>
+                <input className="level-range" type="range" min="0" max="100" value={descreenHighlight} onChange={(e) => setDescreenHighlight(Number(e.target.value))} />
+                <span className="level-value">{descreenHighlight}</span>
+              </div>
+            </DelayedHint>
+            <div className="shortcut-item">
+              <button
+                className="adjustments-btn"
+                onClick={applyDescreen}
+                disabled={descreenPending || !imageLoaded || !postCropAvailable}
+                style={{ width: '100%' }}
+              >
+                {descreenPending ? 'Descreening…' : 'Apply descreen'}
+              </button>
+            </div>
+            <div style={{ marginTop: '10px' }}></div>
           </div>
 
           <div className={`touchup-slider ${useTouchupTool ? 'open' : 'closed'}`}>
@@ -162,6 +250,7 @@ export default function AdjustmentsPanel({
               <input className="level-range" type="range" min="4" max="200" value={brushSize} onChange={e => setBrushSize(Number(e.target.value))} />
               <span className="level-value">{brushSize}px</span>
             </div>
+            <div style={{ marginTop: '20px' }}></div>
           </div>
 
           {mode === 'disc' && (

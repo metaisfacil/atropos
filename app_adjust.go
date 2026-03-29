@@ -41,6 +41,14 @@ type SetLevelsRequest struct {
 	White int `json:"white"`
 }
 
+// DescreenRequest carries parameters for the FFT-based descreen filter.
+type DescreenRequest struct {
+	Thresh    int `json:"thresh"`
+	Radius    int `json:"radius"`
+	Middle    int `json:"middle"`
+	Highlight int `json:"highlight"`
+}
+
 // workingImage returns the image that adjustment operations should act on.
 // Once a warp/crop/disc operation has produced a warpedImage that is what
 // the user is editing; before any such operation it is currentImage.
@@ -76,9 +84,11 @@ func (a *App) saveUndo() {
 		img = cloneImage(a.currentImage)
 	}
 	a.undoStack = append(a.undoStack, undoEntry{image: img, preWarp: preWarp})
-	// Any committing operation invalidates the levels baseline so that the
-	// next SetLevels call re-snapshots from the new working image.
+	// Any committing operation invalidates both adjustment baselines so that
+	// the next SetLevels / Descreen call re-snapshots from the new working image.
 	a.levelsBaseImage = nil
+	a.descreenBaseImage = nil
+	a.descreenResultImage = nil
 }
 
 // saveDiscRotationUndo is like saveUndo but also snapshots the current
@@ -139,6 +149,8 @@ func (a *App) Undo() (*ProcessResult, error) {
 		a.postDiscBlack = 0
 		a.postDiscWhite = 255
 		a.levelsBaseImage = nil
+		a.descreenBaseImage = nil
+		a.descreenResultImage = nil
 		a.logf("Undo: restored pre-warp state (selectedCorners=%d)", len(a.selectedCorners))
 	} else {
 		a.warpedImage = entry.image
@@ -146,6 +158,8 @@ func (a *App) Undo() (*ProcessResult, error) {
 			a.rotationAngle = *entry.rotationAngle
 			a.logf("Undo: restored rotationAngle=%.3f°", a.rotationAngle)
 		}
+		a.descreenBaseImage = nil
+		a.descreenResultImage = nil
 	}
 
 	img := a.workingImage()
@@ -182,6 +196,7 @@ func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
 		a.logf(msg)
 		return nil, errors.New(msg)
 	}
+	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
 
 	b := a.warpedImage.Bounds()
@@ -217,7 +232,7 @@ func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
 		return nil, err
 	}
 	nb := a.warpedImage.Bounds()
-	return &ProcessResult{Preview: preview, Width: nb.Dx(), Height: nb.Dy()}, nil
+	return &ProcessResult{Preview: preview, Width: nb.Dx(), Height: nb.Dy(), DescreenReset: descreenReset}, nil
 }
 
 // Rotate applies a 90-degree rotation to the warped image.
@@ -228,6 +243,7 @@ func (a *App) Rotate(req RotateRequest) (*ProcessResult, error) {
 		a.logf(msg)
 		return nil, errors.New(msg)
 	}
+	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
 
 	a.warpedImage = rotate90(a.warpedImage, req.FlipCode)
@@ -237,7 +253,7 @@ func (a *App) Rotate(req RotateRequest) (*ProcessResult, error) {
 		return nil, err
 	}
 	rb := a.warpedImage.Bounds()
-	return &ProcessResult{Preview: preview, Width: rb.Dx(), Height: rb.Dy()}, nil
+	return &ProcessResult{Preview: preview, Width: rb.Dx(), Height: rb.Dy(), DescreenReset: descreenReset}, nil
 }
 
 // ResizeImage applies an explicit width/height resize against the working image.
@@ -255,6 +271,7 @@ func (a *App) ResizeImage(req ResizeRequest) (*ProcessResult, error) {
 		return nil, fmt.Errorf("no working image")
 	}
 
+	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
 	resized := resizeNRGBA(src, req.Width, req.Height)
 	a.setWorkingImage(resized)
@@ -264,10 +281,11 @@ func (a *App) ResizeImage(req ResizeRequest) (*ProcessResult, error) {
 		return nil, err
 	}
 	return &ProcessResult{
-		Preview: preview,
-		Message: fmt.Sprintf("Resized to %dx%d", req.Width, req.Height),
-		Width:   req.Width,
-		Height:  req.Height,
+		Preview:       preview,
+		Message:       fmt.Sprintf("Resized to %dx%d", req.Width, req.Height),
+		Width:         req.Width,
+		Height:        req.Height,
+		DescreenReset: descreenReset,
 	}, nil
 }
 
@@ -291,6 +309,7 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 		return nil, fmt.Errorf("no image loaded")
 	}
 
+	descreenReset := a.descreenResultImage != nil
 	preWarp := a.warpedImage == nil
 
 	// Prefer the pre-adjustment base when the sliders have been touched.
@@ -326,12 +345,13 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 		}
 		b := adjusted.Bounds()
 		return &ProcessResult{
-			Preview: preview,
-			Message: fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp),
-			Black:   bp,
-			White:   wp,
-			Width:   b.Dx(),
-			Height:  b.Dy(),
+			Preview:       preview,
+			Message:       fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp),
+			Black:         bp,
+			White:         wp,
+			Width:         b.Dx(),
+			Height:        b.Dy(),
+			DescreenReset: descreenReset,
 		}, nil
 	}
 
@@ -350,6 +370,7 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 		result.Message = fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp)
 		result.Black = bp
 		result.White = wp
+		result.DescreenReset = descreenReset
 		return result, nil
 	}
 
@@ -363,12 +384,13 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 	}
 	b := adjusted.Bounds()
 	return &ProcessResult{
-		Preview: preview,
-		Message: fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp),
-		Black:   bp,
-		White:   wp,
-		Width:   b.Dx(),
-		Height:  b.Dy(),
+		Preview:       preview,
+		Message:       fmt.Sprintf("Auto Contrast applied (black=%d, white=%d)", bp, wp),
+		Black:         bp,
+		White:         wp,
+		Width:         b.Dx(),
+		Height:        b.Dy(),
+		DescreenReset: descreenReset,
 	}, nil
 }
 
@@ -440,6 +462,7 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 		return &ProcessResult{Preview: preview, Message: "No border strips detected", Width: w, Height: h}, nil
 	}
 
+	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
 	a.warpedImage = subImage(img, image.Rect(left, top, right, bottom))
 
@@ -450,10 +473,66 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 	nb := a.warpedImage.Bounds()
 	a.logf("TrimBorders: trimmed top=%d bottom=%d left=%d right=%d → %dx%d", top, h-bottom, left, w-right, nb.Dx(), nb.Dy())
 	return &ProcessResult{
+		Preview:       preview,
+		Message:       fmt.Sprintf("Trimmed borders (top=%d, bottom=%d, left=%d, right=%d)", top, h-bottom, left, w-right),
+		Width:         nb.Dx(),
+		Height:        nb.Dy(),
+		DescreenReset: descreenReset,
+	}, nil
+}
+
+// Descreen applies the FFT-based halftone descreen filter to the working
+// image.
+//
+// Consecutive Descreen calls apply to the same base image (descreenBaseImage)
+// so that changing parameters shows the effect on the original without
+// needing to undo between attempts. saveUndo() is called only at the start of
+// each new session.
+//
+// A new session begins when warpedImage differs from descreenResultImage — the
+// pointer last written by Descreen itself. This detects changes made by any
+// operation including SetLevels (which does not call saveUndo), so a
+// re-application of Descreen will never silently discard an intervening
+// adjustment.
+//
+//	thresh — distance-weighted log-magnitude threshold (0–200; default 92)
+//	radius — dilation/blur radius for the suppression mask (1–20; default 6)
+//	middle — DC neighbourhood preservation ratio (1–10; default 4)
+func (a *App) Descreen(req DescreenRequest) (*ProcessResult, error) {
+	a.logf("Descreen: thresh=%d radius=%d middle=%d highlight=%d", req.Thresh, req.Radius, req.Middle, req.Highlight)
+
+	if a.currentImage == nil {
+		return nil, fmt.Errorf("no image loaded")
+	}
+
+	// Start a new descreen session when:
+	//   (a) no base has been captured yet, OR
+	//   (b) warpedImage was changed by a non-descreen operation since the last
+	//       Descreen call (pointer differs from descreenResultImage).
+	if a.descreenBaseImage == nil || a.workingImage() != a.descreenResultImage {
+		src := a.workingImage()
+		if src == nil {
+			return nil, fmt.Errorf("no image loaded")
+		}
+		a.saveUndo() // pushes undo entry and clears both baselines
+		a.descreenBaseImage = cloneImage(src)
+		a.logf("Descreen: captured descreenBaseImage")
+	}
+
+	filtered := applyDescreen(a.descreenBaseImage, req.Thresh, req.Radius, req.Middle, req.Highlight, a.logf)
+	a.setWorkingImage(filtered)
+	a.descreenResultImage = filtered // track pointer so next call can detect external changes
+
+	preview, err := imageToBase64(filtered)
+	if err != nil {
+		return nil, err
+	}
+	rb := filtered.Bounds()
+	return &ProcessResult{
 		Preview: preview,
-		Message: fmt.Sprintf("Trimmed borders (top=%d, bottom=%d, left=%d, right=%d)", top, h-bottom, left, w-right),
-		Width:   nb.Dx(),
-		Height:  nb.Dy(),
+		Message: fmt.Sprintf("Descreen applied (thresh=%d, radius=%d, middle=%d, highlight=%d)", req.Thresh, req.Radius, req.Middle, req.Highlight),
+		Width:   rb.Dx(),
+		Height:  rb.Dy(),
 	}, nil
 }
 
@@ -482,6 +561,7 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 	}
 
 	preWarp := a.warpedImage == nil
+	descreenReset := a.descreenResultImage != nil
 
 	// Snapshot the base on first touch; reuse on every subsequent drag.
 	if a.levelsBaseImage == nil {
@@ -504,7 +584,7 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 			return nil, err
 		}
 		b := adjusted.Bounds()
-		return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy()}, nil
+		return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy(), DescreenReset: descreenReset}, nil
 	}
 
 	// Post-warp, disc mode: record the new levels and re-render the full disc
@@ -513,7 +593,12 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 	if a.discRadius > 0 {
 		a.postDiscBlack = req.Black
 		a.postDiscWhite = req.White
-		return a.redrawDisc()
+		result, err := a.redrawDisc()
+		if err != nil {
+			return nil, err
+		}
+		result.DescreenReset = descreenReset
+		return result, nil
 	}
 
 	// Post-warp, non-disc path (corner / line mode after warp).
@@ -524,5 +609,5 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 		return nil, err
 	}
 	b := adjusted.Bounds()
-	return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy()}, nil
+	return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy(), DescreenReset: descreenReset}, nil
 }

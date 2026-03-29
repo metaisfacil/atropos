@@ -44,6 +44,23 @@ type App struct {
 	//   adjustment session starts from the current pixels.
 	levelsBaseImage *image.NRGBA
 
+	// `descreenBaseImage`:
+	//   A snapshot captured the first time Descreen is applied after a
+	//   committing operation (or after any non-descreen change to warpedImage).
+	//   Subsequent descreen calls in the same uninterrupted session apply to
+	//   this base so that changing parameters always operates on the same
+	//   source image, not the already-processed result. Cleared by saveUndo()
+	//   so the next session starts from the then-current pixels.
+	descreenBaseImage *image.NRGBA
+
+	// `descreenResultImage`:
+	//   Pointer to the *image.NRGBA last written by applyDescreen. Used to
+	//   detect when warpedImage has been modified by a non-descreen operation
+	//   (e.g. SetLevels, which does not call saveUndo) so that a re-snapshot
+	//   is taken before the next descreen call rather than silently discarding
+	//   the intervening adjustment.
+	descreenResultImage *image.NRGBA
+
 	imageLoaded bool
 	undoStack   []undoEntry
 
@@ -198,6 +215,10 @@ type ProcessResult struct {
 	// had produced a warpedImage — i.e. undoing the initial crop itself.  The
 	// frontend uses this to return the UI to the cropping phase.
 	Uncropped bool `json:"uncropped,omitempty"`
+	// DescreenReset is true when the operation invalidated an active descreen
+	// session, meaning the next Descreen call will re-snapshot from scratch.
+	// The frontend uses this to untoggle the Descreen button as a subtle hint.
+	DescreenReset bool `json:"descreenReset,omitempty"`
 	// UnmaskedPreview is the preview of disc source image without the disc mask
 	// above it, used during live preview drag operations.
 	UnmaskedPreview string `json:"unmaskedPreview,omitempty"`

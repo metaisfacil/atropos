@@ -82,6 +82,7 @@ export namespace main {
 	    snappedY: number;
 	    width: number;
 	    height: number;
+	    descreenReset?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ClickCornerResult(source);
@@ -97,6 +98,7 @@ export namespace main {
 	        this.snappedY = source["snappedY"];
 	        this.width = source["width"];
 	        this.height = source["height"];
+	        this.descreenReset = source["descreenReset"];
 	    }
 	}
 	export class CompositorLoadResultRequest {
@@ -189,6 +191,24 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.direction = source["direction"];
+	    }
+	}
+	export class DescreenRequest {
+	    thresh: number;
+	    radius: number;
+	    middle: number;
+	    highlight: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DescreenRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.thresh = source["thresh"];
+	        this.radius = source["radius"];
+	        this.middle = source["middle"];
+	        this.highlight = source["highlight"];
 	    }
 	}
 	export class DiscDrawRequest {
@@ -407,6 +427,7 @@ export namespace main {
 	    corners?: image.Point[];
 	    selectedCorners?: image.Point[];
 	    uncropped?: boolean;
+	    descreenReset?: boolean;
 	    unmaskedPreview?: string;
 	    discCenterX?: number;
 	    discCenterY?: number;
@@ -431,6 +452,7 @@ export namespace main {
 	        this.corners = this.convertValues(source["corners"], image.Point);
 	        this.selectedCorners = this.convertValues(source["selectedCorners"], image.Point);
 	        this.uncropped = source["uncropped"];
+	        this.descreenReset = source["descreenReset"];
 	        this.unmaskedPreview = source["unmaskedPreview"];
 	        this.discCenterX = source["discCenterX"];
 	        this.discCenterY = source["discCenterY"];

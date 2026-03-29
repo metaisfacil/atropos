@@ -28,6 +28,8 @@ export function ConfirmClose():Promise<void>;
 
 export function Crop(arg1:main.CropRequest):Promise<main.ProcessResult>;
 
+export function Descreen(arg1:main.DescreenRequest):Promise<main.ProcessResult>;
+
 export function DetectCorners(arg1:main.CornerDetectRequest):Promise<main.ProcessResult>;
 
 export function DrawDisc(arg1:main.DiscDrawRequest):Promise<main.ProcessResult>;
