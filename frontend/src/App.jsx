@@ -524,7 +524,7 @@ export default function App() {
           style={spacePanMode ? { cursor: 'grab' } : undefined}
         >
           {preview ? (
-            <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0, margin: 'auto', overflow: 'hidden', flexShrink: 0 }}>
+            <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0, margin: 'auto', overflow: 'hidden', flexShrink: 0, alignSelf: 'center' }}>
               <img
                 ref={imgRef}
                 src={discLiveActive && discNoMaskPreview ? discNoMaskPreview : preview}
@@ -541,7 +541,7 @@ export default function App() {
                   transformOrigin: 'center center',
                   ...(fitWidth > 0
                     ? { width: `${fitWidth * zoom}px`, height: 'auto', maxWidth: 'none', maxHeight: 'none' }
-                    : { maxWidth: `${zoom * 100}%`, maxHeight: `${zoom * 100}%` }),
+                    : { maxWidth: `${zoom * 100}%`, height: 'auto' }),
                 }}
               />
               <ImageOverlays

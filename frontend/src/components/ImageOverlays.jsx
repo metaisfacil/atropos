@@ -2,8 +2,6 @@ import React from 'react'
 
 export default function ImageOverlays({
   realImageDims,
-  fitWidth,
-  zoom,
   mode,
   dragging, dragStart, dragCurrent,
   useTouchupTool, touchupStrokes, brushSize,
@@ -68,25 +66,44 @@ export default function ImageOverlays({
         )
        })()}
       {mode === 'corner' && (detectedCornerPts.length > 0 || selectedCornerPts.length > 0) && (() => {
-        // Compute display-space scale directly to avoid SVG viewBox aspect-ratio mismatch
-        const displayScale = realImageDims.w > 0 ? (fitWidth * zoom) / realImageDims.w : 1
+        // Use viewBox to map image-space coords to display space (same pattern as line/touchup
+        // overlays). Avoids reliance on fitWidth, which may be 0 on first render on Mac.
         const referenceSize = 1600 // base image size for slider values
         const minDim = Math.min(realImageDims.w, realImageDims.h)
         const imgScale = minDim > 0 ? minDim / referenceSize : 1
-        const dotR = Math.max(2, Math.round(dotRadius * imgScale)) * displayScale
+        const dotR = Math.max(2, Math.round(dotRadius * imgScale))
         const selectedR = Math.max(dotR * 1.5, dotR + 4)
+
+        const xCoords = detectedCornerPts.map(p => p.X)
+        const yCoords = detectedCornerPts.map(p => p.Y)
+        console.log('[CornerOverlay] realImageDims:', realImageDims.w, 'x', realImageDims.h,
+          '| corners:', detectedCornerPts.length,
+          '| X range:', Math.min(...xCoords).toFixed(0), '-', Math.max(...xCoords).toFixed(0),
+          '| Y range:', Math.min(...yCoords).toFixed(0), '-', Math.max(...yCoords).toFixed(0),
+          '| dotR:', dotR)
 
         return (
           <svg
+            ref={el => {
+              if (el) {
+                const r = el.getBoundingClientRect()
+                const pr = el.parentElement?.getBoundingClientRect()
+                console.log('[CornerOverlay] SVG rect:', r.width.toFixed(0), 'x', r.height.toFixed(0),
+                  'at', r.left.toFixed(0), r.top.toFixed(0),
+                  '| parent rect:', pr ? `${pr.width.toFixed(0)}x${pr.height.toFixed(0)} at ${pr.left.toFixed(0)},${pr.top.toFixed(0)}` : 'n/a')
+              }
+            }}
+            viewBox={`0 0 ${realImageDims.w} ${realImageDims.h}`}
+            preserveAspectRatio="none"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6 }}
           >
             {detectedCornerPts.map((pt, i) => (
-              <circle key={`d${i}`} cx={pt.X * displayScale} cy={pt.Y * displayScale} r={dotR}
-                fill="rgba(255,0,0,0.6)" stroke="red" strokeWidth="1" />
+              <circle key={`d${i}`} cx={pt.X} cy={pt.Y} r={dotR}
+                fill="rgba(255,0,0,0.6)" stroke="red" strokeWidth="1" vectorEffect="non-scaling-stroke" />
             ))}
             {selectedCornerPts.map((pt, i) => (
-              <circle key={`s${i}`} cx={pt.X * displayScale} cy={pt.Y * displayScale} r={selectedR}
-                fill="rgba(0,255,0,0.6)" stroke="lime" strokeWidth="2" />
+              <circle key={`s${i}`} cx={pt.X} cy={pt.Y} r={selectedR}
+                fill="rgba(0,255,0,0.6)" stroke="lime" strokeWidth="2" vectorEffect="non-scaling-stroke" />
             ))}
           </svg>
         )
