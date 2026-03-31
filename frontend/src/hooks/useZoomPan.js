@@ -18,10 +18,14 @@ export function useZoomPan({ imgRef, mode, discActive, featherSize, setFeatherSi
     const container = canvasRef.current
     if (el) {
       const natW = el.naturalWidth; const natH = el.naturalHeight
+      console.log('[handleImgLoad] natW:', natW, 'natH:', natH,
+        '| container clientW:', container?.clientWidth, 'clientH:', container?.clientHeight)
       setImgNatural({ w: natW, h: natH })
       if (container && natW > 0 && natH > 0) {
         const aspect = natW / natH
-        setFitWidth(Math.min(container.clientWidth, container.clientHeight * aspect))
+        const fw = Math.min(container.clientWidth, container.clientHeight * aspect)
+        console.log('[handleImgLoad] aspect:', aspect.toFixed(4), '| fitWidth calculated:', fw)
+        setFitWidth(fw)
       }
     }
   }
@@ -31,7 +35,10 @@ export function useZoomPan({ imgRef, mode, discActive, featherSize, setFeatherSi
     if (!el || imgNatural.w <= 1) return
     const observer = new ResizeObserver(() => {
       const aspect = imgNatural.w / imgNatural.h
-      setFitWidth(Math.min(el.clientWidth, el.clientHeight * aspect))
+      const fw = Math.min(el.clientWidth, el.clientHeight * aspect)
+      console.log('[ResizeObserver] clientW:', el.clientWidth, 'clientH:', el.clientHeight,
+        '| aspect:', aspect.toFixed(4), '| fitWidth:', fw)
+      setFitWidth(fw)
     })
     observer.observe(el)
     return () => observer.disconnect()
