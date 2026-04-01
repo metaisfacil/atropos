@@ -50,6 +50,19 @@ export function useMouseHandlers({
 
   const clamp = (value, min, max) => Math.min(Math.max(value, min), max)
 
+  const lockSquareDrag = (start, current, width, height) => {
+    if (!start || !current) return current
+    const dx = current.x - start.x
+    const dy = current.y - start.y
+    const side = Math.max(Math.abs(dx), Math.abs(dy))
+    const sx = dx === 0 ? 1 : Math.sign(dx)
+    const sy = dy === 0 ? (sx >= 0 ? 1 : -1) : Math.sign(dy)
+    return {
+      x: clamp(start.x + side * sx, 0, width),
+      y: clamp(start.y + side * sy, 0, height),
+    }
+  }
+
   const computeDiscShift = (screenDx, screenDy) => {
     const el = imgRef.current
     if (!el || realImageDims.w <= 0 || realImageDims.h <= 0 || discRadius <= 0) {
@@ -438,10 +451,15 @@ export function useMouseHandlers({
     if (!dragging && !normalDragActiveRef.current) return
     if (pos) {
       if (mode === 'normal' && !useTouchupTool && imgRect) {
-        setDragCurrent({
+        const clampedPos = {
           x: Math.max(0, Math.min(pos.x, imgRect.width)),
           y: Math.max(0, Math.min(pos.y, imgRect.height)),
-        })
+        }
+        if (e.shiftKey && !normalMoveDragRef.current && !normalHandleDragRef.current && !normalRect && dragStart) {
+          setDragCurrent(lockSquareDrag(dragStart, clampedPos, imgRect.width, imgRect.height))
+        } else {
+          setDragCurrent(clampedPos)
+        }
       } else {
         setDragCurrent(pos)
       }
@@ -889,7 +907,15 @@ export function useMouseHandlers({
       const el = imgRef.current
       if (!el) return
       const rect = el.getBoundingClientRect()
-      setDragCurrent({ x: e.clientX - rect.left, y: e.clientY - rect.top })
+      const nextPos = {
+        x: clamp(e.clientX - rect.left, 0, rect.width),
+        y: clamp(e.clientY - rect.top, 0, rect.height),
+      }
+      if (mode === 'normal' && !useTouchupTool && !normalMoveDragRef.current && !normalHandleDragRef.current && !normalRect && dragStartRef.current && e.shiftKey) {
+        setDragCurrent(lockSquareDrag(dragStartRef.current, nextPos, rect.width, rect.height))
+      } else {
+        setDragCurrent(nextPos)
+      }
 
       // Keep disc live transform updated even when the mouse has left the
       // canvas-area element (handleMouseMove only fires inside that element).
