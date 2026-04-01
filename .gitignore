@@ -1,5 +1,6 @@
 # Build artifacts
 build/bin/
+build/darwin/
 frontend/node_modules/
 frontend/dist/
 frontend/package.json.md5
