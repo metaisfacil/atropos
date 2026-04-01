@@ -2,7 +2,7 @@
 
 ![Atropos social preview](https://github.com/metaisfacil/atropos/blob/master/preview-2.png)
 
-Atropos _(uh·**traa**·powz)_ is a desktop image processing tool for perspective correction, circular cropping, and rectangular cropping. It also includes an image compositor for stitching multiple overlapping scan segments into a single continuous image. It is primarily intended for digitising musical materials such as CD, vinyl, and cassette inserts.
+Atropos _(uh·**traa**·powz)_ is a desktop image processing tool for perspective correction, circular cropping, and rectangular cropping. It is primarily intended for digitising musical materials such as CD, vinyl, and cassette inserts. It includes an image compositor for stitching multiple overlapping scan segments into a single continuous image, plus post-crop tools such as resize, border trimming, tonal adjustment, touch-up, and descreening.
 
 ---
 
@@ -42,7 +42,19 @@ Once a crop has been applied in any mode, the **Re-crop** button appears. Clicki
 
 ### Adjustments
 
-The Adjustments panel (collapsible, bottom of the sidebar) provides auto-contrast and black/white point sliders. These become available once a crop has been committed or skipped.
+The Adjustments panel (collapsible, bottom of the sidebar) becomes available once a crop has been committed or skipped. It includes resize, trim borders, auto-contrast, black/white point sliders, descreen, touch-up, and disc-mode straight-edge leveling.
+
+### Resize
+
+Resize by explicit width/height or by percentage in the **Resize image** modal. Large upscales trigger a confirmation warning.
+
+### Trim borders
+
+Detects and removes near-solid white or black edge strips from the current output image.
+
+### Descreen
+
+An FFT-based filter for reducing halftone screen patterns in scanned print media. Use the Descreen controls (thresh/radius/middle/highs), then apply.
 
 ### Touch-up brush
 
@@ -54,7 +66,7 @@ WASD keys trim 3 px from the top, left, bottom, and right edges of the working i
 
 ### Rotate
 
-Q and E rotate 90° counter-clockwise and clockwise. In disc mode these instead rotate ±15°.
+Q and E rotate 90° counter-clockwise and clockwise. In disc mode these instead rotate ±15°. After cropping in Disc mode, enable **Straight edge** and draw a reference line that should be horizontal; Atropos rotates the disc to level that edge.
 
 ### Undo
 
@@ -76,6 +88,7 @@ Ctrl/⌘ + S or the **Save image** button. Output format is determined by the fi
 | Ctrl/⌘ + Z | Undo |
 | Ctrl/⌘ + O | Load |
 | Ctrl/⌘ + S | Save |
+| Ctrl/⌘ + W | Quit |
 | Y | Eyedropper — set background colour (disc mode) |
 | Arrow keys | Shift disc 5 px (20 px with Shift) |
 | + / − | Feather radius ±1 (disc mode) |

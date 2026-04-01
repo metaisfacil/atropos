@@ -9,6 +9,7 @@ This file is the agent-facing contract for the Atropos codebase. Read it first b
 - `workingImage()` must be used for pre-warp paths; do not read `warpedImage` directly.
 - The four modes are mutually exclusive; they are not a pipeline.
 - Any reset/load path that clears image state must also cancel in-flight touch-up.
+- Any reset/load path that clears image state must also clear `descreenBaseImage` and `descreenResultImage`.
 - Any reset/load path that clears image state must also null `cornerEntryRef` (see `resetImageState`).
 - Leaving corner mode must call `CancelCornerDetect()` and increment `detectGenRef` before any await.
 - Any committing operation must preserve undo behavior and mode invariants.
@@ -22,8 +23,11 @@ Understand the image fields before editing anything:
 - `currentImage` — pre-warp working image
 - `warpedImage` — committed result; this is what `SaveImage` writes
 - `levelsBaseImage` — snapshot for non-stacking levels edits
+- `descreenBaseImage` — snapshot for non-stacking descreen parameter changes
+- `descreenResultImage` — tracks the last descreen output pointer for session invalidation
 - `discBaseImage` — deterministic source for disc redraws
 - `discWorkingCrop` — cached subregion used by disc redraws
+- `discNoMaskPreview` — unmasked disc preview used during live drag feedback
 - `undoStack` — capped LIFO undo history
 
 ## Mode Model
@@ -54,28 +58,30 @@ Mode switching must:
 6. Forgetting to reset tool toggles in `loadFile` leaves tools visually active on the new image.
 7. Forgetting `cancelTouchup()` in a new reset or load path allows an in-flight touch-up to mutate cleared state.
 8. Omitting disc state from `LoadImage` / `RecropImage` resets can leak stale disc state into later operations.
+9. Forgetting to clear descreen state (`descreenBaseImage` / `descreenResultImage`) in a full image-state reset can make descreen sessions reuse stale baselines.
 
 ### Mode Switching
 
-9. Calling `setMode(m)` after async operations instead of at the top of `handleModeSwitch` causes mode buttons to lag behind all other visual changes.
-10. Disc translation must honor current disc rotation in both live preview and backend commit (use a shared transformation path and keep `discRotation` in sync).
+10. Calling `setMode(m)` after async operations instead of at the top of `handleModeSwitch` causes mode buttons to lag behind all other visual changes.
+11. Disc translation must honor current disc rotation in both live preview and backend commit (use a shared transformation path and keep `discRotation` in sync).
 
 ### Frontend State & Overlays
 
-11. Using `el.offsetLeft/offsetTop` for persistent overlays is wrong; use the SVG overlay system.
-12. Setting `fitWidth` to 0 and waiting for `onLoad` during mode switch can cause the overlay to flood the canvas.
-13. Not clearing frontend-only selection state in `handleSkipCrop` leaves stale overlays visible.
-14. Forgetting `e.preventDefault()` for repeated keydown events allows browser behavior to fire on every repeat.
-15. Setting `overflow: hidden` on the image wrapper div (a flex item inside `.canvas-area`) silently reduces its `min-width: auto` to 0 per the CSS flexbox spec, which allows flexbox to shrink the wrapper to fit the canvas and eliminates horizontal scroll entirely. Always pair `overflow: hidden` on that element with `flex-shrink: 0`.
+12. Using `el.offsetLeft/offsetTop` for persistent overlays is wrong; use the SVG overlay system.
+13. Setting `fitWidth` to 0 and waiting for `onLoad` during mode switch can cause the overlay to flood the canvas.
+14. Not clearing frontend-only selection state in `handleSkipCrop` leaves stale overlays visible.
+15. Forgetting `e.preventDefault()` for repeated keydown events allows browser behavior to fire on every repeat.
+16. Setting `overflow: hidden` on the image wrapper div (a flex item inside `.canvas-area`) silently reduces its `min-width: auto` to 0 per the CSS flexbox spec, which allows flexbox to shrink the wrapper to fit the canvas and eliminates horizontal scroll entirely. Always pair `overflow: hidden` on that element with `flex-shrink: 0`.
 
 ### Bridge & API Sync
 
-16. Adding a Go method without updating `App.js` causes undefined bridge calls.
+17. Adding a Go method without updating `App.js` causes undefined bridge calls.
 
 ### Touch-up & Image Fill
 
-17. Using IOPaint for warp out-of-bounds fill is wrong; PatchMatch is used for `applyWarpFill`.
-18. `iopaintFill` does NOT send the full source image to the IOPaint server. It crops to the bounding box of the mask (+ 128 px margin), sends that crop as JPEG, then composites only the masked pixels from the response back onto a full clone of the source. The function always returns a full-size `*image.NRGBA`. Do not assume the returned image reflects IOPaint's view of the whole image.
+18. Using IOPaint for warp out-of-bounds fill is wrong; PatchMatch is used for `applyWarpFill`.
+19. `iopaintFill` does NOT send the full source image to the IOPaint server. It crops to the bounding box of the mask (+ 128 px margin), sends that crop as JPEG, then composites only the masked pixels from the response back onto a full clone of the source. The function always returns a full-size `*image.NRGBA`. Do not assume the returned image reflects IOPaint's view of the whole image.
+20. Any operation that invalidates an active descreen session should propagate `DescreenReset` so frontend descreen UI state does not drift.
 
 ## Technology Stack
 
@@ -112,6 +118,9 @@ Key files:
 - `app_line.go` — line mode / quadrilateral crop
 - `app_touchup.go`, `app_iopaint.go`, `patchmatch.go` — touch-up pipeline
 - `app_compositor.go`, `compositor.go` — stitching feature
+- `imgproc.go` — miscellaneous image processing routines
+- `imgproc_fft.go` — FFT descreen kernel used by `Descreen`
+- `patchmatch.go` — PatchMatch touch-up backend implementation
 - `frontend/src/hooks/*` — all frontend interaction logic
 - `frontend/wailsjs/go/main/App.js` — bridge surface that must stay in sync with Go exports
 
