@@ -18,6 +18,7 @@ export default function ImageOverlays({
   lines,
   displayToImage,
   lineStartImgRef,
+  lineDragKind,
 }) {
   return (
     <>
@@ -222,25 +223,75 @@ export default function ImageOverlays({
         return null
       })()}
       {mode === 'line' && (() => {
-        const allLines = [...lines] // image-space coords
-        if (dragging && dragStart && dragCurrent) {
+        let previewLine = null
+        if (dragging && dragStart && dragCurrent && lineDragKind !== 'edit') {
           // Use the image-space start captured at mousedown when available.
           // This keeps the line stable if the user zooms mid-drag, since
           // dragStart.x is a CSS-pixel value that becomes stale after a zoom.
           const s = lineStartImgRef?.current || displayToImage(dragStart.x, dragStart.y)
           const e = displayToImage(dragCurrent.x, dragCurrent.y)
-          allLines.push({ x1: s.x, y1: s.y, x2: e.x, y2: e.y })
+          previewLine = { x1: s.x, y1: s.y, x2: e.x, y2: e.y }
         }
-        return allLines.length > 0 ? (
+        return (lines.length > 0 || previewLine) ? (
           <svg
             viewBox={`0 0 ${realImageDims.w} ${realImageDims.h}`}
             preserveAspectRatio="none"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6, overflow: 'visible' }}
           >
-            {allLines.map((ln, i) => (
-              <line key={i} x1={ln.x1} y1={ln.y1} x2={ln.x2} y2={ln.y2}
-                stroke="#00ff00" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+            {lines.map((ln, i) => (
+              <g key={`ln${i}`}>
+                <line x1={ln.x1} y1={ln.y1} x2={ln.x2} y2={ln.y2}
+                  stroke="#00ff00" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                <circle
+                  data-line-handle-index={i}
+                  data-line-handle-end="start"
+                  cx={ln.x1}
+                  cy={ln.y1}
+                  r={8}
+                  fill="rgba(0,0,0,0)"
+                  vectorEffect="non-scaling-stroke"
+                  style={{ pointerEvents: 'all', cursor: 'grab' }}
+                />
+                <circle
+                  data-line-handle-index={i}
+                  data-line-handle-end="start"
+                  cx={ln.x1}
+                  cy={ln.y1}
+                  r={6}
+                  fill="#00ff00"
+                  stroke="#0b1a0b"
+                  strokeWidth="1.5"
+                  vectorEffect="non-scaling-stroke"
+                  style={{ pointerEvents: 'all', cursor: 'grab' }}
+                />
+                <circle
+                  data-line-handle-index={i}
+                  data-line-handle-end="end"
+                  cx={ln.x2}
+                  cy={ln.y2}
+                  r={8}
+                  fill="rgba(0,0,0,0)"
+                  vectorEffect="non-scaling-stroke"
+                  style={{ pointerEvents: 'all', cursor: 'grab' }}
+                />
+                <circle
+                  data-line-handle-index={i}
+                  data-line-handle-end="end"
+                  cx={ln.x2}
+                  cy={ln.y2}
+                  r={6}
+                  fill="#00ff00"
+                  stroke="#0b1a0b"
+                  strokeWidth="1.5"
+                  vectorEffect="non-scaling-stroke"
+                  style={{ pointerEvents: 'all', cursor: 'grab' }}
+                />
+              </g>
             ))}
+            {previewLine && (
+              <line x1={previewLine.x1} y1={previewLine.y1} x2={previewLine.x2} y2={previewLine.y2}
+                stroke="#00ff00" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+            )}
           </svg>
         ) : null
       })()}
