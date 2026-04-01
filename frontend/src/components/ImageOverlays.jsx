@@ -109,8 +109,10 @@ export default function ImageOverlays({
         )
       })()}
       {mode === 'normal' && (() => {
-        // During drag: show live rect in display-space coords
-        if (dragging && dragStart && dragCurrent && !useTouchupTool) {
+        // During initial drag: show live rect in display-space coords.
+        // Once a selection exists, we keep rendering in image-space so handles
+        // stay aligned while the rectangle is resized.
+        if (dragging && dragStart && dragCurrent && !useTouchupTool && !normalRect) {
           const x = Math.min(dragStart.x, dragCurrent.x)
           const y = Math.min(dragStart.y, dragCurrent.y)
           const w = Math.abs(dragCurrent.x - dragStart.x)
@@ -128,6 +130,15 @@ export default function ImageOverlays({
           const y1 = Math.min(normalRect.y1, normalRect.y2)
           const x2 = Math.max(normalRect.x1, normalRect.x2)
           const y2 = Math.max(normalRect.y1, normalRect.y2)
+          const handleR = 8
+          const handleHitR = handleR + 2
+          const edgeHit = 10
+          const handles = [
+            { key: 'nw', x: x1, y: y1, cursor: 'nwse-resize' },
+            { key: 'ne', x: x2, y: y1, cursor: 'nesw-resize' },
+            { key: 'se', x: x2, y: y2, cursor: 'nwse-resize' },
+            { key: 'sw', x: x1, y: y2, cursor: 'nesw-resize' },
+          ]
           return (
             <svg
               viewBox={`0 0 ${realImageDims.w} ${realImageDims.h}`}
@@ -137,6 +148,74 @@ export default function ImageOverlays({
               <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1}
                 stroke="#00ff00" strokeWidth="2" fill="rgba(0,255,0,0.08)"
                 strokeDasharray="6 3" vectorEffect="non-scaling-stroke" />
+              <line
+                data-normal-handle="n"
+                x1={x1}
+                y1={y1}
+                x2={x2}
+                y2={y1}
+                stroke="rgba(0,0,0,0)"
+                strokeWidth={edgeHit}
+                vectorEffect="non-scaling-stroke"
+                style={{ pointerEvents: 'all', cursor: 'ns-resize' }}
+              />
+              <line
+                data-normal-handle="e"
+                x1={x2}
+                y1={y1}
+                x2={x2}
+                y2={y2}
+                stroke="rgba(0,0,0,0)"
+                strokeWidth={edgeHit}
+                vectorEffect="non-scaling-stroke"
+                style={{ pointerEvents: 'all', cursor: 'ew-resize' }}
+              />
+              <line
+                data-normal-handle="s"
+                x1={x1}
+                y1={y2}
+                x2={x2}
+                y2={y2}
+                stroke="rgba(0,0,0,0)"
+                strokeWidth={edgeHit}
+                vectorEffect="non-scaling-stroke"
+                style={{ pointerEvents: 'all', cursor: 'ns-resize' }}
+              />
+              <line
+                data-normal-handle="w"
+                x1={x1}
+                y1={y1}
+                x2={x1}
+                y2={y2}
+                stroke="rgba(0,0,0,0)"
+                strokeWidth={edgeHit}
+                vectorEffect="non-scaling-stroke"
+                style={{ pointerEvents: 'all', cursor: 'ew-resize' }}
+              />
+              {handles.map(h => (
+                <g key={h.key}>
+                  <circle
+                    data-normal-handle={h.key}
+                    cx={h.x}
+                    cy={h.y}
+                    r={handleHitR}
+                    fill="rgba(0,0,0,0)"
+                    vectorEffect="non-scaling-stroke"
+                    style={{ pointerEvents: 'all', cursor: h.cursor }}
+                  />
+                  <circle
+                    data-normal-handle={h.key}
+                    cx={h.x}
+                    cy={h.y}
+                    r={handleR}
+                    fill="#00ff00"
+                    stroke="#0b1a0b"
+                    strokeWidth="1.5"
+                    vectorEffect="non-scaling-stroke"
+                    style={{ pointerEvents: 'all', cursor: h.cursor }}
+                  />
+                </g>
+              ))}
             </svg>
           )
         }
