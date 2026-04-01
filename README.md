@@ -36,17 +36,13 @@ Add two or more overlapping scan segments in order, choose an orientation, and c
 
 ## Common operations
 
-### Re-crop
-
-Once a crop has been applied in any mode, the **Re-crop** button appears. Clicking it (after confirmation) promotes the current output image to the new source, resets all state, and returns to phase 1 — allowing you to chain crop modes (e.g. perspective-correct with Corner mode, then circular-crop the result with Disc mode) without saving an intermediate file.
-
 ### Adjustments
 
 The Adjustments panel (collapsible, bottom of the sidebar) becomes available once a crop has been committed or skipped. It includes resize, trim borders, auto-contrast, black/white point sliders, descreen, touch-up, and disc-mode straight-edge leveling.
 
 ### Resize
 
-Resize by explicit width/height or by percentage in the **Resize image** modal. Large upscales trigger a confirmation warning.
+Resize by explicit width/height or by percentage in the **Resize image** modal, with or without locking the image aspect ratio. Large upscales trigger a confirmation warning.
 
 ### Trim borders
 
@@ -54,7 +50,7 @@ Detects and removes near-solid white or black edge strips from the current outpu
 
 ### Descreen
 
-An FFT-based filter for reducing halftone screen patterns in scanned print media. Use the Descreen controls (thresh/radius/middle/highs), then apply.
+An FFT-based filter for reducing halftone screen patterns in scanned print media. Use the Descreen controls (thresh/radius/middle/highlights restoration), then apply.
 
 ### Touch-up brush
 
@@ -66,7 +62,11 @@ WASD keys trim 3 px from the top, left, bottom, and right edges of the working i
 
 ### Rotate
 
-Q and E rotate 90° counter-clockwise and clockwise. In disc mode these instead rotate ±15°. After cropping in Disc mode, enable **Straight edge** and draw a reference line that should be horizontal; Atropos rotates the disc to level that edge.
+Q and E rotate 90° counter-clockwise and clockwise. In disc mode these instead rotate ±15°. After cropping in Disc mode, enable **Straight edge** and draw a line that should be horizontal; Atropos rotates the disc to level that edge.
+
+### Re-crop
+
+Once a crop has been applied in any mode, the **Re-crop** button appears. Clicking it (after confirmation) promotes the current output image to the new source, resets all state, and returns to phase 1 — allowing you to chain crop modes (e.g. perspective-correct with Corner mode, then circular-crop the result with Disc mode) without saving an intermediate file.
 
 ### Undo
 
