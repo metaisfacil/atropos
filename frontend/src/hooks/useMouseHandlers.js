@@ -552,6 +552,15 @@ export function useMouseHandlers({
 
   const handleImageMouseLeave = () => {}
 
+  const handleContextMenu = (e) => {
+    if (!imageLoaded || loading) return
+    // On macOS, Ctrl+click opens the context menu by default. In Corner mode
+    // we reserve that gesture for custom-corner selection.
+    if (mode === 'corner' && !useTouchupTool && e.target === imgRef.current && e.ctrlKey) {
+      e.preventDefault()
+    }
+  }
+
   // Catch mouseup events that fire outside the canvas-area (sidebar, outside window, etc.)
   // so that a Normal mode drag is never left stuck in an active state.
   useEffect(() => {
@@ -641,5 +650,5 @@ export function useMouseHandlers({
     }
   }, [mode, useTouchupTool]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave, displayToImage, lineStartImgRef }
+  return { handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave, handleContextMenu, displayToImage, lineStartImgRef }
 }

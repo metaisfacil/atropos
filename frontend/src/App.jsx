@@ -225,7 +225,7 @@ export default function App() {
   flushPendingSaveRef.current = flushPendingSave
 
   const {
-    handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave, displayToImage, lineStartImgRef,
+    handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave, handleContextMenu, displayToImage, lineStartImgRef,
   } = useMouseHandlers({
     imageLoaded, loading, mode, dragging, dragStart, dragCurrent,
     useTouchupTool, useStraightEdgeTool, discActive, linesProcessed, touchupStrokes,
@@ -521,6 +521,7 @@ export default function App() {
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
+          onContextMenu={handleContextMenu}
           style={spacePanMode ? { cursor: 'grab' } : undefined}
         >
           {preview ? (
