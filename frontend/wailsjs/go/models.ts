@@ -324,6 +324,7 @@ export namespace main {
 	export class LaunchArgs {
 	    filePath: string;
 	    mode: string;
+	    debug?: boolean;
 	    postSaveCommand?: string;
 	    postSaveEnabled?: boolean;
 	    postSaveExit?: boolean;
@@ -336,6 +337,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.filePath = source["filePath"];
 	        this.mode = source["mode"];
+	        this.debug = source["debug"];
 	        this.postSaveCommand = source["postSaveCommand"];
 	        this.postSaveEnabled = source["postSaveEnabled"];
 	        this.postSaveExit = source["postSaveExit"];

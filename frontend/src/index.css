@@ -10,6 +10,22 @@ body {
   color: #e0e0e0;
 }
 
+body.app-runtime-lockdown {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+body.app-runtime-lockdown * {
+  -webkit-user-drag: none;
+}
+
+body.app-runtime-lockdown input,
+body.app-runtime-lockdown textarea,
+body.app-runtime-lockdown [contenteditable='true'] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 html, body, #root {
   width: 100%;
   height: 100%;

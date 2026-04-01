@@ -236,6 +236,7 @@ type ProcessResult struct {
 type LaunchArgs struct {
 	FilePath        string `json:"filePath"`
 	Mode            string `json:"mode"`
+	Debug           bool   `json:"debug,omitempty"`
 	PostSaveCommand string `json:"postSaveCommand,omitempty"`
 	PostSaveEnabled bool   `json:"postSaveEnabled,omitempty"`
 	PostSaveExit    bool   `json:"postSaveExit,omitempty"`
@@ -246,6 +247,7 @@ func (a *App) GetLaunchArgs() LaunchArgs {
 	return LaunchArgs{
 		FilePath:        a.launchFilePath,
 		Mode:            a.launchMode,
+		Debug:           a.logger != nil,
 		PostSaveCommand: a.postSaveCmd,
 		PostSaveEnabled: a.postSaveCmd != "",
 		PostSaveExit:    a.postSaveExit,
