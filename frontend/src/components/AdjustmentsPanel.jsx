@@ -166,20 +166,6 @@ export default function AdjustmentsPanel({
               </button>
             </DelayedHint>
 
-            <DelayedHint hint="Toggles the touch-up brush which uses a PatchMatch-style content-aware fill. Draw strokes on the preview to build a mask, then commit to fill.">
-              <button
-                className={`adjustments-btn touchup-btn ${useTouchupTool ? 'active' : ''}`}
-                onClick={() => {
-                  if (!useTouchupTool) setUseStraightEdgeTool(false)
-                  setUseTouchupTool(!useTouchupTool)
-                }}
-                disabled={!postCropAvailable}
-                aria-pressed={useTouchupTool}
-              >
-                Touch-up brush
-              </button>
-            </DelayedHint>
-
             <DelayedHint hint="Clamps the image's luminance around the brightest and darkest points to enhance contrast.">
               <button
                 className="adjustments-btn"
@@ -200,6 +186,36 @@ export default function AdjustmentsPanel({
                 Descreen
               </button>
             </DelayedHint>
+
+            <DelayedHint hint="Toggles the touch-up brush which uses a PatchMatch-style content-aware fill. Draw strokes on the preview to build a mask, then commit to fill.">
+              <button
+                className={`adjustments-btn touchup-btn ${useTouchupTool ? 'active' : ''}`}
+                onClick={() => {
+                  if (!useTouchupTool) setUseStraightEdgeTool(false)
+                  setUseTouchupTool(!useTouchupTool)
+                }}
+                disabled={!postCropAvailable}
+                aria-pressed={useTouchupTool}
+              >
+                Touch-up brush
+              </button>
+            </DelayedHint>
+
+            {mode === 'disc' && (
+              <DelayedHint hint="Draw a line along a known horizontal edge. The disc will be rotated so that edge becomes level. Available only after the disc has been cropped.">
+                <button
+                  className={`adjustments-btn straight-edge-btn ${useStraightEdgeTool ? 'active' : ''}`}
+                  onClick={() => {
+                    if (!useStraightEdgeTool) setUseTouchupTool(false)
+                    setUseStraightEdgeTool(!useStraightEdgeTool)
+                  }}
+                  disabled={!discActive || useTouchupTool}
+                  aria-pressed={useStraightEdgeTool}
+                >
+                  Straight edge
+                </button>
+              </DelayedHint>
+            )}
           </div>
 
           <div className={`touchup-slider descreen-controls ${useDescreenTool ? 'open' : 'closed'}`}>
@@ -252,24 +268,6 @@ export default function AdjustmentsPanel({
             </div>
             <div style={{ marginTop: '20px' }}></div>
           </div>
-
-          {mode === 'disc' && (
-            <div className="shortcut-item">
-              <DelayedHint hint="Draw a line along a known horizontal edge. The disc will be rotated so that edge becomes level. Available only after the disc has been cropped.">
-                <button
-                  className={`adjustments-btn straight-edge-btn ${useStraightEdgeTool ? 'active' : ''}`}
-                  onClick={() => {
-                    if (!useStraightEdgeTool) setUseTouchupTool(false)
-                    setUseStraightEdgeTool(!useStraightEdgeTool)
-                  }}
-                  disabled={!discActive || useTouchupTool}
-                  aria-pressed={useStraightEdgeTool}
-                >
-                  Straight edge
-                </button>
-              </DelayedHint>
-            </div>
-          )}
 
           <ResizeModal
             open={resizeModalOpen}
