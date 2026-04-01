@@ -110,6 +110,7 @@ export default function App() {
   // ── Line mode ─────────────────────────────────────────────────────────────
   const [linesDone, setLinesDone]         = useState(0)
   const [linesProcessed, setLinesProcessed] = useState(false)
+  const [lineDragKind, setLineDragKind] = useState('none')
 
   // ── Normal crop mode ───────────────────────────────────────────────────────
   const [normalRect, setNormalRect]               = useState(null)
@@ -230,14 +231,14 @@ export default function App() {
   } = useMouseHandlers({
     imageLoaded, loading, mode, dragging, dragStart, dragCurrent,
     useTouchupTool, useStraightEdgeTool, discActive, linesProcessed, touchupStrokes,
-    cornerState, dotRadius, cornersDetected, customCorner, linesDone, normalRect,
+    cornerState, dotRadius, cornersDetected, customCorner, linesDone, normalRect, lines,
     realImageDims, discNoMaskPreview, discCenter, discRadius, discRotation,
     setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setPreview,
     setDiscRotation, setLoading, setZoom, setRealImageDims, setCornerState,
     setDetectedCornerPts, setSelectedCornerPts, setDiscActive, setDiscNoMaskPreview,
     setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setLines, setLinesDone,
     setDiscLiveActive, setDiscLiveTransform, setLinesProcessed, setUseStraightEdgeTool,
-    straightEdgeRemainsActive, spaceDownRef, panDragRef, canvasRef, ctrlDragRef,
+    setLineDragKind, straightEdgeRemainsActive, spaceDownRef, panDragRef, canvasRef, ctrlDragRef,
     shiftDragRef, touchupDraggingRef, imgRef, lastResizeRef, mousePosRef,
     commitTouchup, showStatus, showError, setUnsavedChanges, setNormalDragKind,
   })
@@ -574,6 +575,7 @@ export default function App() {
                 lines={lines}
                 displayToImage={displayToImage}
                 lineStartImgRef={lineStartImgRef}
+                lineDragKind={lineDragKind}
               />
             </div>
           ) : !loading ? (

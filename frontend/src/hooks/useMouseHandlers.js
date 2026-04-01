@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect } from 'react'
 import {
-  ClickCorner, StraightEdgeRotate, RotateDisc, ShiftDisc, DrawDisc, AddLine, ProcessLines,
+  ClickCorner, StraightEdgeRotate, RotateDisc, ShiftDisc, DrawDisc, AddLine, ProcessLines, ClearLines,
 } from '../../wailsjs/go/main/App'
 import { displayToImage as displayToImageHelper, computeDiscShift as computeDiscShiftHelper } from '../utils/imageCoords'
 import { sanitizeArg, debugOptions } from '../utils/debugLogger'
@@ -8,13 +8,14 @@ import { sanitizeArg, debugOptions } from '../utils/debugLogger'
 export function useMouseHandlers({
   imageLoaded, loading, mode, dragging, dragStart, dragCurrent,
   useTouchupTool, useStraightEdgeTool, discActive, linesProcessed,
-  touchupStrokes, cornerState, dotRadius, cornersDetected, customCorner, linesDone, normalRect,
+  touchupStrokes, cornerState, dotRadius, cornersDetected, customCorner, linesDone, normalRect, lines,
   realImageDims, discNoMaskPreview, discCenter, discRadius, discRotation,
   setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setPreview,
   setLoading, setZoom, setRealImageDims, setCornerState, setDetectedCornerPts,
   setSelectedCornerPts, setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius,
   setDiscRotation, setDiscBgColor, setNormalRect, setLines, setLinesDone, setUnsavedChanges,
   setDiscLiveActive, setDiscLiveTransform, setLinesProcessed, setUseStraightEdgeTool,
+  setLineDragKind,
   setNormalDragKind,
   straightEdgeRemainsActive, spaceDownRef, panDragRef, canvasRef, ctrlDragRef, shiftDragRef,
   touchupDraggingRef, imgRef, lastResizeRef, mousePosRef,
@@ -45,6 +46,7 @@ export function useMouseHandlers({
   const mouseUpHandledRef    = useRef(false) // set by canvas handler to suppress window handler double-fire
   const normalHandleDragRef  = useRef(null)  // active resize-handle drag in Normal mode
   const normalMoveDragRef    = useRef(null)  // active move-drag for an existing Normal mode rectangle
+  const lineHandleDragRef    = useRef(null)  // active endpoint drag in Line mode
 
   const clamp = (value, min, max) => Math.min(Math.max(value, min), max)
 
@@ -115,6 +117,7 @@ export function useMouseHandlers({
   const draggingRef        = useRef(dragging)
   const dragStartRef       = useRef(dragStart)
   const dragCurrentRef     = useRef(dragCurrent)
+  const linesRef           = useRef(lines)
   const displayToImageRef  = useRef(null)
   // Image-space start point for line-mode drag, captured at mousedown so that
   // zooming mid-drag doesn't corrupt the scale used for the start coordinate.
@@ -125,6 +128,7 @@ export function useMouseHandlers({
   draggingRef.current      = dragging
   dragStartRef.current     = dragStart
   dragCurrentRef.current   = dragCurrent
+  linesRef.current         = lines
   discStateRef.current     = { realImageDims, discRadius, discRotation, discCenter }
 
   const displayToImage = displayToImageRef.current = useCallback((dispX, dispY) => {
@@ -143,6 +147,47 @@ export function useMouseHandlers({
   const getNormalHandle = (target) => {
     const el = target?.closest?.('[data-normal-handle]')
     return el?.getAttribute?.('data-normal-handle') || null
+  }
+
+  const getLineHandleInfo = (target) => {
+    const el = target?.closest?.('[data-line-handle-index]')
+    if (!el) return null
+    const idx = Number.parseInt(el.getAttribute('data-line-handle-index') || '', 10)
+    const end = el.getAttribute('data-line-handle-end')
+    if (!Number.isInteger(idx) || (end !== 'start' && end !== 'end')) return null
+    return { idx, end }
+  }
+
+  const clampToImage = (imgPt) => ({
+    x: clamp(imgPt.x, 0, Math.max(0, realImageDims.w)),
+    y: clamp(imgPt.y, 0, Math.max(0, realImageDims.h)),
+  })
+
+  const updateLineFromHandle = (lineIndex, endpoint, imgPt) => {
+    if (!Number.isInteger(lineIndex) || !imgPt) return
+    const clamped = clampToImage(imgPt)
+    setLines(prev => {
+      if (lineIndex < 0 || lineIndex >= prev.length) return prev
+      const next = [...prev]
+      const ln = { ...next[lineIndex] }
+      if (endpoint === 'start') {
+        ln.x1 = clamped.x
+        ln.y1 = clamped.y
+      } else {
+        ln.x2 = clamped.x
+        ln.y2 = clamped.y
+      }
+      next[lineIndex] = ln
+      linesRef.current = next
+      return next
+    })
+  }
+
+  const syncBackendLines = async (lineList) => {
+    await ClearLines()
+    for (const ln of lineList) {
+      await AddLine({ x1: ln.x1, y1: ln.y1, x2: ln.x2, y2: ln.y2 })
+    }
   }
 
   const isPointInNormalRect = (imgPt) => {
@@ -190,6 +235,18 @@ export function useMouseHandlers({
       normalDragActiveRef.current = false
       normalHandleDragRef.current = normalHandle
       setNormalDragKind('resize')
+      setDragging(true)
+      setDragStart(pos)
+      setDragCurrent(pos)
+      return
+    }
+    const lineHandle = mode === 'line' && !useTouchupTool && !linesProcessed ? getLineHandleInfo(e.target) : null
+    if (lineHandle) {
+      e.preventDefault()
+      const pos = getRelPos(e)
+      if (!pos) return
+      lineHandleDragRef.current = lineHandle
+      setLineDragKind('edit')
       setDragging(true)
       setDragStart(pos)
       setDragCurrent(pos)
@@ -303,7 +360,10 @@ export function useMouseHandlers({
     }
     // For line mode, capture the start point in image-space now so that
     // zooming mid-drag doesn't corrupt the scale used later.
-    if (mode === 'line') lineStartImgRef.current = displayToImage(pos.x, pos.y)
+    if (mode === 'line') {
+      setLineDragKind('draw')
+      lineStartImgRef.current = displayToImage(pos.x, pos.y)
+    }
     setDragging(true); setDragStart(pos); setDragCurrent(pos)
   }
 
@@ -322,6 +382,15 @@ export function useMouseHandlers({
     const imgRect = imgRef.current ? imgRef.current.getBoundingClientRect() : null
     const insideImage = pos && imgRect &&
       pos.x >= 0 && pos.y >= 0 && pos.x <= imgRect.width && pos.y <= imgRect.height
+
+    if (lineHandleDragRef.current) {
+      if (pos) {
+        setDragCurrent(pos)
+        const imgPt = displayToImage(pos.x, pos.y)
+        updateLineFromHandle(lineHandleDragRef.current.idx, lineHandleDragRef.current.end, imgPt)
+      }
+      return
+    }
 
     if (normalMoveDragRef.current) {
       if (pos) {
@@ -426,6 +495,24 @@ export function useMouseHandlers({
   const handleMouseUp = async (e) => {
     if (panDragRef.current) { panDragRef.current = null; return }
     if (!imageLoaded || loading) return
+
+    if (mode === 'line' && lineHandleDragRef.current) {
+      mouseUpHandledRef.current = true
+      lineHandleDragRef.current = null
+      setLineDragKind('none')
+      setDragging(false)
+      setDragStart(null)
+      setDragCurrent(null)
+      setLoading(true)
+      try {
+        await syncBackendLines(linesRef.current)
+      } catch (err) {
+        console.error('Line handle sync error:', err)
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
 
     if (normalDragPendingRef.current) {
       normalDragPendingRef.current = false
@@ -663,9 +750,13 @@ export function useMouseHandlers({
       lineStartImgRef.current = null
       const end   = displayToImage(pos.x, pos.y)
       const dx = end.x - start.x; const dy = end.y - start.y
-      if (Math.hypot(dx, dy) < 5) return
+      if (Math.hypot(dx, dy) < 5) { setLineDragKind('none'); return }
       try {
-        setLines(prev => [...prev, { x1: start.x, y1: start.y, x2: end.x, y2: end.y }])
+        setLines(prev => {
+          const next = [...prev, { x1: start.x, y1: start.y, x2: end.x, y2: end.y }]
+          linesRef.current = next
+          return next
+        })
         const result   = await AddLine({ x1: start.x, y1: start.y, x2: end.x, y2: end.y })
         const newCount = linesDone + 1
         setLinesDone(newCount)
@@ -677,11 +768,15 @@ export function useMouseHandlers({
           setPreview(proc.preview)
           if (proc.width && proc.height) setRealImageDims({ w: proc.width, h: proc.height })
           showStatus('Perspective correction applied')
+          setLineDragKind('none')
           setLinesDone(0); setLines([]); setLinesProcessed(true)
+          linesRef.current = []
           setLoading(false)
         }
       } catch (err) {
         console.error('Line error:', err)
+      } finally {
+        if (linesDone + 1 < 4) setLineDragKind('none')
       }
     }
 
@@ -702,7 +797,7 @@ export function useMouseHandlers({
   // Catch mouseup events that fire outside the canvas-area (sidebar, outside window, etc.)
   // so that a Normal mode drag is never left stuck in an active state.
   useEffect(() => {
-    const onWindowMouseUp = () => {
+    const onWindowMouseUp = async () => {
       if (mouseUpHandledRef.current) { mouseUpHandledRef.current = false; return }
       if (normalMoveDragRef.current) {
         normalMoveDragRef.current = null
@@ -711,6 +806,22 @@ export function useMouseHandlers({
         setDragging(false)
         setDragStart(null)
         setDragCurrent(null)
+        return
+      }
+      if (lineHandleDragRef.current) {
+        lineHandleDragRef.current = null
+        setLineDragKind('none')
+        setDragging(false)
+        setDragStart(null)
+        setDragCurrent(null)
+        setLoading(true)
+        try {
+          await syncBackendLines(linesRef.current)
+        } catch (err) {
+          console.error('Line handle sync error:', err)
+        } finally {
+          setLoading(false)
+        }
         return
       }
       if (normalHandleDragRef.current) {
@@ -743,12 +854,14 @@ export function useMouseHandlers({
         return
       }
       if (!draggingRef.current) {
+        setLineDragKind('none')
         setDiscLiveActive(false)
         setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })
         return
       }
       normalDragActiveRef.current = false
       setNormalDragKind('none')
+      setLineDragKind('none')
       setDragging(false)
       setDiscLiveActive(false)
       setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })
