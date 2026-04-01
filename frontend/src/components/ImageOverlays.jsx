@@ -132,6 +132,7 @@ export default function ImageOverlays({
           const y2 = Math.max(normalRect.y1, normalRect.y2)
           const handleR = 8
           const handleHitR = handleR + 2
+          const edgeHit = 10
           const handles = [
             { key: 'nw', x: x1, y: y1, cursor: 'nwse-resize' },
             { key: 'ne', x: x2, y: y1, cursor: 'nesw-resize' },
@@ -147,6 +148,50 @@ export default function ImageOverlays({
               <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1}
                 stroke="#00ff00" strokeWidth="2" fill="rgba(0,255,0,0.08)"
                 strokeDasharray="6 3" vectorEffect="non-scaling-stroke" />
+              <line
+                data-normal-handle="n"
+                x1={x1}
+                y1={y1}
+                x2={x2}
+                y2={y1}
+                stroke="rgba(0,0,0,0)"
+                strokeWidth={edgeHit}
+                vectorEffect="non-scaling-stroke"
+                style={{ pointerEvents: 'all', cursor: 'ns-resize' }}
+              />
+              <line
+                data-normal-handle="e"
+                x1={x2}
+                y1={y1}
+                x2={x2}
+                y2={y2}
+                stroke="rgba(0,0,0,0)"
+                strokeWidth={edgeHit}
+                vectorEffect="non-scaling-stroke"
+                style={{ pointerEvents: 'all', cursor: 'ew-resize' }}
+              />
+              <line
+                data-normal-handle="s"
+                x1={x1}
+                y1={y2}
+                x2={x2}
+                y2={y2}
+                stroke="rgba(0,0,0,0)"
+                strokeWidth={edgeHit}
+                vectorEffect="non-scaling-stroke"
+                style={{ pointerEvents: 'all', cursor: 'ns-resize' }}
+              />
+              <line
+                data-normal-handle="w"
+                x1={x1}
+                y1={y1}
+                x2={x1}
+                y2={y2}
+                stroke="rgba(0,0,0,0)"
+                strokeWidth={edgeHit}
+                vectorEffect="non-scaling-stroke"
+                style={{ pointerEvents: 'all', cursor: 'ew-resize' }}
+              />
               {handles.map(h => (
                 <g key={h.key}>
                   <circle

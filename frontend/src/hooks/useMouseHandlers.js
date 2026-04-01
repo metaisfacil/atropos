@@ -15,6 +15,7 @@ export function useMouseHandlers({
   setSelectedCornerPts, setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius,
   setDiscRotation, setDiscBgColor, setNormalRect, setLines, setLinesDone, setUnsavedChanges,
   setDiscLiveActive, setDiscLiveTransform, setLinesProcessed, setUseStraightEdgeTool,
+  setNormalDragKind,
   straightEdgeRemainsActive, spaceDownRef, panDragRef, canvasRef, ctrlDragRef, shiftDragRef,
   touchupDraggingRef, imgRef, lastResizeRef, mousePosRef,
   commitTouchup, showStatus, showError,
@@ -43,6 +44,7 @@ export function useMouseHandlers({
   const normalDragActiveRef  = useRef(false) // drag started this frame; bridges the gap before React re-renders dragging=true
   const mouseUpHandledRef    = useRef(false) // set by canvas handler to suppress window handler double-fire
   const normalHandleDragRef  = useRef(null)  // active resize-handle drag in Normal mode
+  const normalMoveDragRef    = useRef(null)  // active move-drag for an existing Normal mode rectangle
 
   const clamp = (value, min, max) => Math.min(Math.max(value, min), max)
 
@@ -143,6 +145,15 @@ export function useMouseHandlers({
     return el?.getAttribute?.('data-normal-handle') || null
   }
 
+  const isPointInNormalRect = (imgPt) => {
+    if (!normalRect || !imgPt) return false
+    const xMin = Math.min(normalRect.x1, normalRect.x2)
+    const xMax = Math.max(normalRect.x1, normalRect.x2)
+    const yMin = Math.min(normalRect.y1, normalRect.y2)
+    const yMax = Math.max(normalRect.y1, normalRect.y2)
+    return imgPt.x >= xMin && imgPt.x <= xMax && imgPt.y >= yMin && imgPt.y <= yMax
+  }
+
   const updateNormalRectFromHandle = (handle, imgPt) => {
     if (!normalRect || !handle || !imgPt) return
     const xMin = Math.min(normalRect.x1, normalRect.x2)
@@ -162,6 +173,10 @@ export function useMouseHandlers({
     if (handle === 'ne') setNormalRect({ x1: xMin, y1: y, x2: x, y2: yMax })
     if (handle === 'se') setNormalRect({ x1: xMin, y1: yMin, x2: x, y2: y })
     if (handle === 'sw') setNormalRect({ x1: x, y1: yMin, x2: xMax, y2: y })
+    if (handle === 'n') setNormalRect({ x1: xMin, y1: y, x2: xMax, y2: yMax })
+    if (handle === 'e') setNormalRect({ x1: xMin, y1: yMin, x2: x, y2: yMax })
+    if (handle === 's') setNormalRect({ x1: xMin, y1: yMin, x2: xMax, y2: y })
+    if (handle === 'w') setNormalRect({ x1: x, y1: yMin, x2: xMax, y2: yMax })
   }
 
   const handleMouseDown = (e) => {
@@ -174,6 +189,7 @@ export function useMouseHandlers({
       normalDragPendingRef.current = false
       normalDragActiveRef.current = false
       normalHandleDragRef.current = normalHandle
+      setNormalDragKind('resize')
       setDragging(true)
       setDragStart(pos)
       setDragCurrent(pos)
@@ -195,6 +211,7 @@ export function useMouseHandlers({
       if (mode === 'normal' && !useTouchupTool) {
         e.preventDefault()
         // Starting a fresh Normal-mode selection should replace any existing one immediately.
+        setNormalDragKind('draw')
         setNormalRect(null)
         normalDragPendingRef.current = true
       }
@@ -203,6 +220,27 @@ export function useMouseHandlers({
     e.preventDefault()
     const pos = getRelPos(e)
     if (!pos) return
+
+    if (mode === 'normal' && !useTouchupTool && normalRect) {
+      const imgPt = displayToImage(pos.x, pos.y)
+      if (isPointInNormalRect(imgPt)) {
+        const xMin = Math.min(normalRect.x1, normalRect.x2)
+        const xMax = Math.max(normalRect.x1, normalRect.x2)
+        const yMin = Math.min(normalRect.y1, normalRect.y2)
+        const yMax = Math.max(normalRect.y1, normalRect.y2)
+        normalMoveDragRef.current = {
+          startImg: imgPt,
+          startRect: { x1: xMin, y1: yMin, x2: xMax, y2: yMax },
+        }
+        setNormalDragKind('move')
+        normalDragPendingRef.current = false
+        normalDragActiveRef.current = false
+        setDragging(true)
+        setDragStart(pos)
+        setDragCurrent(pos)
+        return
+      }
+    }
 
     if (mode === 'corner' && !useTouchupTool) { cornerMouseDownRef.current = true; return }
 
@@ -260,6 +298,7 @@ export function useMouseHandlers({
     shiftDragRef.current = null
     if (mode === 'normal' && !useTouchupTool) {
       // Clear confirmed selection at drag start so the live rectangle is visible immediately.
+      setNormalDragKind('draw')
       setNormalRect(null)
     }
     // For line mode, capture the start point in image-space now so that
@@ -283,6 +322,29 @@ export function useMouseHandlers({
     const imgRect = imgRef.current ? imgRef.current.getBoundingClientRect() : null
     const insideImage = pos && imgRect &&
       pos.x >= 0 && pos.y >= 0 && pos.x <= imgRect.width && pos.y <= imgRect.height
+
+    if (normalMoveDragRef.current) {
+      if (pos) {
+        setDragCurrent(pos)
+        const imgPt = displayToImage(pos.x, pos.y)
+        const move = normalMoveDragRef.current
+        const start = move.startRect
+        const width = Math.max(0, start.x2 - start.x1)
+        const height = Math.max(0, start.y2 - start.y1)
+        const rawDx = imgPt.x - move.startImg.x
+        const rawDy = imgPt.y - move.startImg.y
+        const minDx = -start.x1
+        const maxDx = Math.max(0, realImageDims.w - start.x2)
+        const minDy = -start.y1
+        const maxDy = Math.max(0, realImageDims.h - start.y2)
+        const dx = clamp(rawDx, minDx, maxDx)
+        const dy = clamp(rawDy, minDy, maxDy)
+        const nx1 = start.x1 + dx
+        const ny1 = start.y1 + dy
+        setNormalRect({ x1: nx1, y1: ny1, x2: nx1 + width, y2: ny1 + height })
+      }
+      return
+    }
 
     if (normalHandleDragRef.current) {
       if (pos) {
@@ -367,7 +429,7 @@ export function useMouseHandlers({
 
     if (normalDragPendingRef.current) {
       normalDragPendingRef.current = false
-      if (mode === 'normal' && !useTouchupTool) { mouseUpHandledRef.current = true; setNormalRect(null) }
+      if (mode === 'normal' && !useTouchupTool) { mouseUpHandledRef.current = true; setNormalRect(null); setNormalDragKind('none') }
       return
     }
 
@@ -384,10 +446,21 @@ export function useMouseHandlers({
     }
 
     if (mode === 'normal' && !useTouchupTool) {
+      if (normalMoveDragRef.current) {
+        mouseUpHandledRef.current = true
+        normalMoveDragRef.current = null
+        normalDragActiveRef.current = false
+        setNormalDragKind('none')
+        setDragging(false)
+        setDragStart(null)
+        setDragCurrent(null)
+        return
+      }
       if (normalHandleDragRef.current) {
         mouseUpHandledRef.current = true
         normalHandleDragRef.current = null
         normalDragActiveRef.current = false
+        setNormalDragKind('none')
         setDragging(false)
         setDragStart(null)
         setDragCurrent(null)
@@ -395,7 +468,8 @@ export function useMouseHandlers({
       }
       mouseUpHandledRef.current = true
       normalDragActiveRef.current = false
-      if (!dragging || !dragStart || !dragCurrent) { setDragging(false); return }
+      if (!dragging || !dragStart || !dragCurrent) { setDragging(false); setNormalDragKind('none'); return }
+      setNormalDragKind('none')
       setDragging(false)
       const start = displayToImage(dragStart.x, dragStart.y)
       const end   = displayToImage(dragCurrent.x, dragCurrent.y)
@@ -630,9 +704,19 @@ export function useMouseHandlers({
   useEffect(() => {
     const onWindowMouseUp = () => {
       if (mouseUpHandledRef.current) { mouseUpHandledRef.current = false; return }
+      if (normalMoveDragRef.current) {
+        normalMoveDragRef.current = null
+        normalDragActiveRef.current = false
+        setNormalDragKind('none')
+        setDragging(false)
+        setDragStart(null)
+        setDragCurrent(null)
+        return
+      }
       if (normalHandleDragRef.current) {
         normalHandleDragRef.current = null
         normalDragActiveRef.current = false
+        setNormalDragKind('none')
         setDragging(false)
         setDragStart(null)
         setDragCurrent(null)
@@ -640,6 +724,7 @@ export function useMouseHandlers({
       }
       if (normalDragPendingRef.current) {
         normalDragPendingRef.current = false
+        setNormalDragKind('none')
         setNormalRect(null)
         return
       }
@@ -663,6 +748,7 @@ export function useMouseHandlers({
         return
       }
       normalDragActiveRef.current = false
+      setNormalDragKind('none')
       setDragging(false)
       setDiscLiveActive(false)
       setDiscLiveTransform({ dx: 0, dy: 0, angle: 0 })

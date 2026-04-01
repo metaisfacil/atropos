@@ -114,6 +114,7 @@ export default function App() {
   // ── Normal crop mode ───────────────────────────────────────────────────────
   const [normalRect, setNormalRect]               = useState(null)
   const [normalCropApplied, setNormalCropApplied] = useState(false)
+  const [normalDragKind, setNormalDragKind] = useState('none')
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const compositorDropRef = useRef(null)
@@ -238,7 +239,7 @@ export default function App() {
     setDiscLiveActive, setDiscLiveTransform, setLinesProcessed, setUseStraightEdgeTool,
     straightEdgeRemainsActive, spaceDownRef, panDragRef, canvasRef, ctrlDragRef,
     shiftDragRef, touchupDraggingRef, imgRef, lastResizeRef, mousePosRef,
-    commitTouchup, showStatus, showError, setUnsavedChanges,
+    commitTouchup, showStatus, showError, setUnsavedChanges, setNormalDragKind,
   })
 
   useKeyboardShortcuts({
@@ -534,7 +535,7 @@ export default function App() {
                 onLoad={handleImgLoad}
                 onMouseLeave={handleImageMouseLeave}
                 style={{
-                  cursor: spacePanMode ? 'grab' : 'crosshair',
+                  cursor: spacePanMode ? 'grab' : (normalDragKind === 'move' ? 'move' : 'crosshair'),
                   display: 'block',
                   transform: discLiveActive
                     ? `translate(${discLiveTransform.dx}px, ${discLiveTransform.dy}px) rotate(${discLiveTransform.angle}deg)`
