@@ -203,14 +203,23 @@ func imageToBase64(img *image.NRGBA) (string, error) {
 // toGrayscale converts an NRGBA image to grayscale using luminance weights.
 func toGrayscale(src *image.NRGBA) *image.Gray {
 	b := src.Bounds()
-	dst := image.NewGray(image.Rect(0, 0, b.Dx(), b.Dy()))
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			r, g, bl, _ := src.At(x, y).RGBA()
-			lum := uint8((19595*r + 38470*g + 7471*bl + 1<<15) >> 24)
-			dst.SetGray(x-b.Min.X, y-b.Min.Y, color.Gray{Y: lum})
+	w, h := b.Dx(), b.Dy()
+	dst := image.NewGray(image.Rect(0, 0, w, h))
+	srcStride := src.Stride
+	nCPU := goruntime.NumCPU()
+	pFor(h, nCPU, func(start, end int) {
+		for rowIdx := start; rowIdx < end; rowIdx++ {
+			srcBase := rowIdx * srcStride
+			dstBase := rowIdx * w
+			for colIdx := 0; colIdx < w; colIdx++ {
+				off := srcBase + colIdx*4
+				r := uint32(src.Pix[off])
+				g := uint32(src.Pix[off+1])
+				bl := uint32(src.Pix[off+2])
+				dst.Pix[dstBase+colIdx] = uint8((19595*r + 38470*g + 7471*bl + 32768) >> 16)
+			}
 		}
-	}
+	})
 	return dst
 }
 
@@ -387,6 +396,8 @@ func applyCLAHE(src *image.Gray, clipLimit float64, tileSize int) *image.Gray {
 	}
 	cdfs := make([]tileCDF, tw*th)
 
+	srcStride := src.Stride
+	dstStride := dst.Stride
 	for ty := 0; ty < th; ty++ {
 		for tx := 0; tx < tw; tx++ {
 			x0 := tx * w / tw
@@ -397,8 +408,9 @@ func applyCLAHE(src *image.Gray, clipLimit float64, tileSize int) *image.Gray {
 			var hist [256]int
 			n := 0
 			for yy := y0; yy < y1; yy++ {
+				srcRow := yy * srcStride
 				for xx := x0; xx < x1; xx++ {
-					hist[src.GrayAt(xx, yy).Y]++
+					hist[src.Pix[srcRow+xx]]++
 					n++
 				}
 			}
@@ -436,47 +448,51 @@ func applyCLAHE(src *image.Gray, clipLimit float64, tileSize int) *image.Gray {
 		}
 	}
 
-	for y := 0; y < h; y++ {
-		fy := (float64(y)/float64(h))*float64(th) - 0.5
-		ty0 := int(math.Floor(fy))
-		ty1 := ty0 + 1
-		wy := fy - float64(ty0)
-		if ty0 < 0 {
-			ty0 = 0
-			wy = 0
-		}
-		if ty1 >= th {
-			ty1 = th - 1
-			wy = 0
-		}
-
-		for x := 0; x < w; x++ {
-			fx := (float64(x)/float64(w))*float64(tw) - 0.5
-			tx0 := int(math.Floor(fx))
-			tx1 := tx0 + 1
-			wx := fx - float64(tx0)
-			if tx0 < 0 {
-				tx0 = 0
-				wx = 0
+	nCPU := goruntime.NumCPU()
+	pFor(h, nCPU, func(start, end int) {
+		for y := start; y < end; y++ {
+			fy := (float64(y)/float64(h))*float64(th) - 0.5
+			ty0 := int(math.Floor(fy))
+			ty1 := ty0 + 1
+			wy := fy - float64(ty0)
+			if ty0 < 0 {
+				ty0 = 0
+				wy = 0
 			}
-			if tx1 >= tw {
-				tx1 = tw - 1
-				wx = 0
+			if ty1 >= th {
+				ty1 = th - 1
+				wy = 0
 			}
+			srcRow := y * srcStride
+			dstRow := y * dstStride
+			for x := 0; x < w; x++ {
+				fx := (float64(x)/float64(w))*float64(tw) - 0.5
+				tx0 := int(math.Floor(fx))
+				tx1 := tx0 + 1
+				wx := fx - float64(tx0)
+				if tx0 < 0 {
+					tx0 = 0
+					wx = 0
+				}
+				if tx1 >= tw {
+					tx1 = tw - 1
+					wx = 0
+				}
 
-			v := src.GrayAt(x, y).Y
-			c00 := cdfs[ty0*tw+tx0].cdf[v]
-			c10 := cdfs[ty0*tw+tx1].cdf[v]
-			c01 := cdfs[ty1*tw+tx0].cdf[v]
-			c11 := cdfs[ty1*tw+tx1].cdf[v]
+				v := src.Pix[srcRow+x]
+				c00 := cdfs[ty0*tw+tx0].cdf[v]
+				c10 := cdfs[ty0*tw+tx1].cdf[v]
+				c01 := cdfs[ty1*tw+tx0].cdf[v]
+				c11 := cdfs[ty1*tw+tx1].cdf[v]
 
-			top := c00*(1-wx) + c10*wx
-			bot := c01*(1-wx) + c11*wx
-			val := top*(1-wy) + bot*wy
+				top := c00*(1-wx) + c10*wx
+				bot := c01*(1-wx) + c11*wx
+				val := top*(1-wy) + bot*wy
 
-			dst.SetGray(x, y, color.Gray{Y: clampByte(int(val * 255))})
+				dst.Pix[dstRow+x] = uint8(clampByte(int(val * 255)))
+			}
 		}
-	}
+	})
 
 	return dst
 }
@@ -525,56 +541,137 @@ func goodFeaturesToTrack(ctx context.Context, gray *image.Gray, maxCorners int, 
 	// the structure tensor. This mirrors the standard OpenCV implementation.
 	gray = gaussianBlurGray(gray)
 
+	nCPU := goruntime.NumCPU()
+	pix := gray.Pix
+	stride := gray.Stride
+
+	// ---- Sobel gradients (parallel) --------------------------------
+	// Read directly from gray.Pix to avoid per-call bounds checks.
 	ix := make([]float64, w*h)
 	iy := make([]float64, w*h)
 
-	for y := 1; y < h-1; y++ {
-		for x := 1; x < w-1; x++ {
-			gx := -float64(gray.GrayAt(x-1, y-1).Y) - 2*float64(gray.GrayAt(x-1, y).Y) - float64(gray.GrayAt(x-1, y+1).Y) +
-				float64(gray.GrayAt(x+1, y-1).Y) + 2*float64(gray.GrayAt(x+1, y).Y) + float64(gray.GrayAt(x+1, y+1).Y)
-			gy := -float64(gray.GrayAt(x-1, y-1).Y) - 2*float64(gray.GrayAt(x, y-1).Y) - float64(gray.GrayAt(x+1, y-1).Y) +
-				float64(gray.GrayAt(x-1, y+1).Y) + 2*float64(gray.GrayAt(x, y+1).Y) + float64(gray.GrayAt(x+1, y+1).Y)
-			ix[y*w+x] = gx
-			iy[y*w+x] = gy
+	pFor(h-2, nCPU, func(start, end int) {
+		for row := start + 1; row <= end; row++ {
+			for col := 1; col < w-1; col++ {
+				p00 := float64(pix[(row-1)*stride+(col-1)])
+				p01 := float64(pix[(row-1)*stride+col])
+				p02 := float64(pix[(row-1)*stride+(col+1)])
+				p10 := float64(pix[row*stride+(col-1)])
+				p12 := float64(pix[row*stride+(col+1)])
+				p20 := float64(pix[(row+1)*stride+(col-1)])
+				p21 := float64(pix[(row+1)*stride+col])
+				p22 := float64(pix[(row+1)*stride+(col+1)])
+				ix[row*w+col] = -p00 - 2*p10 - p20 + p02 + 2*p12 + p22
+				iy[row*w+col] = -p00 - 2*p01 - p02 + p20 + 2*p21 + p22
+			}
+		}
+	})
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	// ---- Summed-area tables for ix², iy², ix·iy -------------------
+	// SAT is (h+1)×(w+1), 1-indexed: sat[(y+1)*(w+1)+(x+1)] = Σf[0..y][0..x].
+	// Building it is O(w*h) sequential and very cache-friendly.
+	sw1 := w + 1
+	satN := (h + 1) * sw1
+	satXX := make([]float64, satN)
+	satYY := make([]float64, satN)
+	satXY := make([]float64, satN)
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			gx := ix[y*w+x]
+			gy := iy[y*w+x]
+			i := (y+1)*sw1 + (x + 1)
+			satXX[i] = gx*gx + satXX[i-1] + satXX[i-sw1] - satXX[i-sw1-1]
+			satYY[i] = gy*gy + satYY[i-1] + satYY[i-sw1] - satYY[i-sw1-1]
+			satXY[i] = gx*gy + satXY[i-1] + satXY[i-sw1] - satXY[i-sw1-1]
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	// ---- Structure tensor + min eigenvalue (parallel) --------------
+	// Each pixel's window sum is now 4 SAT lookups — O(1) per pixel
+	// regardless of blockSize, vs the previous O(blockSize²) inner loop.
 	half := blockSize / 2
 	cornerMap := make([]float64, w*h)
-	maxEig := 0.0
 
-	done := ctx.Done()
-	for y := half; y < h-half; y++ {
-		select {
-		case <-done:
-			return nil, ctx.Err()
-		default:
+	nWorkers := nCPU
+	validRows := h - 2*half
+	if validRows < 1 {
+		validRows = 1
+	}
+	if nWorkers > validRows {
+		nWorkers = validRows
+	}
+
+	localMax := make([]float64, nWorkers)
+	workerErrs := make([]error, nWorkers)
+	chunk := (validRows + nWorkers - 1) / nWorkers
+
+	var wg sync.WaitGroup
+	for wid := 0; wid < nWorkers; wid++ {
+		wid := wid
+		rowStart := half + wid*chunk
+		rowEnd := rowStart + chunk
+		if rowEnd > h-half {
+			rowEnd = h - half
 		}
-		for x := half; x < w-half; x++ {
-			var sxx, syy, sxy float64
-			for dy := -half; dy <= half; dy++ {
-				for dx := -half; dx <= half; dx++ {
-					idx := (y+dy)*w + (x + dx)
-					gx := ix[idx]
-					gy := iy[idx]
-					sxx += gx * gx
-					syy += gy * gy
-					sxy += gx * gy
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := ctx.Err(); err != nil {
+				workerErrs[wid] = err
+				return
+			}
+			lmax := 0.0
+			for y := rowStart; y < rowEnd; y++ {
+				r1 := y - half     // SAT top boundary (0-indexed)
+				r2p1 := y + half + 1 // SAT bottom boundary + 1
+				for x := half; x < w-half; x++ {
+					c1 := x - half
+					c2p1 := x + half + 1
+					i11 := r2p1*sw1 + c2p1
+					i01 := r1*sw1 + c2p1
+					i10 := r2p1*sw1 + c1
+					i00 := r1*sw1 + c1
+					sxx := satXX[i11] - satXX[i01] - satXX[i10] + satXX[i00]
+					syy := satYY[i11] - satYY[i01] - satYY[i10] + satYY[i00]
+					sxy := satXY[i11] - satXY[i01] - satXY[i10] + satXY[i00]
+
+					trace := sxx + syy
+					det := sxx*syy - sxy*sxy
+					disc := trace*trace/4.0 - det
+					if disc < 0 {
+						disc = 0
+					}
+					minEig := trace/2.0 - math.Sqrt(disc)
+					cornerMap[y*w+x] = minEig
+					if minEig > lmax {
+						lmax = minEig
+					}
 				}
 			}
+			localMax[wid] = lmax
+		}()
+	}
+	wg.Wait()
 
-			trace := sxx + syy
-			det := sxx*syy - sxy*sxy
-			disc := trace*trace/4.0 - det
-			if disc < 0 {
-				disc = 0
-			}
-			minEigenvalue := trace/2.0 - math.Sqrt(disc)
+	for _, err := range workerErrs {
+		if err != nil {
+			return nil, err
+		}
+	}
 
-			cornerMap[y*w+x] = minEigenvalue
-			if minEigenvalue > maxEig {
-				maxEig = minEigenvalue
-			}
+	maxEig := 0.0
+	for _, v := range localMax {
+		if v > maxEig {
+			maxEig = v
 		}
 	}
 
@@ -941,34 +1038,41 @@ func resizeGray(src *image.Gray, newW, newH int) *image.Gray {
 		// Area averaging: each output pixel averages the block of source pixels
 		// that map onto it. This prevents aliasing from destroying edge gradients
 		// at the downsampled scales used by multi-scale corner detection.
-		for y := 0; y < newH; y++ {
-			srcY0 := y * origH / newH
-			srcY1 := (y + 1) * origH / newH
-			if srcY1 > origH {
-				srcY1 = origH
-			}
-			if srcY1 == srcY0 {
-				srcY1 = srcY0 + 1
-			}
-			for x := 0; x < newW; x++ {
-				srcX0 := x * origW / newW
-				srcX1 := (x + 1) * origW / newW
-				if srcX1 > origW {
-					srcX1 = origW
+		srcStride := src.Stride
+		dstStride := dst.Stride
+		nCPU := goruntime.NumCPU()
+		pFor(newH, nCPU, func(start, end int) {
+			for y := start; y < end; y++ {
+				srcY0 := y * origH / newH
+				srcY1 := (y + 1) * origH / newH
+				if srcY1 > origH {
+					srcY1 = origH
 				}
-				if srcX1 == srcX0 {
-					srcX1 = srcX0 + 1
+				if srcY1 == srcY0 {
+					srcY1 = srcY0 + 1
 				}
-				sum, count := 0, 0
-				for sy := srcY0; sy < srcY1; sy++ {
-					for sx := srcX0; sx < srcX1; sx++ {
-						sum += int(src.GrayAt(sx, sy).Y)
-						count++
+				dstRow := y * dstStride
+				for x := 0; x < newW; x++ {
+					srcX0 := x * origW / newW
+					srcX1 := (x + 1) * origW / newW
+					if srcX1 > origW {
+						srcX1 = origW
 					}
+					if srcX1 == srcX0 {
+						srcX1 = srcX0 + 1
+					}
+					sum, count := 0, 0
+					for sy := srcY0; sy < srcY1; sy++ {
+						srcRow := sy * srcStride
+						for sx := srcX0; sx < srcX1; sx++ {
+							sum += int(src.Pix[srcRow+sx])
+							count++
+						}
+					}
+					dst.Pix[dstRow+x] = uint8(sum / count)
 				}
-				dst.SetGray(x, y, color.Gray{Y: uint8(sum / count)})
 			}
-		}
+		})
 		return dst
 	}
 
@@ -980,6 +1084,62 @@ func resizeGray(src *image.Gray, newW, newH int) *image.Gray {
 			dst.SetGray(x, y, src.GrayAt(sx, sy))
 		}
 	}
+	return dst
+}
+
+// resizeNRGBAToGray downsamples an NRGBA image to a grayscale image in a
+// single parallelized pass, combining accent adjustment, luma conversion, and
+// area-averaging. This avoids the large intermediate NRGBA clone and full-res
+// gray buffer that the three-step pipeline (applyAccentAdjustment +
+// toGrayscale + resizeGray) would allocate.
+func resizeNRGBAToGray(src *image.NRGBA, newW, newH, accentValue int) *image.Gray {
+	b := src.Bounds()
+	origW, origH := b.Dx(), b.Dy()
+	dst := image.NewGray(image.Rect(0, 0, newW, newH))
+	if newW <= 0 || newH <= 0 {
+		return dst
+	}
+	srcStride := src.Stride
+	dstStride := dst.Stride
+	nCPU := goruntime.NumCPU()
+	pFor(newH, nCPU, func(start, end int) {
+		for outY := start; outY < end; outY++ {
+			srcY0 := outY * origH / newH
+			srcY1 := (outY + 1) * origH / newH
+			if srcY1 > origH {
+				srcY1 = origH
+			}
+			if srcY1 == srcY0 {
+				srcY1 = srcY0 + 1
+			}
+			dstRow := outY * dstStride
+			for outX := 0; outX < newW; outX++ {
+				srcX0 := outX * origW / newW
+				srcX1 := (outX + 1) * origW / newW
+				if srcX1 > origW {
+					srcX1 = origW
+				}
+				if srcX1 == srcX0 {
+					srcX1 = srcX0 + 1
+				}
+				sum, count := 0, 0
+				for sy := srcY0; sy < srcY1; sy++ {
+					srcRow := sy * srcStride
+					for sx := srcX0; sx < srcX1; sx++ {
+						off := srcRow + sx*4
+						r := uint32(clampByte(int(src.Pix[off]) + accentValue))
+						g := uint32(clampByte(int(src.Pix[off+1]) + accentValue))
+						bl := uint32(clampByte(int(src.Pix[off+2]) + accentValue))
+						sum += int((19595*r + 38470*g + 7471*bl + 32768) >> 16)
+						count++
+					}
+				}
+				if count > 0 {
+					dst.Pix[dstRow+outX] = uint8(sum / count)
+				}
+			}
+		}
+	})
 	return dst
 }
 

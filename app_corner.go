@@ -189,14 +189,16 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	}
 	a.logf("DetectCorners: image %dx%d, working at %dx%d (scale=%.3f)", imgW, imgH, workW, workH, scaleFactor)
 
-	adjusted := applyAccentAdjustment(a.currentImage, req.AccentValue)
-	gray := toGrayscale(adjusted)
-
+	// When downsampling (the common case for large scans), collapse
+	// applyAccentAdjustment + toGrayscale + resizeGray into a single
+	// parallelized pass over the source pixels to avoid the large
+	// intermediate NRGBA clone and full-resolution gray buffer.
 	var workGray *image.Gray
 	if scaleFactor < 1.0 {
-		workGray = resizeGray(gray, workW, workH)
+		workGray = resizeNRGBAToGray(a.currentImage, workW, workH, req.AccentValue)
 	} else {
-		workGray = gray
+		adjusted := applyAccentAdjustment(a.currentImage, req.AccentValue)
+		workGray = toGrayscale(adjusted)
 	}
 
 	// Optionally pre-stretch contrast using percentiles to handle non-white backgrounds,
