@@ -229,7 +229,7 @@ export default function App() {
   } = useMouseHandlers({
     imageLoaded, loading, mode, dragging, dragStart, dragCurrent,
     useTouchupTool, useStraightEdgeTool, discActive, linesProcessed, touchupStrokes,
-    cornerState, dotRadius, cornersDetected, customCorner, linesDone,
+    cornerState, dotRadius, cornersDetected, customCorner, linesDone, normalRect,
     realImageDims, discNoMaskPreview, discCenter, discRadius, discRotation,
     setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setPreview,
     setDiscRotation, setLoading, setZoom, setRealImageDims, setCornerState,
