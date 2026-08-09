@@ -83,7 +83,7 @@ func (a *App) NormalCrop(req NormalCropRequest) (*ProcessResult, error) {
 	r := image.Rect(x1, y1, x2, y2)
 	a.setWorkingImage(subImage(img, r))
 
-	preview, err := imageToBase64(a.warpedImage)
+	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +108,7 @@ func (a *App) ResetNormal() (*ProcessResult, error) {
 	if img == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
-	preview, err := imageToBase64(img)
+	preview, err := a.imagePreviewURL(img)
 	if err != nil {
 		return nil, err
 	}

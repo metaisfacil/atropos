@@ -61,8 +61,8 @@ func TestNormalCrop_ResultPreview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(res.Preview, "data:image/") {
-		t.Fatalf("preview is not a data URI: %q", res.Preview[:min(len(res.Preview), 50)])
+	if !strings.HasPrefix(res.Preview, previewAssetPathPrefix) {
+		t.Fatalf("preview is not an asset URL: %q", res.Preview[:min(len(res.Preview), 50)])
 	}
 }
 
@@ -321,8 +321,8 @@ func TestResetNormal_PreviewIsDataURI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(res.Preview, "data:image/") {
-		t.Fatalf("preview is not a data URI: %q", res.Preview[:min(len(res.Preview), 50)])
+	if !strings.HasPrefix(res.Preview, previewAssetPathPrefix) {
+		t.Fatalf("preview is not an asset URL: %q", res.Preview[:min(len(res.Preview), 50)])
 	}
 }
 

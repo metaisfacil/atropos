@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"image"
 	"image/color"
 	"image/draw"
-	"image/jpeg"
 	"math"
 	goruntime "runtime"
 	"sort"
@@ -169,33 +166,6 @@ func subImage(src *image.NRGBA, r image.Rectangle) *image.NRGBA {
 	dst := image.NewNRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
 	draw.Draw(dst, dst.Bounds(), src, r.Min, draw.Src)
 	return dst
-}
-
-// imageToBase64 encodes an image as a base64 data URI for the frontend.
-// Large images are downscaled to fit within maxPreviewDim and encoded as
-// JPEG for speed; smaller images use PNG for quality.
-func imageToBase64(img *image.NRGBA) (string, error) {
-	const maxPreviewDim = 1600
-	b := img.Bounds()
-	w, h := b.Dx(), b.Dy()
-
-	var encImg image.Image = img
-	if w > maxPreviewDim || h > maxPreviewDim {
-		scale := float64(maxPreviewDim) / float64(w)
-		if float64(maxPreviewDim)/float64(h) < scale {
-			scale = float64(maxPreviewDim) / float64(h)
-		}
-		nw := int(float64(w) * scale)
-		nh := int(float64(h) * scale)
-		encImg = resizeNRGBA(img, nw, nh)
-	}
-
-	var buf bytes.Buffer
-	// Use JPEG for speed on any non-trivial image
-	if err := jpeg.Encode(&buf, encImg, &jpeg.Options{Quality: 85}); err != nil {
-		return "", err
-	}
-	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
 
 // ---- Grayscale conversion ----

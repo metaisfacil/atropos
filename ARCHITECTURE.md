@@ -65,7 +65,7 @@ originalImage  ── immutable after LoadImage; never modified
 | `descreenBaseImage` | `*image.NRGBA` | Snapshot captured at the start of a Descreen session. Parameter tweaks in the same session always re-apply to this base image, not the already-descreened output. |
 | `descreenResultImage` | `*image.NRGBA` | Pointer to the last Descreen output. Used to detect external working-image changes (for example SetLevels) so Descreen re-snapshots on next apply instead of reusing stale base state. |
 | `discBaseImage` | `*image.NRGBA` | Snapshot of `currentImage` captured at `DrawDisc` time. `redrawDisc()` **always** sources from this image, not `warpedImage`, so every re-render of the disc is deterministic. |
-| `discNoMaskPreview` | `string` | Base64 preview of the disc source without mask compositing. Used by frontend live drag/rotate preview so interactions stay fluid while backend commits asynchronously. |
+| `discNoMaskPreview` | `string` | Versioned preview asset URL for the disc source without mask compositing. Used by frontend live drag/rotate preview so interactions stay fluid while backend commits asynchronously. |
 | `discWorkingCrop` | `*image.NRGBA` | Pre-cropped sub-region of `discBaseImage` centred on the disc with a generous extra margin (`discWorkingCropShiftPadding = 500 px`). `redrawDisc` reads from this small image instead of the full `discBaseImage` to avoid cache thrashing on large images. Refreshed on `DrawDisc` and when a shift moves the disc outside the cached region. Cleared by `ResetDisc`. |
 | `discWorkingCropRect` | `image.Rectangle` | Records the rect of `discBaseImage` that `discWorkingCrop` covers (in `discBaseImage` coordinates). Used to detect when a shift has moved the disc outside the working crop. |
 | `discCenterCutout` | `bool` | When true, `redrawDisc` punches a circular hole at the disc centre to expose `bgColor`. Default: `true`. |
@@ -167,7 +167,7 @@ LoadImage(req)
          discWorkingCropRect = zero
          postDiscBlack = 0
          postDiscWhite = 255
-    6. imageToBase64(currentImage)   JPEG, downscaled if > 1600px longest side
+    6. imagePreviewURL(currentImage)   register an immutable full-resolution preview asset
     7. Update window title
     8. extractFileMeta(filePath)      read format name + DPI from file header
     9. Return ImageInfo{Width, Height, Preview, Format, DPIX, DPIY, SuggestedCornerParams{MinDistance, MaxCorners}}
@@ -261,8 +261,12 @@ SkipCrop()
     require currentImage != nil
     warpedImage     = cloneImage(currentImage)
     selectedCorners = nil
-    return currentImage preview + dims + "Crop skipped — image ready to save"
+    return dims + "Crop skipped — image ready to save"
 ```
+
+`SkipCrop` deliberately does not publish a preview revision: its committed
+pixels are identical to the preview already on screen, so replacing the asset
+would only trigger a redundant low/full decode and redraw.
 
 `SkipCrop` is available in all four modes. The frontend sets mode-specific state to transition past phase 1 without performing a warp:
 
@@ -561,8 +565,17 @@ TouchUpApply(maskB64, patchSize, iterations) → ProcessResult{Message:"running"
         if cancelled  → EventsEmit("touchup-done", {cancelled:true})
         if error      → EventsEmit("touchup-done", {error})
         saveUndo(); setWorkingImage(out)
-        EventsEmit("touchup-done", {preview, message, width, height, descreenReset})
+        encode only the nonzero mask bounds as a transparent PNG replacement
+        EventsEmit("touchup-done", {patch, message, width, height, descreenReset})
 ```
+
+Touch-up does not register a new full-frame preview revision. The frontend
+positions the returned patch in full-image coordinates above the current base
+image and keeps it there across that revision's low-to-full promotion. Rapid
+touch-ups therefore add only their changed rectangles; neither base asset is
+re-encoded or swapped. The busy indicator remains active until the patch
+element fires `onLoad`. Any later non-touch-up preview revision contains the
+committed pixels and clears the temporary patch stack.
 
 ### PatchMatch (`patchmatch.go`, used via `patchMatchChunkedFill`)
 
@@ -633,14 +646,52 @@ applyWarpFill(img, oobMask)
     return img
 ```
 
-### imageToBase64
+### Preview asset transport
 
 ```
-imageToBase64(img)
-    if max(w, h) > 1600: resize to fit 1600px (preserving aspect)
-    encode as JPEG quality 85  ("data:image/jpeg;base64,...")
-    (fallback: PNG for very small images)
+imagePreviewURL(img)
+    register the immutable *image.NRGBA pointer as a numbered revision
+    return /__atropos/preview/{session}/{revision}.jpg through the normal Wails result
+
+GET /__atropos/preview/{session}/{revision}-low.jpg
+    resize to a 1600px maximum dimension and encode as JPEG quality 85
+    frontend keeps the prior revision visible until this placeholder is ready
+
+GET /__atropos/preview/{session}/{revision}.jpg
+    encode the full-resolution image once as JPEG quality 95
+    cache the encoded bytes in the bounded preview asset store
+    return immutable browser-cache headers
 ```
+
+Full-frame preview pixels never travel through the Wails JSON/base64 method
+bridge; only bounded touch-up replacement patches use an event data URI. The
+asset handler accepts only its random per-image-session token and numeric
+internal revision paths; it never exposes arbitrary filesystem paths. The
+session token rotates on full image-state resets, prevents a persistent WebView
+cache from confusing revisions across loads or application launches, and lets
+the frontend synchronously hide a prior image while a new image loads. Encodes are serialized so superseded browser
+requests can cancel while waiting instead of queueing every intermediate image
+from a rapid adjustment drag. `useProgressivePreview` promotes each revision
+from its low-resolution URL to its full-resolution URL after browser decode.
+Full-resolution promotion has a short settling delay. A newer revision cancels
+that timer and explicitly aborts superseded preload requests, so a rapid edit
+sequence remains at a consistent preview quality and sharpens only once after
+the sequence becomes idle. Backend processing and active canvas drags also
+pause and restart the promotion window, preventing a full encode from starting
+between a touch-up stroke and the arrival of its replacement patch.
+Touch-up commits are the exception to revision replacement: their transparent
+changed-pixel overlays apply equally to both variants of the existing revision,
+so they do not restart low/full loading or the settling timer.
+The frontend tracks the last revision whose visible `<img>` fired `onLoad`.
+User-facing busy state is `backend loading || preview presentation pending`, so
+spinners and core canvas/action guards remain active after a Go call returns until the
+new low-resolution revision is actually displayable. A full image-session
+change also keeps the opaque load overlay mounted through that first `onLoad`;
+later edits retain the prior visible revision underneath the header spinner.
+Canvas overlays, output dimensions, and the toolbar status are held at their
+last presented values during that interval. They advance with the preview in
+the `onLoad` render, preventing result metadata from describing an image that
+the user cannot see yet.
 
 ---
 
@@ -692,9 +743,13 @@ The `<img>` style:
 1. `handleImgLoad` — fires when the browser decodes a new image
 2. `ResizeObserver` on `canvasRef` — fires when the container is resized
 
-**Critical:** In the mode switch handler, `fitWidth` is recomputed directly from the Go response dimensions and container size before calling `setPreview`. Do not zero it and rely on `handleImgLoad`: if the preview src string is unchanged (same `currentImage`, deterministic JPEG encoding), the browser skips `onLoad`, leaving `fitWidth` at 0. With `fitWidth = 0`, the image falls back to percentage-based sizing that resolves circularly against the `inline-block` wrapper and collapses; the absolutely-positioned SVG overlay then floods the entire canvas.
+**Critical:** In the mode switch handler, `fitWidth` is recomputed directly from the Go response dimensions and container size before calling `setPreview`. Do not zero it and rely on `handleImgLoad`: if the preview URL is unchanged (the same immutable image pointer reuses its revision), the browser skips `onLoad`, leaving `fitWidth` at 0. With `fitWidth = 0`, the image falls back to percentage-based sizing that resolves circularly against the `inline-block` wrapper and collapses; the absolutely-positioned SVG overlay then floods the entire canvas.
 
 **Scroll-wheel zoom formula:** The wheel handler uses `imgRef.current.getBoundingClientRect()` to compute cursor position relative to the image's actual left/top edge. This correctly accounts for the `margin: auto` centering offset when the image is smaller than the canvas — using `canvasRect` instead would anchor zoom to the wrong point. `pendingScrollRef` is set inside the `setZoom` updater and applied synchronously in `useLayoutEffect([zoom])` after the DOM commit.
+
+The maximum zoom is image-aware: at least the historical 5× limit, or enough
+to render two CSS pixels per source pixel for a large full-resolution preview,
+with a defensive ceiling of 40×.
 
 **`overflow: hidden` + flex item:** The image wrapper div has both `overflow: hidden` (to clip SVG overlays) and `flexShrink: 0`. Without `flex-shrink: 0`, CSS flexbox would zero out `min-width: auto` on any flex item with non-`visible` overflow, silently collapsing the wrapper to fit the canvas and eliminating horizontal scroll.
 

@@ -26,6 +26,7 @@ import (
 // loaded. It does NOT touch originalImage, currentImage, imageLoaded, or
 // loadedFilePath — the caller is responsible for those.
 func (a *App) resetPipelineState() {
+	a.previewAssets.reset()
 	a.warpedImage = nil
 	a.levelsBaseImage = nil
 	a.descreenBaseImage = nil
@@ -101,16 +102,16 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	a.logf("LoadImage: clone took %v", time.Since(t2))
 
 	t3 := time.Now()
-	preview, err := imageToBase64(a.currentImage)
+	preview, err := a.imagePreviewURL(a.currentImage)
 	if err != nil {
-		msg := fmt.Sprintf("LoadImage: base64 error: %v", err)
+		msg := fmt.Sprintf("LoadImage: preview registration error: %v", err)
 		a.logf(msg)
 		return nil, errors.New(msg)
 	}
-	a.logf("LoadImage: preview took %v", time.Since(t3))
+	a.logf("LoadImage: preview registration took %v", time.Since(t3))
 
 	b := nrgba.Bounds()
-	a.logf("LoadImage: total %v, returning %dx%d, preview len=%d", time.Since(t0), b.Dx(), b.Dy(), len(preview))
+	a.logf("LoadImage: total %v, returning %dx%d, preview=%q", time.Since(t0), b.Dx(), b.Dy(), preview)
 
 	// Update window title with the filename
 	name := filepath.Base(req.FilePath)
@@ -333,16 +334,16 @@ func (a *App) LoadImageBytes(req LoadImageBytesRequest) (*ImageInfo, error) {
 	a.logf("LoadImageBytes: clone took %v", time.Since(t2))
 
 	t3 := time.Now()
-	preview, err := imageToBase64(a.currentImage)
+	preview, err := a.imagePreviewURL(a.currentImage)
 	if err != nil {
-		msg := fmt.Sprintf("LoadImageBytes: base64 error: %v", err)
+		msg := fmt.Sprintf("LoadImageBytes: preview registration error: %v", err)
 		a.logf(msg)
 		return nil, errors.New(msg)
 	}
-	a.logf("LoadImageBytes: preview took %v", time.Since(t3))
+	a.logf("LoadImageBytes: preview registration took %v", time.Since(t3))
 
 	b := nrgba.Bounds()
-	a.logf("LoadImageBytes: total %v, returning %dx%d, preview len=%d", time.Since(t0), b.Dx(), b.Dy(), len(preview))
+	a.logf("LoadImageBytes: total %v, returning %dx%d, preview=%q", time.Since(t0), b.Dx(), b.Dy(), preview)
 
 	runtime.WindowSetTitle(a.ctx, AppBaseTitle()+" — "+func() string {
 		if req.Name != "" {
@@ -377,7 +378,7 @@ func (a *App) RecropImage() (*ImageInfo, error) {
 	a.currentImage = cloneImage(src)
 	a.resetPipelineState()
 
-	preview, err := imageToBase64(a.currentImage)
+	preview, err := a.imagePreviewURL(a.currentImage)
 	if err != nil {
 		return nil, err
 	}

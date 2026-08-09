@@ -112,8 +112,8 @@ func TestDrawDisc_PreviewIsDataURI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(res.Preview, "data:image/") {
-		t.Fatal("preview is not a data URI")
+	if !strings.HasPrefix(res.Preview, previewAssetPathPrefix) {
+		t.Fatal("preview is not an asset URL")
 	}
 }
 
@@ -240,8 +240,8 @@ func TestResetDisc_PreviewIsDataURI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(res.Preview, "data:image/") {
-		t.Fatal("preview is not a data URI")
+	if !strings.HasPrefix(res.Preview, previewAssetPathPrefix) {
+		t.Fatal("preview is not an asset URL")
 	}
 }
 
@@ -278,8 +278,8 @@ func TestRotateDisc_ReturnsPreview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(res.Preview, "data:image/") {
-		t.Fatal("preview is not a data URI")
+	if !strings.HasPrefix(res.Preview, previewAssetPathPrefix) {
+		t.Fatal("preview is not an asset URL")
 	}
 }
 
@@ -329,8 +329,8 @@ func TestShiftDisc_ReturnsPreview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(res.Preview, "data:image/") {
-		t.Fatal("preview is not a data URI")
+	if !strings.HasPrefix(res.Preview, previewAssetPathPrefix) {
+		t.Fatal("preview is not an asset URL")
 	}
 }
 
@@ -516,7 +516,7 @@ func TestStraightEdgeRotate_ReturnsPreview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(res.Preview, "data:image/") {
-		t.Fatal("preview is not a data URI")
+	if !strings.HasPrefix(res.Preview, previewAssetPathPrefix) {
+		t.Fatal("preview is not an asset URL")
 	}
 }

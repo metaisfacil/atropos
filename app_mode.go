@@ -21,7 +21,7 @@ func (a *App) GetCleanPreview() (*ProcessResult, error) {
 	if img == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
-	preview, err := imageToBase64(img)
+	preview, err := a.imagePreviewURL(img)
 	if err != nil {
 		return nil, err
 	}

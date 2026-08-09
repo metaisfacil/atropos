@@ -163,7 +163,7 @@ func (a *App) Undo() (*ProcessResult, error) {
 	}
 
 	img := a.workingImage()
-	preview, err := imageToBase64(img)
+	preview, err := a.imagePreviewURL(img)
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +227,7 @@ func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
 
 	a.warpedImage = subImage(a.warpedImage, r)
 
-	preview, err := imageToBase64(a.warpedImage)
+	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +248,7 @@ func (a *App) Rotate(req RotateRequest) (*ProcessResult, error) {
 
 	a.warpedImage = rotate90(a.warpedImage, req.FlipCode)
 
-	preview, err := imageToBase64(a.warpedImage)
+	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +276,7 @@ func (a *App) ResizeImage(req ResizeRequest) (*ProcessResult, error) {
 	resized := resizeNRGBA(src, req.Width, req.Height)
 	a.setWorkingImage(resized)
 
-	preview, err := imageToBase64(resized)
+	preview, err := a.imagePreviewURL(resized)
 	if err != nil {
 		return nil, err
 	}
@@ -339,7 +339,7 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 		// Restore the pre-adjustment base so SetLevels sessions operate
 		// against the original image (allowing sliders to revert the effect).
 		a.levelsBaseImage = preLevelsBase
-		preview, err := imageToBase64(adjusted)
+		preview, err := a.imagePreviewURL(adjusted)
 		if err != nil {
 			return nil, err
 		}
@@ -378,7 +378,7 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 	a.warpedImage = adjusted
 	// Restore the pre-adjustment base for slider sessions as above.
 	a.levelsBaseImage = preLevelsBase
-	preview, err := imageToBase64(adjusted)
+	preview, err := a.imagePreviewURL(adjusted)
 	if err != nil {
 		return nil, err
 	}
@@ -455,7 +455,7 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 
 	if top == 0 && bottom == h && left == 0 && right == w {
 		a.logf("TrimBorders: no border strips detected")
-		preview, err := imageToBase64(img)
+		preview, err := a.imagePreviewURL(img)
 		if err != nil {
 			return nil, err
 		}
@@ -466,7 +466,7 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 	a.saveUndo()
 	a.warpedImage = subImage(img, image.Rect(left, top, right, bottom))
 
-	preview, err := imageToBase64(a.warpedImage)
+	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
 		return nil, err
 	}
@@ -523,7 +523,7 @@ func (a *App) Descreen(req DescreenRequest) (*ProcessResult, error) {
 	a.setWorkingImage(filtered)
 	a.descreenResultImage = filtered // track pointer so next call can detect external changes
 
-	preview, err := imageToBase64(filtered)
+	preview, err := a.imagePreviewURL(filtered)
 	if err != nil {
 		return nil, err
 	}
@@ -579,7 +579,7 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 		adjusted := applyLevels(a.levelsBaseImage, req.Black, req.White)
 		a.currentImage = adjusted
 		// Frontend renders corner dots via SVG; return plain preview.
-		preview, err := imageToBase64(adjusted)
+		preview, err := a.imagePreviewURL(adjusted)
 		if err != nil {
 			return nil, err
 		}
@@ -604,7 +604,7 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 	// Post-warp, non-disc path (corner / line mode after warp).
 	adjusted := applyLevels(a.levelsBaseImage, req.Black, req.White)
 	a.warpedImage = adjusted
-	preview, err := imageToBase64(adjusted)
+	preview, err := a.imagePreviewURL(adjusted)
 	if err != nil {
 		return nil, err
 	}

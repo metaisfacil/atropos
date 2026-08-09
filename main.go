@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 
@@ -96,7 +97,8 @@ func main() {
 		MinWidth:  1080,
 		MinHeight: 820,
 		AssetServer: &assetserver.Options{
-			Assets: assets,
+			Assets:  assets,
+			Handler: http.HandlerFunc(app.servePreviewAsset),
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 27, B: 27, A: 1},
 		DragAndDrop: &options.DragAndDrop{
