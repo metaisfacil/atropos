@@ -12,46 +12,154 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// patchMatchChunkedFill is like PatchMatchFill but crops to the bounding box
-// of the mask (+ margin) before calling PatchMatchFill, then composites only
-// the filled masked pixels back into a full-size clone of src.
+// patchMatchChunkedFill splits distant mask regions into independent jobs,
+// crops each to its bounding box (+ margin), then composites only filled mask
+// pixels back into a full-size clone of src.
 // A larger margin than IOPaint (256 px vs 128 px) is used so PatchMatch has
 // sufficient unmasked context from which to draw source patches.
 func patchMatchChunkedFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha,
 	patchSize, iterations int) (*image.NRGBA, error) {
 
 	const cropMargin = 256
-	crop, hasMask := maskBoundingBox(mask, cropMargin, src.Bounds())
-	if !hasMask {
-		return toNRGBA(src), nil
-	}
-
-	// Re-origin the sub-image so PatchMatchFill's (y*w+x)*4 indexing works.
-	cropSrc := toNRGBA(src.SubImage(crop))
-
-	// Translate mask to the same (0,0)-origin coordinate space.
-	cropMask := image.NewAlpha(image.Rect(0, 0, crop.Dx(), crop.Dy()))
-	for y := crop.Min.Y; y < crop.Max.Y; y++ {
-		for x := crop.Min.X; x < crop.Max.X; x++ {
-			cropMask.SetAlpha(x-crop.Min.X, y-crop.Min.Y, mask.AlphaAt(x, y))
-		}
-	}
-
-	filled, err := PatchMatchFill(ctx, cropSrc, cropMask, patchSize, iterations)
+	crops, err := patchMatchRegions(ctx, mask, cropMargin, src.Bounds())
 	if err != nil {
 		return nil, err
 	}
+	if len(crops) == 0 {
+		return toNRGBA(src), nil
+	}
 
-	// Composite filled pixels back into a full-size clone of src.
 	result := toNRGBA(src)
-	for y := crop.Min.Y; y < crop.Max.Y; y++ {
-		for x := crop.Min.X; x < crop.Max.X; x++ {
-			if mask.AlphaAt(x, y).A > 0 {
-				result.SetNRGBA(x, y, filled.NRGBAAt(x-crop.Min.X, y-crop.Min.Y))
+	for _, crop := range crops {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		// Re-origin both inputs for PatchMatchFill. The crop mask includes every
+		// marked pixel in the context window, not just the seed component, so a
+		// second damaged region can never be selected as valid source material.
+		cropSrc := toNRGBA(src.SubImage(crop))
+		cropMask := image.NewAlpha(image.Rect(0, 0, crop.Dx(), crop.Dy()))
+		for y := crop.Min.Y; y < crop.Max.Y; y++ {
+			for x := crop.Min.X; x < crop.Max.X; x++ {
+				cropMask.SetAlpha(x-crop.Min.X, y-crop.Min.Y, mask.AlphaAt(x, y))
+			}
+		}
+
+		filled, fillErr := PatchMatchFill(ctx, cropSrc, cropMask, patchSize, iterations)
+		if fillErr != nil {
+			return nil, fillErr
+		}
+
+		for y := crop.Min.Y; y < crop.Max.Y; y++ {
+			for x := crop.Min.X; x < crop.Max.X; x++ {
+				if mask.AlphaAt(x, y).A > 0 {
+					result.SetNRGBA(x, y, filled.NRGBAAt(x-crop.Min.X, y-crop.Min.Y))
+				}
 			}
 		}
 	}
 	return result, nil
+}
+
+// patchMatchRegions finds connected groups on a small occupancy grid. A
+// brush-width tile is precise enough for job scheduling while avoiding a
+// full-image component-label allocation. Expanded regions are merged whenever
+// their source-context windows overlap.
+func patchMatchRegions(ctx context.Context, mask *image.Alpha, margin int, bounds image.Rectangle) ([]image.Rectangle, error) {
+	if mask == nil || bounds.Empty() {
+		return nil, nil
+	}
+	const tileSize = 32
+	tilesX := (bounds.Dx() + tileSize - 1) / tileSize
+	tilesY := (bounds.Dy() + tileSize - 1) / tileSize
+	occupied := make([]bool, tilesX*tilesY)
+
+	scan := mask.Bounds().Intersect(bounds)
+	for y := scan.Min.Y; y < scan.Max.Y; y++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		for x := scan.Min.X; x < scan.Max.X; x++ {
+			if mask.AlphaAt(x, y).A != 0 {
+				tx := (x - bounds.Min.X) / tileSize
+				ty := (y - bounds.Min.Y) / tileSize
+				occupied[ty*tilesX+tx] = true
+			}
+		}
+	}
+
+	visited := make([]bool, len(occupied))
+	queue := make([]int, 0, 64)
+	var regions []image.Rectangle
+	for start, present := range occupied {
+		if !present || visited[start] {
+			continue
+		}
+		visited[start] = true
+		queue = append(queue[:0], start)
+		minTX, minTY := start%tilesX, start/tilesX
+		maxTX, maxTY := minTX, minTY
+
+		for len(queue) > 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			id := queue[len(queue)-1]
+			queue = queue[:len(queue)-1]
+			tx, ty := id%tilesX, id/tilesX
+			minTX, minTY = minInt(minTX, tx), minInt(minTY, ty)
+			maxTX, maxTY = maxInt(maxTX, tx), maxInt(maxTY, ty)
+			for dy := -1; dy <= 1; dy++ {
+				for dx := -1; dx <= 1; dx++ {
+					nx, ny := tx+dx, ty+dy
+					if nx < 0 || ny < 0 || nx >= tilesX || ny >= tilesY {
+						continue
+					}
+					next := ny*tilesX + nx
+					if occupied[next] && !visited[next] {
+						visited[next] = true
+						queue = append(queue, next)
+					}
+				}
+			}
+		}
+
+		region := image.Rect(
+			bounds.Min.X+minTX*tileSize-margin,
+			bounds.Min.Y+minTY*tileSize-margin,
+			bounds.Min.X+(maxTX+1)*tileSize+margin,
+			bounds.Min.Y+(maxTY+1)*tileSize+margin,
+		).Intersect(bounds)
+
+		// Merge transitively so no masked pixels in an overlapping source
+		// window are accidentally solved as separate jobs.
+		for i := 0; i < len(regions); {
+			if rectanglesOverlap(region, regions[i]) {
+				region = unionRectangle(region, regions[i])
+				regions = append(regions[:i], regions[i+1:]...)
+				i = 0
+				continue
+			}
+			i++
+		}
+		regions = append(regions, region)
+	}
+	return regions, nil
+}
+
+func rectanglesOverlap(a, b image.Rectangle) bool {
+	return a.Min.X < b.Max.X && b.Min.X < a.Max.X &&
+		a.Min.Y < b.Max.Y && b.Min.Y < a.Max.Y
+}
+
+func unionRectangle(a, b image.Rectangle) image.Rectangle {
+	return image.Rect(
+		minInt(a.Min.X, b.Min.X),
+		minInt(a.Min.Y, b.Min.Y),
+		maxInt(a.Max.X, b.Max.X),
+		maxInt(a.Max.Y, b.Max.Y),
+	)
 }
 
 // buildMask decodes a base64-encoded PNG mask (white/opaque = fill region) and
@@ -152,7 +260,7 @@ type touchUpDoneEvent struct {
 // so that CancelTouchup() can interrupt the in-flight operation at any time.
 // The fill result is delivered via the "touchup-done" event.
 func (a *App) TouchUpApply(maskB64 string, patchSize int, iterations int) (*ProcessResult, error) {
-	a.logf("TouchUpApply: backend=%q patchSize=%d iterations=%d", a.touchupBackend, patchSize, iterations)
+	a.logf("TouchUpApply: backend=%q patchSize=%d iterations=%d patchKernel=%s", a.touchupBackend, patchSize, iterations, pmActivePatchKernel())
 	if a.currentImage == nil && a.warpedImage == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}

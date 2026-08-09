@@ -2,421 +2,646 @@ package main
 
 import (
 	"context"
+	"errors"
 	"image"
 	"image/draw"
 	"math"
-	"math/rand"
 	"runtime"
 	"sync"
-	"time"
 )
 
-// pt is a 2-D integer point used throughout the PatchMatch algorithm.
-type pt struct{ x, y int }
-
-// PatchMatchFill fills the region marked in mask (alpha > 0) using a
-// PatchMatch nearest-neighbour field.  patchSize should be odd (e.g. 7).
-// iterations controls the number of forward/reverse propagation passes per
-// EM step.  The function runs numEM EM iterations: each step refines the
-// reconstruction using the previous step's output as additional context,
-// letting good matches propagate from the boundary into large holes.
+// PatchMatchFill fills mask from patches elsewhere in src.
+//
+// The implementation follows the same broad shape as production content-aware
+// fill engines: a coarse-to-fine image pyramid, a persistent nearest-neighbour
+// field (NNF), propagation/random search, and confidence-weighted patch voting.
 func PatchMatchFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha, patchSize, iterations int) (*image.NRGBA, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if src == nil {
+		return nil, errors.New("PatchMatch: nil source image")
+	}
+
+	source := normalizeNRGBA(src)
+	w, h := source.Bounds().Dx(), source.Bounds().Dy()
+	if w == 0 || h == 0 {
+		return source, nil
+	}
+	fillMask := normalizeAlpha(mask, w, h)
+	if maskBounds(fillMask).Empty() {
+		return source, nil
+	}
+
+	if patchSize < 3 {
+		patchSize = 3
+	}
 	if patchSize%2 == 0 {
 		patchSize++
 	}
-	bounds := src.Bounds()
-	w := bounds.Dx()
-	h := bounds.Dy()
-	half := patchSize / 2
-
-	alphaAt := func(x, y int) uint8 {
-		if mask == nil {
-			return 0
-		}
-		mb := mask.Bounds()
-		if x < mb.Min.X || y < mb.Min.Y || x >= mb.Max.X || y >= mb.Max.Y {
-			return 0
-		}
-		return mask.Pix[(y-mb.Min.Y)*mask.Stride+(x-mb.Min.X)]
+	maxPatch := minInt(w, h)
+	if maxPatch%2 == 0 {
+		maxPatch--
+	}
+	if maxPatch < 1 {
+		return source, nil
+	}
+	if patchSize > maxPatch {
+		patchSize = maxPatch
+	}
+	if iterations < 1 {
+		iterations = 1
 	}
 
-	inBounds := func(x, y int) bool {
-		return x >= half && y >= half && x < w-half && y < h-half
-	}
+	srcPyramid, maskPyramid := buildPatchPyramid(source, fillMask, patchSize)
+	var parent *pmSolution
 
-	// ── Collect targets and compute mask bounding box ────────────────────────
-	var targets []pt
-	bbMinX, bbMinY, bbMaxX, bbMaxY := w, h, 0, 0
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			if alphaAt(x, y) > 0 {
-				targets = append(targets, pt{x, y})
-				if x < bbMinX {
-					bbMinX = x
-				}
-				if y < bbMinY {
-					bbMinY = y
-				}
-				if x > bbMaxX {
-					bbMaxX = x
-				}
-				if y > bbMaxY {
-					bbMaxY = y
-				}
-			}
-		}
-	}
-	if len(targets) == 0 {
-		dst := image.NewNRGBA(bounds)
-		draw.Draw(dst, bounds, src, bounds.Min, draw.Src)
-		return dst, nil
-	}
-
-	// Active region: mask bbox expanded by patchSize so propagation can reach
-	// all masked pixels from their unmasked neighbours.
-	ax0 := clamp(bbMinX-patchSize, half, w-half-1)
-	ay0 := clamp(bbMinY-patchSize, half, h-half-1)
-	ax1 := clamp(bbMaxX+patchSize, half, w-half-1)
-	ay1 := clamp(bbMaxY+patchSize, half, h-half-1)
-
-	// ── Build valid-source set ────────────────────────────────────────────────
-	// A source patch is valid if none of its pixels are originally masked.
-	validSrc := make([]bool, w*h)
-	var sources []pt
-	for y := half; y < h-half; y++ {
-		for x := half; x < w-half; x++ {
-			ok := true
-		outerLoop:
-			for dy := -half; dy <= half; dy++ {
-				for dx := -half; dx <= half; dx++ {
-					if alphaAt(x+dx, y+dy) > 0 {
-						ok = false
-						break outerLoop
-					}
-				}
-			}
-			if ok {
-				validSrc[y*w+x] = true
-				sources = append(sources, pt{x, y})
-			}
-		}
-	}
-	if len(sources) == 0 {
-		dst := image.NewNRGBA(bounds)
-		draw.Draw(dst, bounds, src, bounds.Min, draw.Src)
-		return dst, nil
-	}
-
-	rand.Seed(time.Now().UnixNano()) //nolint:staticcheck
-
-	// ── Working image and resolved map ───────────────────────────────────────
-	// working holds the current best estimate of the full image.
-	// Masked pixels start as zeros (unresolved); they are filled in by the
-	// reconstruction step and used as context in subsequent EM iterations.
-	working := image.NewNRGBA(bounds)
-	draw.Draw(working, bounds, src, bounds.Min, draw.Src)
-	for _, t := range targets {
-		idx := (t.y*w + t.x) * 4
-		working.Pix[idx] = 0
-		working.Pix[idx+1] = 0
-		working.Pix[idx+2] = 0
-		working.Pix[idx+3] = 0
-	}
-
-	// resolved[y*w+x] is true when the pixel value in working is meaningful.
-	// Initially only unmasked pixels are resolved.
-	resolved := make([]bool, w*h)
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			if alphaAt(x, y) == 0 {
-				resolved[y*w+x] = true
-			}
-		}
-	}
-
-	maxDim := w
-	if h > maxDim {
-		maxDim = h
-	}
-
-	nnf := make([]pt, w*h)
-	cost := make([]float64, w*h)
-
-	// ── EM loop ───────────────────────────────────────────────────────────────
-	// Each EM iteration:
-	//   E-step: compute nearest-neighbour field using current working image
-	//   M-step: reconstruct masked pixels via similarity-weighted patch voting
-	//
-	// After iteration 0, all masked pixels have initial estimates in working.
-	// Subsequent iterations benefit from this context: the patchSSD can compare
-	// full patches (not just the unmasked fringe), enabling better propagation
-	// into the interior of large holes.
-	const numEM = 3
-
-	for emIt := 0; emIt < numEM; emIt++ {
+	for levelIndex := len(srcPyramid) - 1; levelIndex >= 0; levelIndex-- {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		level := preparePMLevel(srcPyramid[levelIndex], maskPyramid[levelIndex], patchSize)
+		if len(level.sources) == 0 {
+			// A tiny coarse level can lose every legal source patch. The next
+			// finer level still has useful source data, so simply start there.
+			continue
+		}
 
-		// patchSSD compares working[target patch] vs src[source patch].
-		// Target pixels not yet resolved are skipped (NaN treatment).
-		// Returns MaxFloat64 when no comparable pixels exist.
-		//
-		// Uses int64 accumulation (exact for uint8 differences) and early
-		// termination: since SSD terms are non-negative, if the running sum s
-		// already satisfies s >= cutoff*patchArea the final average cannot beat
-		// cutoff — so we bail immediately.  This produces the same result as
-		// the naive loop because tryImprove only cares whether the return value
-		// is less than *bestCost; both MaxFloat64 and the true cost reject the
-		// candidate when they are >= bestCost.
-		patchArea := patchSize * patchSize
-		patchSSD := func(tx, ty, sx, sy int, cutoff float64) float64 {
-			const maxPerPx = 3 * 255 * 255
-			budget := int64(maxPerPx)*int64(patchArea) + 1 // safe default
-			if cutoff < float64(int64(maxPerPx)*int64(patchArea)) {
-				budget = int64(cutoff*float64(patchArea)) + 1
+		working := seedPMWorking(level, parent)
+		rounds := 1
+		if parent == nil {
+			// The coarsest level needs a second EM round because it has no
+			// lower-frequency estimate to start from.
+			rounds = 2
+		}
+
+		var nnf []pmPoint
+		var costs []float32
+		var err error
+		for round := 0; round < rounds; round++ {
+			nnf, costs, err = solvePMLevel(ctx, level, working, parent, iterations, round)
+			if err != nil {
+				return nil, err
 			}
-			var s int64
-			var count int
-			for dy := -half; dy <= half; dy++ {
-				for dx := -half; dx <= half; dx++ {
-					tpx, tpy := tx+dx, ty+dy
-					if !resolved[tpy*w+tpx] {
-						continue
-					}
-					tp := working.Pix[(tpy*w+tpx)*4:]
-					sp := src.Pix[((sy+dy)*w+(sx+dx))*4:]
-					dr := int(tp[0]) - int(sp[0])
-					dg := int(tp[1]) - int(sp[1])
-					db := int(tp[2]) - int(sp[2])
-					s += int64(dr*dr + dg*dg + db*db)
-					count++
-					if s >= budget {
-						return math.MaxFloat64
-					}
+			working, err = reconstructPMLevel(ctx, level, working, nnf, costs)
+			if err != nil {
+				return nil, err
+			}
+			// Once reconstruction has produced an estimate, refine against it
+			// rather than repeatedly consulting the coarser NNF.
+			parent = nil
+		}
+
+		parent = &pmSolution{
+			level:   level,
+			working: working,
+			nnf:     nnf,
+		}
+	}
+
+	if parent == nil {
+		// Preserve the original image when the mask covers every possible
+		// source patch. There is no defensible content-aware estimate to make.
+		return source, nil
+	}
+	return parent.working, nil
+}
+
+type pmPoint struct {
+	x int32
+	y int32
+}
+
+type pmFeature struct {
+	gx float32
+	gy float32
+}
+
+type pmLevel struct {
+	src        *image.NRGBA
+	mask       *image.Alpha
+	w          int
+	h          int
+	patchSize  int
+	half       int
+	active     image.Rectangle
+	valid      []bool
+	sources    []pmPoint
+	srcFeature []pmFeature
+	srcPlanes  pmPackedPlanes
+	confidence []float32
+	confStride int
+	confSum    []float32
+}
+
+type pmSolution struct {
+	level   *pmLevel
+	working *image.NRGBA
+	nnf     []pmPoint
+}
+
+func preparePMLevel(src *image.NRGBA, mask *image.Alpha, patchSize int) *pmLevel {
+	w, h := src.Bounds().Dx(), src.Bounds().Dy()
+	if patchSize > minInt(w, h) {
+		patchSize = minInt(w, h)
+		if patchSize%2 == 0 {
+			patchSize--
+		}
+	}
+	if patchSize < 1 {
+		patchSize = 1
+	}
+	half := patchSize / 2
+	srcPlanes := packPMPixels(src)
+	level := &pmLevel{
+		src:        src,
+		mask:       mask,
+		w:          w,
+		h:          h,
+		patchSize:  patchSize,
+		half:       half,
+		valid:      make([]bool, w*h),
+		srcFeature: buildPMFeaturesPacked(&srcPlanes, w, h),
+		srcPlanes:  srcPlanes,
+	}
+	level.confidence, level.confStride, level.confSum = packPMConfidence(mask)
+
+	integral := maskedIntegral(mask)
+	for y := half; y < h-half; y++ {
+		for x := half; x < w-half; x++ {
+			if integralRectSum(integral, w+1, x-half, y-half, x+half+1, y+half+1) == 0 {
+				level.valid[y*w+x] = true
+				level.sources = append(level.sources, pmPoint{int32(x), int32(y)})
+			}
+		}
+	}
+
+	// At very coarse levels, max-pooling the mask can make a full patch-free
+	// source impossible. Allow unmasked centers there; finer levels restore the
+	// strict full-patch constraint.
+	if len(level.sources) == 0 {
+		for y := half; y < h-half; y++ {
+			for x := half; x < w-half; x++ {
+				if mask.Pix[y*mask.Stride+x] == 0 {
+					level.valid[y*w+x] = true
+					level.sources = append(level.sources, pmPoint{int32(x), int32(y)})
 				}
 			}
-			if count == 0 {
-				return math.MaxFloat64
-			}
-			return float64(s) / float64(count)
 		}
+	}
 
-		// Initialise NNF: identity for valid-source pixels, random otherwise.
-		// The identity constraint anchors the known region so propagation
-		// carries correct offsets into the masked area (same idea as the C++
-		// reference: "force the link between unmasked patches in source/target").
-		for i := range cost {
-			cost[i] = math.MaxFloat64
-		}
-		for y := ay0; y <= ay1; y++ {
-			for x := ax0; x <= ax1; x++ {
-				if validSrc[y*w+x] {
-					nnf[y*w+x] = pt{x, y}
-					cost[y*w+x] = 0
-				} else {
-					s := sources[rand.Intn(len(sources))]
-					nnf[y*w+x] = s
-					cost[y*w+x] = patchSSD(x, y, s.x, s.y, math.MaxFloat64)
+	bounds := maskBounds(mask)
+	if !bounds.Empty() {
+		padding := patchSize * 2
+		level.active = image.Rect(
+			maxInt(half, bounds.Min.X-padding),
+			maxInt(half, bounds.Min.Y-padding),
+			minInt(w-half, bounds.Max.X+padding),
+			minInt(h-half, bounds.Max.Y+padding),
+		)
+	}
+	return level
+}
+
+func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, parent *pmSolution, iterations, round int) ([]pmPoint, []float32, error) {
+	size := level.w * level.h
+	current := make([]pmPoint, size)
+	next := make([]pmPoint, size)
+	currentCost := make([]float32, size)
+	nextCost := make([]float32, size)
+	targetPlanes := packPMPixels(working)
+	targetFeature := buildPMFeaturesPacked(&targetPlanes, level.w, level.h)
+
+	err := parallelRows(ctx, level.active.Min.Y, level.active.Max.Y, func(y int) {
+		for x := level.active.Min.X; x < level.active.Max.X; x++ {
+			id := y*level.w + x
+			var candidate pmPoint
+			switch {
+			case level.valid[id]:
+				candidate = pmPoint{int32(x), int32(y)}
+			case parent != nil && len(parent.nnf) != 0:
+				px := minInt(parent.level.w-1, x*parent.level.w/level.w)
+				py := minInt(parent.level.h-1, y*parent.level.h/level.h)
+				coarse := parent.nnf[py*parent.level.w+px]
+				candidate = pmPoint{
+					x: int32(int(coarse.x) * level.w / parent.level.w),
+					y: int32(int(coarse.y) * level.h / parent.level.h),
 				}
+				if !validPMPoint(level, candidate) {
+					candidate = hashedPMSource(level, x, y, round)
+				}
+			default:
+				candidate = hashedPMSource(level, x, y, round)
 			}
+			current[id] = candidate
+			currentCost[id] = pmPatchCost(level, &targetPlanes, targetFeature, x, y, candidate, float32(math.Inf(1)))
 		}
+	})
+	if err != nil {
+		return nil, nil, err
+	}
 
-		tryImprove := func(tx, ty, cx, cy int, best *pt, bestCost *float64) {
-			if !inBounds(cx, cy) || !validSrc[cy*w+cx] {
+	for pass := 0; pass < iterations; pass++ {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		err = parallelRows(ctx, level.active.Min.Y, level.active.Max.Y, func(y int) {
+			for x := level.active.Min.X; x < level.active.Max.X; x++ {
+				if x&15 == 0 && ctx.Err() != nil {
+					return
+				}
+				id := y*level.w + x
+				best := current[id]
+				bestCost := currentCost[id]
+
+				try := func(candidate pmPoint) {
+					if !validPMPoint(level, candidate) {
+						return
+					}
+					cost := pmPatchCost(level, &targetPlanes, targetFeature, x, y, candidate, bestCost)
+					if cost < bestCost {
+						best = candidate
+						bestCost = cost
+					}
+				}
+
+				// Jacobi propagation makes the entire pass safe to parallelize.
+				// Translating the neighbour's match preserves its displacement.
+				if x > level.active.Min.X {
+					q := current[id-1]
+					try(pmPoint{q.x + 1, q.y})
+				}
+				if x+1 < level.active.Max.X {
+					q := current[id+1]
+					try(pmPoint{q.x - 1, q.y})
+				}
+				if y > level.active.Min.Y {
+					q := current[id-level.w]
+					try(pmPoint{q.x, q.y + 1})
+				}
+				if y+1 < level.active.Max.Y {
+					q := current[id+level.w]
+					try(pmPoint{q.x, q.y - 1})
+				}
+
+				state := pmHash(uint32(x), uint32(y), uint32(pass+round*iterations))
+				for radius := maxInt(level.w, level.h); radius >= 1; radius /= 2 {
+					state = pmNext(state)
+					dx := int(state%uint32(2*radius+1)) - radius
+					state = pmNext(state)
+					dy := int(state%uint32(2*radius+1)) - radius
+					try(pmPoint{best.x + int32(dx), best.y + int32(dy)})
+
+					// A global proposal prevents a large hole from becoming
+					// trapped in a locally coherent but semantically poor basin.
+					state = pmNext(state)
+					try(level.sources[int(state%uint32(len(level.sources)))])
+				}
+
+				next[id] = best
+				nextCost[id] = bestCost
+			}
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		current, next = next, current
+		currentCost, nextCost = nextCost, currentCost
+	}
+	return current, currentCost, nil
+}
+
+func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf []pmPoint, costs []float32) (*image.NRGBA, error) {
+	out := cloneNRGBA(previous)
+	spatial := make([]float32, level.patchSize)
+	for i := range spatial {
+		d := float32(i - level.half)
+		spatial[i] = 1 / (1 + d*d*0.18)
+	}
+
+	err := parallelRows(ctx, 0, level.h, func(y int) {
+		for x := 0; x < level.w; x++ {
+			if x&15 == 0 && ctx.Err() != nil {
 				return
 			}
-			c := patchSSD(tx, ty, cx, cy, *bestCost)
-			if c < *bestCost {
-				*bestCost = c
-				*best = pt{cx, cy}
-			}
-		}
-
-		randomSearch := func(tx, ty int, best *pt, bestCost *float64) {
-			r := maxDim
-			for r >= 1 {
-				minx := clamp(best.x-r, half, w-half-1)
-				maxx := clamp(best.x+r, half, w-half-1)
-				miny := clamp(best.y-r, half, h-half-1)
-				maxy := clamp(best.y+r, half, h-half-1)
-				if maxx > minx && maxy > miny {
-					rx := rand.Intn(maxx-minx+1) + minx
-					ry := rand.Intn(maxy-miny+1) + miny
-					tryImprove(tx, ty, rx, ry, best, bestCost)
-				}
-				r /= 2
-			}
-		}
-
-		// ── PatchMatch propagation iterations ────────────────────────────────
-		// Alternating forward/reverse passes.  Skip validSrc pixels — they hold
-		// the identity mapping and need no improvement.
-		for it := 0; it < iterations; it++ {
-			if it%2 == 0 {
-				// Forward pass: top-left → bottom-right
-				for y := ay0; y <= ay1; y++ {
-					for x := ax0; x <= ax1; x++ {
-						if validSrc[y*w+x] {
-							continue
-						}
-						idx := y*w + x
-						best := nnf[idx]
-						bestCost := cost[idx]
-						if x > ax0 {
-							ns := nnf[y*w+(x-1)]
-							tryImprove(x, y, ns.x+1, ns.y, &best, &bestCost)
-						}
-						if y > ay0 {
-							ns := nnf[(y-1)*w+x]
-							tryImprove(x, y, ns.x, ns.y+1, &best, &bestCost)
-						}
-						randomSearch(x, y, &best, &bestCost)
-						nnf[idx] = best
-						cost[idx] = bestCost
-					}
-				}
-			} else {
-				// Reverse pass: bottom-right → top-left
-				for y := ay1; y >= ay0; y-- {
-					for x := ax1; x >= ax0; x-- {
-						if validSrc[y*w+x] {
-							continue
-						}
-						idx := y*w + x
-						best := nnf[idx]
-						bestCost := cost[idx]
-						if x < ax1 {
-							ns := nnf[y*w+(x+1)]
-							tryImprove(x, y, ns.x-1, ns.y, &best, &bestCost)
-						}
-						if y < ay1 {
-							ns := nnf[(y+1)*w+x]
-							tryImprove(x, y, ns.x, ns.y-1, &best, &bestCost)
-						}
-						randomSearch(x, y, &best, &bestCost)
-						nnf[idx] = best
-						cost[idx] = bestCost
-					}
-				}
-			}
-		}
-
-		// ── Similarity-weighted patch-voting reconstruction (M-step) ─────────
-		// Similarity weights are precomputed once per active-region pixel so
-		// the exp() call is not repeated inside the inner reconstruction loop.
-		var costSum float64
-		var costCount int
-		for y := ay0; y <= ay1; y++ {
-			for x := ax0; x <= ax1; x++ {
-				if !validSrc[y*w+x] {
-					c := cost[y*w+x]
-					if c < math.MaxFloat64 {
-						costSum += c
-						costCount++
-					}
-				}
-			}
-		}
-		costNorm := 1.0
-		if costCount > 0 && costSum > 0 {
-			costNorm = costSum / float64(costCount)
-		}
-
-		simWeights := make([]float64, w*h)
-		for y := ay0; y <= ay1; y++ {
-			for x := ax0; x <= ax1; x++ {
-				c := cost[y*w+x]
-				if c < math.MaxFloat64 {
-					simWeights[y*w+x] = math.Exp(-c / costNorm)
-				}
-			}
-		}
-
-		// Pull-based parallel reconstruction: each goroutine owns a disjoint
-		// chunk of target (masked) pixels and writes only to those pixels.
-		// For each masked pixel p, we gather votes from every patch centre q
-		// whose footprint includes p — this is the set of q within ±half of p.
-		// Reads are from nnf, simWeights, src (all immutable here); writes go
-		// to disjoint slices of working.Pix.  No accumulators, no data races.
-		//
-		// Mathematical equivalence with the push loop above: the set of
-		// (centre q, output pixel p) pairs visited is identical; the weights
-		// and source colours are identical; only the summation order differs
-		// (which for float64 can shift results by ≤ 1 ULP in the final uint8).
-		numCPU := runtime.NumCPU()
-		chunkSize := (len(targets) + numCPU - 1) / numCPU
-		var wg sync.WaitGroup
-		for worker := 0; worker < numCPU; worker++ {
-			start := worker * chunkSize
-			end := start + chunkSize
-			if end > len(targets) {
-				end = len(targets)
-			}
-			if start >= end {
+			maskAlpha := level.mask.Pix[y*level.mask.Stride+x]
+			if maskAlpha == 0 {
 				continue
 			}
-			wg.Add(1)
-			go func(tStart, tEnd int) {
-				defer wg.Done()
-				for ti := tStart; ti < tEnd; ti++ {
-					t := targets[ti]
-					px, py := t.x, t.y
-					var accR, accG, accB, accWt float64
-					for qy := py - half; qy <= py+half; qy++ {
-						if qy < ay0 || qy > ay1 {
-							continue
-						}
-						for qx := px - half; qx <= px+half; qx++ {
-							if qx < ax0 || qx > ax1 {
-								continue
-							}
-							simW := simWeights[qy*w+qx]
-							if simW < 1e-10 {
-								continue
-							}
-							s := nnf[qy*w+qx]
-							sx2 := s.x + (px - qx)
-							sy2 := s.y + (py - qy)
-							if sx2 < 0 || sy2 < 0 || sx2 >= w || sy2 >= h {
-								continue
-							}
-							sp := src.Pix[(sy2*w+sx2)*4:]
-							accR += simW * float64(sp[0])
-							accG += simW * float64(sp[1])
-							accB += simW * float64(sp[2])
-							accWt += simW
-						}
+
+			minCX := maxInt(level.active.Min.X, x-level.half)
+			maxCX := minInt(level.active.Max.X-1, x+level.half)
+			minCY := maxInt(level.active.Min.Y, y-level.half)
+			maxCY := minInt(level.active.Max.Y-1, y+level.half)
+
+			var sumR, sumG, sumB, sumAlpha, sumWeight float32
+			for cy := minCY; cy <= maxCY; cy++ {
+				for cx := minCX; cx <= maxCX; cx++ {
+					id := cy*level.w + cx
+					match := nnf[id]
+					sx := int(match.x) + x - cx
+					sy := int(match.y) + y - cy
+					if sx < 0 || sy < 0 || sx >= level.w || sy >= level.h {
+						continue
 					}
-					if accWt > 0 {
-						idx := py*w + px
-						working.Pix[idx*4+0] = uint8(accR / accWt)
-						working.Pix[idx*4+1] = uint8(accG / accWt)
-						working.Pix[idx*4+2] = uint8(accB / accWt)
-						working.Pix[idx*4+3] = 255
-						resolved[idx] = true
+					weight := spatial[x-cx+level.half] * spatial[y-cy+level.half]
+					weight /= 1 + costs[id]/1024
+					si := sy*level.src.Stride + sx*4
+					alpha := float32(level.src.Pix[si+3])
+					alphaWeight := weight * alpha
+					sumR += alphaWeight * float32(level.src.Pix[si])
+					sumG += alphaWeight * float32(level.src.Pix[si+1])
+					sumB += alphaWeight * float32(level.src.Pix[si+2])
+					sumAlpha += alphaWeight
+					sumWeight += weight
+				}
+			}
+
+			var fillR, fillG, fillB, fillA float32
+			if sumWeight > 0 && sumAlpha > 0 {
+				fillR = sumR / sumAlpha
+				fillG = sumG / sumAlpha
+				fillB = sumB / sumAlpha
+				fillA = sumAlpha / sumWeight
+			} else {
+				fallback := hashedPMSource(level, x, y, 0)
+				si := int(fallback.y)*level.src.Stride + int(fallback.x)*4
+				fillR = float32(level.src.Pix[si])
+				fillG = float32(level.src.Pix[si+1])
+				fillB = float32(level.src.Pix[si+2])
+				fillA = float32(level.src.Pix[si+3])
+			}
+
+			si := y*level.src.Stride + x*4
+			oi := y*out.Stride + x*4
+			a := float32(maskAlpha) / 255
+			invA := 1 - a
+			out.Pix[oi] = byte(clampFloat32(float32(level.src.Pix[si])*invA + fillR*a))
+			out.Pix[oi+1] = byte(clampFloat32(float32(level.src.Pix[si+1])*invA + fillG*a))
+			out.Pix[oi+2] = byte(clampFloat32(float32(level.src.Pix[si+2])*invA + fillB*a))
+			out.Pix[oi+3] = byte(clampFloat32(float32(level.src.Pix[si+3])*invA + fillA*a))
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func seedPMWorking(level *pmLevel, parent *pmSolution) *image.NRGBA {
+	if parent == nil {
+		return cloneNRGBA(level.src)
+	}
+	out := cloneNRGBA(level.src)
+	weights := [...]int{1, 4, 6, 4, 1}
+	for y := 0; y < level.h; y++ {
+		for x := 0; x < level.w; x++ {
+			maskAlpha := level.mask.Pix[y*level.mask.Stride+x]
+			if maskAlpha == 0 {
+				continue
+			}
+			px := (2*x + 1) * parent.level.w / (2 * level.w)
+			py := (2*y + 1) * parent.level.h / (2 * level.h)
+			var rgba [4]int
+			var total int
+			for ky := -2; ky <= 2; ky++ {
+				sy := clampInt(py+ky, 0, parent.level.h-1)
+				for kx := -2; kx <= 2; kx++ {
+					sx := clampInt(px+kx, 0, parent.level.w-1)
+					weight := weights[ky+2] * weights[kx+2]
+					i := sy*parent.working.Stride + sx*4
+					for channel := 0; channel < 4; channel++ {
+						rgba[channel] += int(parent.working.Pix[i+channel]) * weight
+					}
+					total += weight
+				}
+			}
+			si := y*level.src.Stride + x*4
+			oi := y*out.Stride + x*4
+			a := int(maskAlpha)
+			for channel := 0; channel < 4; channel++ {
+				estimate := rgba[channel] / total
+				out.Pix[oi+channel] = byte((int(level.src.Pix[si+channel])*(255-a) + estimate*a + 127) / 255)
+			}
+		}
+	}
+	return out
+}
+
+func buildPatchPyramid(src *image.NRGBA, mask *image.Alpha, patchSize int) ([]*image.NRGBA, []*image.Alpha) {
+	images := []*image.NRGBA{src}
+	masks := []*image.Alpha{mask}
+	minSide := maxInt(32, patchSize*4)
+	const maxLevels = 7
+	for len(images) < maxLevels {
+		last := images[len(images)-1]
+		w, h := last.Bounds().Dx(), last.Bounds().Dy()
+		if minInt(w, h) <= minSide {
+			break
+		}
+		nextW := maxInt(1, (w+1)/2)
+		nextH := maxInt(1, (h+1)/2)
+		images = append(images, downsampleNRGBA(last, nextW, nextH))
+		masks = append(masks, downsampleMask(masks[len(masks)-1], nextW, nextH))
+	}
+	return images, masks
+}
+
+func downsampleNRGBA(src *image.NRGBA, w, h int) *image.NRGBA {
+	out := image.NewNRGBA(image.Rect(0, 0, w, h))
+	srcW, srcH := src.Bounds().Dx(), src.Bounds().Dy()
+	for y := 0; y < h; y++ {
+		y0 := y * srcH / h
+		y1 := maxInt(y0+1, (y+1)*srcH/h)
+		for x := 0; x < w; x++ {
+			x0 := x * srcW / w
+			x1 := maxInt(x0+1, (x+1)*srcW/w)
+			var premulR, premulG, premulB, alpha, count int
+			for sy := y0; sy < y1; sy++ {
+				for sx := x0; sx < x1; sx++ {
+					i := sy*src.Stride + sx*4
+					a := int(src.Pix[i+3])
+					premulR += int(src.Pix[i]) * a
+					premulG += int(src.Pix[i+1]) * a
+					premulB += int(src.Pix[i+2]) * a
+					alpha += a
+					count++
+				}
+			}
+			i := y*out.Stride + x*4
+			if alpha > 0 {
+				out.Pix[i] = byte(premulR / alpha)
+				out.Pix[i+1] = byte(premulG / alpha)
+				out.Pix[i+2] = byte(premulB / alpha)
+			}
+			out.Pix[i+3] = byte(alpha / count)
+		}
+	}
+	return out
+}
+
+func downsampleMask(src *image.Alpha, w, h int) *image.Alpha {
+	out := image.NewAlpha(image.Rect(0, 0, w, h))
+	srcW, srcH := src.Bounds().Dx(), src.Bounds().Dy()
+	for y := 0; y < h; y++ {
+		y0 := y * srcH / h
+		y1 := maxInt(y0+1, (y+1)*srcH/h)
+		for x := 0; x < w; x++ {
+			x0 := x * srcW / w
+			x1 := maxInt(x0+1, (x+1)*srcW/w)
+			var maximum byte
+			for sy := y0; sy < y1; sy++ {
+				for sx := x0; sx < x1; sx++ {
+					if value := src.Pix[sy*src.Stride+sx]; value > maximum {
+						maximum = value
 					}
 				}
-			}(start, end)
-		}
-		wg.Wait()
-	}
-
-	// ── Build output ──────────────────────────────────────────────────────────
-	dst := image.NewNRGBA(bounds)
-	draw.Draw(dst, bounds, src, bounds.Min, draw.Src)
-	for _, t := range targets {
-		idx := t.y*w + t.x
-		if resolved[idx] {
-			dst.Pix[idx*4+0] = working.Pix[idx*4+0]
-			dst.Pix[idx*4+1] = working.Pix[idx*4+1]
-			dst.Pix[idx*4+2] = working.Pix[idx*4+2]
-			dst.Pix[idx*4+3] = 255
+			}
+			out.Pix[y*out.Stride+x] = maximum
 		}
 	}
+	return out
+}
 
-	return dst, nil
+func maskedIntegral(mask *image.Alpha) []int {
+	w, h := mask.Bounds().Dx(), mask.Bounds().Dy()
+	integral := make([]int, (w+1)*(h+1))
+	for y := 0; y < h; y++ {
+		rowSum := 0
+		for x := 0; x < w; x++ {
+			if mask.Pix[y*mask.Stride+x] != 0 {
+				rowSum++
+			}
+			integral[(y+1)*(w+1)+x+1] = integral[y*(w+1)+x+1] + rowSum
+		}
+	}
+	return integral
+}
+
+func integralRectSum(integral []int, stride, x0, y0, x1, y1 int) int {
+	return integral[y1*stride+x1] - integral[y0*stride+x1] -
+		integral[y1*stride+x0] + integral[y0*stride+x0]
+}
+
+func maskBounds(mask *image.Alpha) image.Rectangle {
+	w, h := mask.Bounds().Dx(), mask.Bounds().Dy()
+	minX, minY, maxX, maxY := w, h, 0, 0
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if mask.Pix[y*mask.Stride+x] == 0 {
+				continue
+			}
+			minX = minInt(minX, x)
+			minY = minInt(minY, y)
+			maxX = maxInt(maxX, x+1)
+			maxY = maxInt(maxY, y+1)
+		}
+	}
+	if minX == w {
+		return image.Rectangle{}
+	}
+	return image.Rect(minX, minY, maxX, maxY)
+}
+
+func validPMPoint(level *pmLevel, p pmPoint) bool {
+	x, y := int(p.x), int(p.y)
+	return x >= 0 && y >= 0 && x < level.w && y < level.h && level.valid[y*level.w+x]
+}
+
+func hashedPMSource(level *pmLevel, x, y, salt int) pmPoint {
+	state := pmHash(uint32(x), uint32(y), uint32(salt))
+	return level.sources[int(state%uint32(len(level.sources)))]
+}
+
+func pmHash(x, y, salt uint32) uint32 {
+	value := x*0x9e3779b1 ^ y*0x85ebca77 ^ salt*0xc2b2ae3d ^ 0x27d4eb2f
+	value ^= value >> 16
+	value *= 0x7feb352d
+	value ^= value >> 15
+	value *= 0x846ca68b
+	return value ^ (value >> 16)
+}
+
+func pmNext(state uint32) uint32 {
+	return state*1664525 + 1013904223
+}
+
+func normalizeNRGBA(src *image.NRGBA) *image.NRGBA {
+	out := image.NewNRGBA(image.Rect(0, 0, src.Bounds().Dx(), src.Bounds().Dy()))
+	draw.Draw(out, out.Bounds(), src, src.Bounds().Min, draw.Src)
+	return out
+}
+
+func normalizeAlpha(src *image.Alpha, w, h int) *image.Alpha {
+	out := image.NewAlpha(image.Rect(0, 0, w, h))
+	if src != nil {
+		draw.Draw(out, out.Bounds(), src, src.Bounds().Min, draw.Src)
+	}
+	return out
+}
+
+func cloneNRGBA(src *image.NRGBA) *image.NRGBA {
+	out := image.NewNRGBA(src.Bounds())
+	copy(out.Pix, src.Pix)
+	return out
+}
+
+func parallelRows(ctx context.Context, start, end int, fn func(y int)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	rows := end - start
+	if rows <= 0 {
+		return nil
+	}
+	workers := minInt(runtime.GOMAXPROCS(0), rows)
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for worker := 0; worker < workers; worker++ {
+		go func(worker int) {
+			defer wg.Done()
+			for y := start + worker; y < end; y += workers {
+				if ctx.Err() != nil {
+					return
+				}
+				fn(y)
+			}
+		}(worker)
+	}
+	wg.Wait()
+	return ctx.Err()
+}
+
+func clampFloat32(value float32) float32 {
+	if value < 0 {
+		return 0
+	}
+	if value > 255 {
+		return 255
+	}
+	return value + 0.5
+}
+
+func clampInt(value, low, high int) int {
+	if value < low {
+		return low
+	}
+	if value > high {
+		return high
+	}
+	return value
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
