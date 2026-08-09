@@ -131,7 +131,7 @@ func pmGainBias(target, source pmPatchStats) (gain float32, bias [3]float32) {
 	gain = 1
 	if target.weight >= 1 && source.weight >= 1 && source.lumaStd > 1 {
 		gain = target.lumaStd / source.lumaStd
-		gain = minFloat32(1.25, maxFloat32(0.8, gain))
+		gain = minFloat32(1.10, maxFloat32(0.90, gain))
 	}
 	// A flat source patch has no reliable contrast model. In particular, a
 	// partially unknown target can report an artificial mean shift from its
@@ -140,10 +140,30 @@ func pmGainBias(target, source pmPatchStats) (gain float32, bias [3]float32) {
 	if target.weight >= 1 && source.weight >= 1 && source.lumaStd > 1 {
 		for channel := range bias {
 			bias[channel] = target.mean[channel] - gain*source.mean[channel]
-			bias[channel] = minFloat32(32, maxFloat32(-32, bias[channel]))
+			bias[channel] = minFloat32(13, maxFloat32(-13, bias[channel]))
 		}
 	}
 	return gain, bias
+}
+
+// pmGuidedTargetStats anchors synthesis color to the mask-independent healed
+// guide while allowing progressively reconstructed structure and texture to
+// remain in the target descriptor. A target patch with no known support uses
+// the guide outright; reconstructed pixels earn influence gradually rather
+// than making an arbitrary first-round source self-validating.
+func pmGuidedTargetStats(target, guide pmPatchStats) pmPatchStats {
+	if guide.weight < 0.5 {
+		return target
+	}
+	if target.weight < 0.5 {
+		return guide
+	}
+	support := minFloat32(1, maxFloat32(0, target.weight/guide.weight))
+	for channel := range target.mean {
+		target.mean[channel] = guide.mean[channel]*(1-support) + target.mean[channel]*support
+	}
+	target.weight = maxFloat32(target.weight, guide.weight)
+	return target
 }
 
 func minFloat32(a, b float32) float32 {

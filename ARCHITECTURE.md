@@ -583,19 +583,60 @@ PatchMatch uses a coarse-to-fine NNF with parallel Jacobi propagation and random
 search. Each pyramid level runs two EM rounds: the first reconstruction becomes
 a progressively trusted target for the second round. The coarsest target is an
 alpha-normalized pull/push heal, so pixels inside the hard mask never seed the
-search with the dust or damage being removed.
+search with the dust or damage being removed. Every level also retains that
+healed image as a fully supported appearance guide. A confidence-normalized
+pull/push pyramid supplies the fallback, then a robust directional boundary
+continuation chooses the smoother of opposite horizontal/vertical boundary
+pairs for each masked run. Median tangent samples reject dust outliers and keep
+a nearby bright object from bleeding into a dark band; a strong center sample
+is retained so the median cannot erase a narrow line when both opposite
+boundaries agree. NNF search retains this
+directional guide, while reconstruction uses a separate screened 2D offset
+field solved by red-black SOR. RGB-difference conductance suppresses diffusion
+across strong reconstructed edges while allowing weak axis-correlated variation
+to dissipate. The weak guide term retains useful edge
+continuation; the weighted 2D Laplacian removes any privileged horizontal or
+vertical axis. This mirrors AdbePM's `PM_Heal` organization observed in Ghidra:
+parallel first-level offset construction, pyramid reduction/expansion, and a
+final `AddOffsetBody` pass (with inhomogeneous Poisson exposed as an optional
+mode). The guide anchors local
+color even when an entire target patch is masked; reconstructed pixels earn
+influence gradually instead of making an arbitrary first-round match
+self-validating. Pull/push expansion is confidence-weighted bilinear; nearest-
+neighbour expansion must not be used because its pyramid cells become visible
+as rectangular tone blocks in large fills. Unsupported guide regions constrain
+color and any strong continued edge; structurally flat regions leave gradient
+and variance descriptors neutral so coherent source detail can cross a large
+hole.
 
 Patch comparison combines the SIMD RGB SSD kernel with whole-patch luminance,
 chroma, variance, and gradient descriptors. Reconstruction clusters overlapping
 votes by source displacement. Low frequencies may be averaged across plausible
-votes in smooth areas, while structure-adaptive coherent voting transfers the
-high-frequency residual from one source mapping. Bounded local gain/bias aligns
-tone without averaging away grain.
+votes only within the dominant displacement cluster, while structure-adaptive
+coherent voting transfers the high-frequency residual from that same source
+mapping. Reconstruction takes its low-frequency field pixel-by-pixel from the
+screened 2D offset base and introduces a source patch's low-frequency structure only
+where the guided target itself contains structure. A patch-radius protection
+band around guide edges requires the source base to agree before accepting its
+structure. Source residuals in that band are vector-limited, preventing the
+low-pass lobe of a slightly displaced source edge from reappearing as a dark or
+chromatically skewed scallop. Bounded gain/bias aligns
+tone without averaging away grain or mixing the base color of unrelated source
+hypotheses. In structurally flat regions, detail gain restores natural source
+grain removed from the low-frequency base; the gain tapers toward unity around
+continued edges. Gain is limited
+to 0.9–1.1 and RGB bias to approximately ±5% of the byte range. Before voting,
+the NNF is segmented by spatially connected, locally agreeing displacement;
+small noncoherent segments are strongly downweighted so isolated matches cannot
+produce blobs or abrupt source switches.
 
 `ctx.Err()` is checked at entry and periodically throughout. Quality regression
 tests cover high-frequency energy/local variance, low-frequency gradient
-continuity, and structured-edge continuation in addition to completion,
-cancellation, soft-mask blending, and determinism.
+continuity, narrow and broad structured-edge continuation, axis-band removal
+without edge diffusion, unsupported-hole appearance
+guidance, rejection of incompatible source tone, smooth pull/push expansion,
+and noncoherent-vote suppression in addition to completion, cancellation,
+soft-mask blending, and determinism.
 
 ### iopaintFill (`app_iopaint.go`)
 

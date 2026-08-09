@@ -385,6 +385,245 @@ func TestPatchMatchFillFollowsLowFrequencyGradient(t *testing.T) {
 	}
 }
 
+func TestPMPatchCostUsesAppearanceGuideInsideUnsupportedHole(t *testing.T) {
+	const w, h = 80, 48
+	src := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			value := byte(64)
+			if x >= w/2 {
+				value = 196
+			}
+			i := y*src.Stride + x*4
+			src.Pix[i], src.Pix[i+1], src.Pix[i+2], src.Pix[i+3] = value, value, value, 255
+		}
+	}
+	mask := image.NewAlpha(src.Bounds())
+	hole := image.Rect(20, 14, 36, 34)
+	paintTestHole(src, mask, hole, color.NRGBA{R: 8, G: 8, B: 8, A: 255})
+
+	level := preparePMLevel(src, mask, 9)
+	working := pmHealedWorking(src, mask)
+	level.targetPlanes = packPMPixelsInto(working, level.targetPlanes)
+	level.targetFeature = buildPMFeaturesPacked(&level.targetPlanes, w, h, level.targetFeature)
+	level.targetStats, level.statsScratch = buildPMPatchStats(
+		working, level.targetFeature, level.confidence, level.confStride, level.patchSize,
+		level.targetStats, level.statsScratch,
+	)
+
+	tx, ty := 28, 24 // complete 9x9 target patch is inside the hard mask
+	matching := pmPoint{x: 10, y: 24}
+	distractor := pmPoint{x: 60, y: 24}
+	matchingCost := pmPatchCost(level, &level.targetPlanes, level.targetStats, tx, ty, matching, float32(math.Inf(1)))
+	distractorCost := pmPatchCost(level, &level.targetPlanes, level.targetStats, tx, ty, distractor, float32(math.Inf(1)))
+	if matchingCost >= distractorCost*0.60 {
+		t.Fatalf("appearance guide did not reject incompatible source tone: matching=%.2f distractor=%.2f", matchingCost, distractorCost)
+	}
+}
+
+func TestPatchMatchFillDoesNotStampDistractorTone(t *testing.T) {
+	const w, h = 160, 96
+	original := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			base := 58 + x/12 + y/24
+			if x >= 105 {
+				base += 105 // plentiful but locally incompatible source material
+			}
+			grain := int(pmHash(uint32(x), uint32(y), 177)%9) - 4
+			i := y*original.Stride + x*4
+			original.Pix[i] = byte(clampInt(base+grain, 0, 255))
+			original.Pix[i+1] = byte(clampInt(base+2+grain, 0, 255))
+			original.Pix[i+2] = byte(clampInt(base+5+grain, 0, 255))
+			original.Pix[i+3] = 255
+		}
+	}
+	src := cloneNRGBA(original)
+	mask := image.NewAlpha(src.Bounds())
+	hole := image.Rect(43, 37, 61, 55)
+	paintTestHole(src, mask, hole, color.NRGBA{R: 4, G: 4, B: 4, A: 255})
+
+	out, err := PatchMatchFill(context.Background(), src, mask, 9, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meanError := math.Abs(patchMeanLuma(out, hole) - patchMeanLuma(original, hole)); meanError > 9 {
+		t.Fatalf("fill retained a visible low-frequency stamp: mean luma error %.2f, want <= 9", meanError)
+	}
+	if mae := patchLumaMAE(out, original, hole); mae > 14 {
+		t.Fatalf("fill did not follow local appearance: MAE %.2f, want <= 14", mae)
+	}
+}
+
+func TestPMHealedWorkingDoesNotExposePyramidBlocks(t *testing.T) {
+	const w, h = 128, 64
+	src := image.NewNRGBA(image.Rect(0, 0, w, h))
+	mask := image.NewAlpha(src.Bounds())
+	hole := image.Rect(24, 12, 104, 52)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			value := byte(48 + x)
+			i := y*src.Stride + x*4
+			src.Pix[i], src.Pix[i+1], src.Pix[i+2], src.Pix[i+3] = value, value, value, 255
+			if image.Pt(x, y).In(hole) {
+				mask.Pix[y*mask.Stride+x] = 255
+				src.Pix[i], src.Pix[i+1], src.Pix[i+2] = 0, 0, 0
+			}
+		}
+	}
+
+	healed := pmHealedWorking(src, mask)
+	maximumStep := 0
+	y := h / 2
+	for x := hole.Min.X + 1; x < hole.Max.X; x++ {
+		step := absInt(int(healed.NRGBAAt(x, y).R) - int(healed.NRGBAAt(x-1, y).R))
+		maximumStep = maxInt(maximumStep, step)
+	}
+	if maximumStep > 5 {
+		t.Fatalf("pull/push guide retained a visible pyramid block boundary: maximum step %d", maximumStep)
+	}
+}
+
+func TestPMHealedWorkingFollowsBoundaryPastNearbyBrightFeature(t *testing.T) {
+	const w, h = 120, 84
+	original := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			base := 34 + y/3
+			i := y*original.Stride + x*4
+			original.Pix[i] = byte(base + 3)
+			original.Pix[i+1] = byte(base)
+			original.Pix[i+2] = byte(base + 7)
+			original.Pix[i+3] = 255
+		}
+	}
+	// A bright object immediately above the repair is the failure mode that an
+	// isotropic pull/push guide gets wrong: it drags the object into the hole.
+	for y := 20; y < 30; y++ {
+		for x := 42; x < 78; x++ {
+			i := y*original.Stride + x*4
+			original.Pix[i], original.Pix[i+1], original.Pix[i+2] = 205, 188, 112
+		}
+	}
+
+	src := cloneNRGBA(original)
+	mask := image.NewAlpha(src.Bounds())
+	hole := image.Rect(45, 31, 75, 63)
+	paintTestHole(src, mask, hole, color.NRGBA{R: 240, G: 240, B: 240, A: 255})
+	healed := pmHealedWorking(src, mask)
+	if mae := patchLumaMAE(healed, original, hole); mae > 3 {
+		t.Fatalf("directional guide pulled nearby bright feature into dark band: MAE %.2f, want <= 3", mae)
+	}
+}
+
+func TestPMSmoothedDirectionalGuideReducesAxisBanding(t *testing.T) {
+	const w, h = 96, 72
+	src := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			grain := int(pmHash(uint32(x), uint32(y), 911)%13) - 6
+			i := y*src.Stride + x*4
+			src.Pix[i] = byte(92 + grain)
+			src.Pix[i+1] = byte(87 + grain)
+			src.Pix[i+2] = byte(99 + grain)
+			src.Pix[i+3] = 255
+		}
+	}
+	mask := image.NewAlpha(src.Bounds())
+	hole := image.Rect(30, 20, 66, 54)
+	for y := hole.Min.Y; y < hole.Max.Y; y++ {
+		for x := hole.Min.X; x < hole.Max.X; x++ {
+			mask.Pix[y*mask.Stride+x] = 255
+		}
+	}
+
+	guide := pmHealedWorking(src, mask)
+	smoothed := pmSmoothedDirectionalGuide(guide, mask)
+	before := pmTestAxisBandEnergy(guide, hole.Inset(2))
+	after := pmTestAxisBandEnergy(smoothed, hole.Inset(2))
+	if after >= before*0.72 {
+		t.Fatalf("low-frequency guide retained scanline bands: before=%.3f after=%.3f", before, after)
+	}
+}
+
+func TestPMSmoothedDirectionalGuidePreservesCrossingEdge(t *testing.T) {
+	const w, h = 96, 72
+	guide := image.NewNRGBA(image.Rect(0, 0, w, h))
+	mask := image.NewAlpha(guide.Bounds())
+	hole := image.Rect(26, 18, 70, 56)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			value := color.NRGBA{R: 42, G: 47, B: 53, A: 255}
+			if y >= 36 {
+				value = color.NRGBA{R: 205, G: 185, B: 116, A: 255}
+			}
+			// Model the weak row/column variation left by the directional
+			// continuation. It should be smoothed without widening the edge.
+			if image.Pt(x, y).In(hole) {
+				variation := int(pmHash(uint32(x/3), uint32(y/3), 237)%13) - 6
+				value.R = byte(clampInt(int(value.R)+variation, 0, 255))
+				value.G = byte(clampInt(int(value.G)+variation, 0, 255))
+				value.B = byte(clampInt(int(value.B)+variation, 0, 255))
+				mask.Pix[y*mask.Stride+x] = 255
+			}
+			guide.SetNRGBA(x, y, value)
+		}
+	}
+
+	smoothed := pmSmoothedDirectionalGuide(guide, mask)
+	xRange := image.Rect(hole.Min.X+8, 0, hole.Max.X-8, 1)
+	meanRow := func(y int) float64 {
+		return patchMeanLuma(smoothed, image.Rect(xRange.Min.X, y, xRange.Max.X, y+1))
+	}
+	dark := meanRow(35)
+	bright := meanRow(36)
+	if dark > 70 || bright < 155 || bright-dark < 100 {
+		t.Fatalf("edge-aware guide widened or erased crossing edge: dark=%.1f bright=%.1f contrast=%.1f", dark, bright, bright-dark)
+	}
+}
+
+func pmTestAxisBandEnergy(src *image.NRGBA, bounds image.Rectangle) float64 {
+	var energy float64
+	var samples int
+	for y := bounds.Min.Y + 1; y < bounds.Max.Y-1; y++ {
+		for x := bounds.Min.X + 1; x < bounds.Max.X-1; x++ {
+			center := y*src.Stride + x*4
+			left := y*src.Stride + (x-1)*4
+			right := y*src.Stride + (x+1)*4
+			up := (y-1)*src.Stride + x*4
+			down := (y+1)*src.Stride + x*4
+			for channel := 0; channel < 3; channel++ {
+				horizontal := int(src.Pix[left+channel]) - 2*int(src.Pix[center+channel]) + int(src.Pix[right+channel])
+				vertical := int(src.Pix[up+channel]) - 2*int(src.Pix[center+channel]) + int(src.Pix[down+channel])
+				energy += float64(absInt(horizontal) + absInt(vertical))
+				samples += 2
+			}
+		}
+	}
+	return energy / float64(samples)
+}
+
+func TestPMNNFCoherenceWeightsSuppressIsolatedHypotheses(t *testing.T) {
+	level := &pmLevel{w: 12, h: 8, patchSize: 5, active: image.Rect(0, 0, 12, 8)}
+	nnf := make([]pmPoint, level.w*level.h)
+	for y := 0; y < level.h; y++ {
+		for x := 0; x < level.w; x++ {
+			nnf[y*level.w+x] = pmPoint{x: int32(x + 20), y: int32(y + 3)}
+		}
+	}
+	isolated := 4*level.w + 6
+	nnf[isolated] = pmPoint{x: 70, y: 1}
+
+	weights := pmNNFCoherenceWeights(level, nnf)
+	coherent := weights[2*level.w+2]
+	if coherent < 0.99 {
+		t.Fatalf("large coherent displacement segment was downweighted: %.3f", coherent)
+	}
+	if weights[isolated] >= coherent*0.25 {
+		t.Fatalf("isolated displacement retained too much vote weight: isolated=%.3f coherent=%.3f", weights[isolated], coherent)
+	}
+}
+
 func TestPatchMatchFillContinuesStructuredEdge(t *testing.T) {
 	const w, h = 128, 88
 	original := image.NewNRGBA(image.Rect(0, 0, w, h))
@@ -408,6 +647,44 @@ func TestPatchMatchFillContinuesStructuredEdge(t *testing.T) {
 	background := patchMeanLuma(out, image.Rect(hole.Min.X+2, 37, hole.Max.X-2, 40))
 	if stripe < 160 || stripe-background < 75 {
 		t.Fatalf("structured edge was not continued: stripe=%.1f background=%.1f", stripe, background)
+	}
+}
+
+func TestPatchMatchFillPreservesBroadCrossingEdge(t *testing.T) {
+	const w, h = 144, 96
+	original := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			value := color.NRGBA{R: 43, G: 47, B: 53, A: 255}
+			if y >= 70 {
+				value = color.NRGBA{R: 202, G: 181, B: 111, A: 255}
+			}
+			grain := int(pmHash(uint32(x), uint32(y), 733)%9) - 4
+			value.R = byte(clampInt(int(value.R)+grain, 0, 255))
+			value.G = byte(clampInt(int(value.G)+grain, 0, 255))
+			value.B = byte(clampInt(int(value.B)+grain, 0, 255))
+			original.SetNRGBA(x, y, value)
+		}
+	}
+	mask, err := buildStrokeMask(original.Bounds(), []TouchUpPoint{{X: 72, Y: 70}}, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := PatchMatchFill(context.Background(), original, mask, 13, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dark := patchMeanLuma(out, image.Rect(58, 64, 86, 68))
+	gold := patchMeanLuma(out, image.Rect(58, 74, 86, 82))
+	if dark > 75 || gold < 145 || gold-dark < 90 {
+		t.Fatalf("broad crossing edge was contaminated: dark=%.1f gold=%.1f contrast=%.1f", dark, gold, gold-dark)
+	}
+	for y := 74; y < 84; y++ {
+		for x := 58; x < 86; x++ {
+			if mask.AlphaAt(x, y).A > 250 && pixelLuma(out, x, y) < 115 {
+				t.Fatalf("dark source edge intruded into continued gold band at (%d,%d): luma=%.1f", x, y, pixelLuma(out, x, y))
+			}
+		}
 	}
 }
 

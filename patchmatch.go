@@ -120,6 +120,8 @@ type pmFeature struct {
 type pmLevel struct {
 	src           *image.NRGBA
 	srcBase       *image.NRGBA
+	guide         *image.NRGBA
+	guideBase     *image.NRGBA
 	mask          *image.Alpha
 	w             int
 	h             int
@@ -129,6 +131,7 @@ type pmLevel struct {
 	valid         []bool
 	sources       []pmPoint
 	srcStats      []pmPatchStats
+	guideStats    []pmPatchStats
 	targetStats   []pmPatchStats
 	statsScratch  []float32
 	targetPlanes  pmPackedPlanes
@@ -137,6 +140,9 @@ type pmLevel struct {
 	confidence    []float32
 	confStride    int
 	confSum       []float32
+	coherence     []float32
+	coherenceTags []int32
+	coherenceQ    []int
 }
 
 type pmSolution struct {
@@ -220,6 +226,18 @@ func preparePMLevel(src *image.NRGBA, mask *image.Alpha, patchSize int) *pmLevel
 		srcPlanes: srcPlanes,
 	}
 	level.srcStats, level.statsScratch = buildPMPatchStats(src, srcFeature, nil, 0, patchSize, nil, nil)
+	// Keep a separate, fully supported appearance guide. The pull/push fill is
+	// deliberately texture-free, but it gives even a patch centered deep inside
+	// the hole a defensible local color target. Without it those centers have
+	// zero comparison support and arbitrary source tones can survive the NNF.
+	guide := pmHealedWorkingFromBase(src, mask, src)
+	level.guide = guide
+	level.guideBase = pmSmoothedDirectionalGuide(guide, mask)
+	level.targetPlanes = packPMPixels(guide)
+	level.targetFeature = buildPMFeaturesPacked(&level.targetPlanes, w, h, level.targetFeature)
+	level.guideStats, level.statsScratch = buildPMPatchStats(
+		guide, level.targetFeature, nil, 0, patchSize, nil, level.statsScratch,
+	)
 	level.confidence, level.confStride, level.confSum = packPMConfidence(mask)
 
 	integral := maskedIntegral(mask)
@@ -379,6 +397,7 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, par
 
 func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf []pmPoint, costs []float32, targetStats []pmPatchStats) (*image.NRGBA, error) {
 	out := cloneNRGBA(previous)
+	coherence := pmNNFCoherenceWeights(level, nnf)
 	spatial := make([]float32, level.patchSize)
 	for i := range spatial {
 		d := float32(i - level.half)
@@ -401,7 +420,6 @@ func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRG
 			maxCY := minInt(level.active.Max.Y-1, y+level.half)
 
 			var clusters [pmVoteClusterCount]pmVoteCluster
-			var baseR, baseG, baseB, baseAlpha, baseWeight float32
 			for cy := minCY; cy <= maxCY; cy++ {
 				for cx := minCX; cx <= maxCX; cx++ {
 					id := cy*level.w + cx
@@ -411,7 +429,7 @@ func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRG
 					if sx < 0 || sy < 0 || sx >= level.w || sy >= level.h {
 						continue
 					}
-					weight := spatial[x-cx+level.half] * spatial[y-cy+level.half]
+					weight := spatial[x-cx+level.half] * spatial[y-cy+level.half] * coherence[id]
 					weight /= 1 + costs[id]/256
 					cluster := pmFindVoteCluster(&clusters, match.x-int32(cx), match.y-int32(cy))
 					if cluster == nil {
@@ -420,26 +438,18 @@ func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRG
 					si := sy*level.src.Stride + sx*4
 					alpha := float32(level.src.Pix[si+3])
 					alphaWeight := weight * alpha
-					gain, bias := pmGainBias(targetStats[id], level.srcStats[int(match.y)*level.w+int(match.x)])
+					guidedTarget := pmGuidedTargetStats(targetStats[id], level.guideStats[id])
+					gain, bias := pmGainBias(guidedTarget, level.srcStats[int(match.y)*level.w+int(match.x)])
 					cluster.count++
 					cluster.support += weight
 					cluster.sumAlpha += alphaWeight
-					bi := sy*level.srcBase.Stride + sx*4
-					adjustedBaseR := gain*float32(level.srcBase.Pix[bi]) + bias[0]
-					adjustedBaseG := gain*float32(level.srcBase.Pix[bi+1]) + bias[1]
-					adjustedBaseB := gain*float32(level.srcBase.Pix[bi+2]) + bias[2]
-					baseR += alphaWeight * adjustedBaseR
-					baseG += alphaWeight * adjustedBaseG
-					baseB += alphaWeight * adjustedBaseB
-					baseAlpha += alphaWeight
-					baseWeight += weight
 					if weight > cluster.bestWeight {
 						cluster.bestWeight = weight
 						cluster.bestDX = match.x - int32(cx)
 						cluster.bestDY = match.y - int32(cy)
 						cluster.bestGain = gain
 						cluster.bestBias = bias
-						cluster.texture = level.srcStats[int(match.y)*level.w+int(match.x)].gradientEnergy
+						cluster.texture = guidedTarget.gradientEnergy
 					}
 				}
 			}
@@ -460,11 +470,11 @@ func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRG
 			}
 
 			var fillR, fillG, fillB, fillA float32
-			if dominant != nil && baseWeight > 0 && baseAlpha > 0 {
-				// Low frequencies can be safely averaged across plausible votes;
-				// doing so gives a stable tonal estimate. High-frequency residual
-				// comes from one coherent mapping so grain and fine scratches do
-				// not cancel each other out.
+			if dominant != nil && dominant.support > 0 && dominant.sumAlpha > 0 {
+				// Both frequency bands must come from the same displacement
+				// hypothesis. Averaging base color across incompatible clusters
+				// produces the conspicuous low-frequency stamp that the coherent
+				// detail layer cannot hide.
 				detailX := clampInt(x+int(dominant.bestDX), 0, level.w-1)
 				detailY := clampInt(y+int(dominant.bestDY), 0, level.h-1)
 				chosenGain := dominant.bestGain
@@ -472,16 +482,66 @@ func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRG
 				texture := dominant.texture
 				detailIndex := detailY*level.src.Stride + detailX*4
 				baseIndex := detailY*level.srcBase.Stride + detailX*4
-				detailGain := minFloat32(1.15, maxFloat32(0.85, chosenGain))
-				structureBlend := minFloat32(1, maxFloat32(0, (texture-2)/12))
-				globalBaseR, globalBaseG, globalBaseB := baseR/baseAlpha, baseG/baseAlpha, baseB/baseAlpha
+				guideStructureBlend := minFloat32(1, maxFloat32(0, (texture-2)/12))
+				// Once the directional base has been smoothed, flat fills need
+				// their grain restored from the actual source residual rather than
+				// from row/column variation in the guide. Taper the extra detail to
+				// unity where target structure is present so copied texture cannot
+				// roughen a continued object edge.
+				detailGain := chosenGain * (1.45 - 0.45*guideStructureBlend)
+				detailGain = minFloat32(1.55, maxFloat32(0.85, detailGain))
 				dominantBaseR := chosenGain*float32(level.srcBase.Pix[baseIndex]) + chosenBias[0]
 				dominantBaseG := chosenGain*float32(level.srcBase.Pix[baseIndex+1]) + chosenBias[1]
 				dominantBaseB := chosenGain*float32(level.srcBase.Pix[baseIndex+2]) + chosenBias[2]
-				fillR = globalBaseR*(1-structureBlend) + dominantBaseR*structureBlend + detailGain*(float32(level.src.Pix[detailIndex])-float32(level.srcBase.Pix[baseIndex]))
-				fillG = globalBaseG*(1-structureBlend) + dominantBaseG*structureBlend + detailGain*(float32(level.src.Pix[detailIndex+1])-float32(level.srcBase.Pix[baseIndex+1]))
-				fillB = globalBaseB*(1-structureBlend) + dominantBaseB*structureBlend + detailGain*(float32(level.src.Pix[detailIndex+2])-float32(level.srcBase.Pix[baseIndex+2]))
-				fillA = baseAlpha / baseWeight
+				guideIndex := y*level.guideBase.Stride + x*4
+				guideBaseR := float32(level.guideBase.Pix[guideIndex])
+				guideBaseG := float32(level.guideBase.Pix[guideIndex+1])
+				guideBaseB := float32(level.guideBase.Pix[guideIndex+2])
+				baseDifference := (float32(math.Abs(float64(dominantBaseR-guideBaseR))) +
+					float32(math.Abs(float64(dominantBaseG-guideBaseG))) +
+					float32(math.Abs(float64(dominantBaseB-guideBaseB)))) / 3
+				// A source feature may replace guide structure only when its base
+				// actually agrees with the continued local appearance. This keeps
+				// coherent text and object edges, but prevents an unrelated source
+				// edge from cutting a dark scallop through a bright border.
+				normalizedDifference := baseDifference / 12
+				baseAgreement := 1 / (1 + normalizedDifference*normalizedDifference)
+				guideEdgeEnergy := level.guideStats[y*level.w+x].gradientEnergy
+				// Protect a patch-radius band around the guide edge, not just the
+				// exact gradient pixels. A displaced source edge has a low-pass lobe
+				// several pixels wide and would otherwise reappear immediately beside
+				// the correctly continued edge.
+				edgeSamples := [4]image.Point{{X: -level.half}, {X: level.half}, {Y: -level.half}, {Y: level.half}}
+				for _, offset := range edgeSamples {
+					edgeX := clampInt(x+offset.X, level.active.Min.X, level.active.Max.X-1)
+					edgeY := clampInt(y+offset.Y, level.active.Min.Y, level.active.Max.Y-1)
+					guideEdgeEnergy = maxFloat32(guideEdgeEnergy, level.guideStats[edgeY*level.w+edgeX].gradientEnergy)
+				}
+				guideEdgeBlend := minFloat32(1, maxFloat32(0, (guideEdgeEnergy-2)/10))
+				structureAgreement := 1 - guideEdgeBlend + guideEdgeBlend*baseAgreement
+				structureBlend := guideStructureBlend * structureAgreement
+				baseR := guideBaseR*(1-structureBlend) + dominantBaseR*structureBlend
+				baseG := guideBaseG*(1-structureBlend) + dominantBaseG*structureBlend
+				baseB := guideBaseB*(1-structureBlend) + dominantBaseB*structureBlend
+				// The five-tap residual contains genuine grain in flat regions, but
+				// also contains large edge lobes. At a known guide edge those lobes
+				// would duplicate any small NNF alignment error, so progressively
+				// restrict them to the pixel-scale range.
+				detailLimit := 28 - 20*guideEdgeBlend
+				detailR := detailGain * (float32(level.src.Pix[detailIndex]) - float32(level.srcBase.Pix[baseIndex]))
+				detailG := detailGain * (float32(level.src.Pix[detailIndex+1]) - float32(level.srcBase.Pix[baseIndex+1]))
+				detailB := detailGain * (float32(level.src.Pix[detailIndex+2]) - float32(level.srcBase.Pix[baseIndex+2]))
+				maximumDetail := maxFloat32(float32(math.Abs(float64(detailR))), maxFloat32(float32(math.Abs(float64(detailG))), float32(math.Abs(float64(detailB)))))
+				if maximumDetail > detailLimit {
+					detailScale := detailLimit / maximumDetail
+					detailR *= detailScale
+					detailG *= detailScale
+					detailB *= detailScale
+				}
+				fillR = baseR + detailR
+				fillG = baseG + detailG
+				fillB = baseB + detailB
+				fillA = dominant.sumAlpha / dominant.support
 			} else {
 				fallback := hashedPMSource(level, x, y, 0)
 				si := int(fallback.y)*level.src.Stride + int(fallback.x)*4
@@ -507,9 +567,88 @@ func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRG
 	return out, nil
 }
 
+// pmNNFCoherenceWeights approximates Adobe's coherent-region vote filtering.
+// Spatially connected target centers whose source displacement agrees within
+// two pixels form a segment. Large segments retain full voting power; isolated
+// hypotheses are strongly downweighted so they cannot create blobs or abrupt
+// rectangular source switches in a large fill.
+func pmNNFCoherenceWeights(level *pmLevel, nnf []pmPoint) []float32 {
+	size := level.w * level.h
+	if cap(level.coherence) < size {
+		level.coherence = make([]float32, size)
+	} else {
+		level.coherence = level.coherence[:size]
+		clear(level.coherence)
+	}
+	if cap(level.coherenceTags) < size {
+		level.coherenceTags = make([]int32, size)
+	} else {
+		level.coherenceTags = level.coherenceTags[:size]
+	}
+	weights := level.coherence
+	labels := level.coherenceTags
+	for i := range labels {
+		labels[i] = -1
+	}
+	queue := level.coherenceQ[:0]
+	if cap(queue) < maxInt(64, level.patchSize*level.patchSize) {
+		queue = make([]int, 0, maxInt(64, level.patchSize*level.patchSize))
+	}
+	var label int32
+
+	for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
+		for x := level.active.Min.X; x < level.active.Max.X; x++ {
+			start := y*level.w + x
+			if labels[start] >= 0 {
+				continue
+			}
+			labels[start] = label
+			queue = append(queue[:0], start)
+			for head := 0; head < len(queue); head++ {
+				id := queue[head]
+				cx, cy := id%level.w, id/level.w
+				for ny := maxInt(level.active.Min.Y, cy-1); ny <= minInt(level.active.Max.Y-1, cy+1); ny++ {
+					for nx := maxInt(level.active.Min.X, cx-1); nx <= minInt(level.active.Max.X-1, cx+1); nx++ {
+						next := ny*level.w + nx
+						if next == id || labels[next] >= 0 || !pmDisplacementsAgree(nnf[id], cx, cy, nnf[next], nx, ny) {
+							continue
+						}
+						labels[next] = label
+						queue = append(queue, next)
+					}
+				}
+			}
+
+			componentSize := len(queue)
+			minimumFullSupport := maxInt(8, level.patchSize*2)
+			coherentFraction := minFloat32(1, float32(componentSize)/float32(minimumFullSupport))
+			voteWeight := 0.05 + 0.95*coherentFraction
+			for _, id := range queue {
+				weights[id] = voteWeight
+			}
+			label++
+		}
+	}
+	level.coherenceQ = queue[:0]
+	return weights
+}
+
+func pmDisplacementsAgree(a pmPoint, ax, ay int, b pmPoint, bx, by int) bool {
+	adx, ady := int(a.x)-ax, int(a.y)-ay
+	bdx, bdy := int(b.x)-bx, int(b.y)-by
+	return absInt(adx-bdx) <= 2 && absInt(ady-bdy) <= 2
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
 func seedPMWorking(level *pmLevel, parent *pmSolution) *image.NRGBA {
 	if parent == nil {
-		return pmHealedWorking(level.src, level.mask)
+		return pmHealedWorkingFromBase(level.src, level.mask, level.src)
 	}
 	out := cloneNRGBA(level.src)
 	weights := [...]int{1, 4, 6, 4, 1}
