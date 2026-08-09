@@ -168,7 +168,7 @@ export default function App() {
   } = usePersistentSettings({ setPreview })
 
   const activePreview = discLiveActive && discNoMaskPreview ? discNoMaskPreview : preview
-  const displayPreview = useProgressivePreview(activePreview)
+  const displayPreview = useProgressivePreview(activePreview, loading || dragging)
   const previewPresentationPending = isPreviewPresentationPending(preview, presentedPreview)
   const previewSession = previewAssetSession(preview)
   const presentedSession = previewAssetSession(presentedPreview)
