@@ -14,7 +14,8 @@ import (
 //
 // The implementation follows the same broad shape as production content-aware
 // fill engines: a coarse-to-fine image pyramid, a persistent nearest-neighbour
-// field (NNF), propagation/random search, and confidence-weighted patch voting.
+// field (NNF), propagation/random search, progressive confidence, coherent
+// displacement voting, and frequency-separated reconstruction.
 func PatchMatchFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha, patchSize, iterations int) (*image.NRGBA, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -68,22 +69,21 @@ func PatchMatchFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha, pa
 		}
 
 		working := seedPMWorking(level, parent)
-		rounds := 1
-		if parent == nil {
-			// The coarsest level needs a second EM round because it has no
-			// lower-frequency estimate to start from.
-			rounds = 2
-		}
+		// A second EM round lets the first coherent reconstruction become a
+		// progressively trusted target. This is essential for carrying lines
+		// and texture through pixels whose initial patch was entirely masked.
+		rounds := 2
 
 		var nnf []pmPoint
 		var costs []float32
+		var targetStats []pmPatchStats
 		var err error
 		for round := 0; round < rounds; round++ {
-			nnf, costs, err = solvePMLevel(ctx, level, working, parent, iterations, round)
+			nnf, costs, targetStats, err = solvePMLevel(ctx, level, working, parent, iterations, round)
 			if err != nil {
 				return nil, err
 			}
-			working, err = reconstructPMLevel(ctx, level, working, nnf, costs)
+			working, err = reconstructPMLevel(ctx, level, working, nnf, costs, targetStats)
 			if err != nil {
 				return nil, err
 			}
@@ -118,26 +118,80 @@ type pmFeature struct {
 }
 
 type pmLevel struct {
-	src        *image.NRGBA
-	mask       *image.Alpha
-	w          int
-	h          int
-	patchSize  int
-	half       int
-	active     image.Rectangle
-	valid      []bool
-	sources    []pmPoint
-	srcFeature []pmFeature
-	srcPlanes  pmPackedPlanes
-	confidence []float32
-	confStride int
-	confSum    []float32
+	src           *image.NRGBA
+	srcBase       *image.NRGBA
+	mask          *image.Alpha
+	w             int
+	h             int
+	patchSize     int
+	half          int
+	active        image.Rectangle
+	valid         []bool
+	sources       []pmPoint
+	srcStats      []pmPatchStats
+	targetStats   []pmPatchStats
+	statsScratch  []float32
+	targetPlanes  pmPackedPlanes
+	targetFeature []pmFeature
+	srcPlanes     pmPackedPlanes
+	confidence    []float32
+	confStride    int
+	confSum       []float32
 }
 
 type pmSolution struct {
 	level   *pmLevel
 	working *image.NRGBA
 	nnf     []pmPoint
+}
+
+const pmVoteClusterCount = 64
+
+// pmVoteCluster groups overlapping patch votes by their source displacement.
+// PatchMatch propagation naturally produces runs of nearly identical offsets;
+// treating those runs as one hypothesis prevents unrelated source textures
+// from being averaged together during reconstruction.
+type pmVoteCluster struct {
+	keyX, keyY int32
+	bestDX     int32
+	bestDY     int32
+	used       bool
+	count      int
+	support    float32
+	bestWeight float32
+	bestGain   float32
+	bestBias   [3]float32
+	texture    float32
+	sumAlpha   float32
+}
+
+func pmVoteClusterKey(value int32) int32 {
+	// A two-pixel bucket tolerates the small displacement drift produced by
+	// neighboring patch searches without merging visibly different mappings.
+	if value >= 0 {
+		return value / 2
+	}
+	return -((-value + 1) / 2)
+}
+
+func pmFindVoteCluster(clusters *[pmVoteClusterCount]pmVoteCluster, dx, dy int32) *pmVoteCluster {
+	keyX, keyY := pmVoteClusterKey(dx), pmVoteClusterKey(dy)
+	hash := uint32(keyX)*0x9e3779b1 ^ uint32(keyY)*0x85ebca77
+	for probe := 0; probe < len(clusters); probe++ {
+		cluster := &clusters[(int(hash)+probe)&(len(clusters)-1)]
+		if !cluster.used {
+			cluster.used = true
+			cluster.keyX = keyX
+			cluster.keyY = keyY
+			cluster.bestDX = dx
+			cluster.bestDY = dy
+			return cluster
+		}
+		if cluster.keyX == keyX && cluster.keyY == keyY {
+			return cluster
+		}
+	}
+	return nil
 }
 
 func preparePMLevel(src *image.NRGBA, mask *image.Alpha, patchSize int) *pmLevel {
@@ -153,17 +207,19 @@ func preparePMLevel(src *image.NRGBA, mask *image.Alpha, patchSize int) *pmLevel
 	}
 	half := patchSize / 2
 	srcPlanes := packPMPixels(src)
+	srcFeature := buildPMFeaturesPacked(&srcPlanes, w, h, nil)
 	level := &pmLevel{
-		src:        src,
-		mask:       mask,
-		w:          w,
-		h:          h,
-		patchSize:  patchSize,
-		half:       half,
-		valid:      make([]bool, w*h),
-		srcFeature: buildPMFeaturesPacked(&srcPlanes, w, h),
-		srcPlanes:  srcPlanes,
+		src:       src,
+		srcBase:   pmLowPassNRGBA(src),
+		mask:      mask,
+		w:         w,
+		h:         h,
+		patchSize: patchSize,
+		half:      half,
+		valid:     make([]bool, w*h),
+		srcPlanes: srcPlanes,
 	}
+	level.srcStats, level.statsScratch = buildPMPatchStats(src, srcFeature, nil, 0, patchSize, nil, nil)
 	level.confidence, level.confStride, level.confSum = packPMConfidence(mask)
 
 	integral := maskedIntegral(mask)
@@ -203,14 +259,24 @@ func preparePMLevel(src *image.NRGBA, mask *image.Alpha, patchSize int) *pmLevel
 	return level
 }
 
-func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, parent *pmSolution, iterations, round int) ([]pmPoint, []float32, error) {
+func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, parent *pmSolution, iterations, round int) ([]pmPoint, []float32, []pmPatchStats, error) {
 	size := level.w * level.h
 	current := make([]pmPoint, size)
 	next := make([]pmPoint, size)
 	currentCost := make([]float32, size)
 	nextCost := make([]float32, size)
-	targetPlanes := packPMPixels(working)
-	targetFeature := buildPMFeaturesPacked(&targetPlanes, level.w, level.h)
+	acceptedConfidence := float32(0)
+	if parent != nil {
+		acceptedConfidence = 0.15
+	} else if round > 0 {
+		acceptedConfidence = 0.30
+	}
+	updatePMConfidence(level.mask, level.confidence, level.confStride, level.confSum, acceptedConfidence)
+	level.targetPlanes = packPMPixelsInto(working, level.targetPlanes)
+	targetPlanes := &level.targetPlanes
+	level.targetFeature = buildPMFeaturesPacked(targetPlanes, level.w, level.h, level.targetFeature)
+	level.targetStats, level.statsScratch = buildPMPatchStats(working, level.targetFeature, level.confidence, level.confStride, level.patchSize, level.targetStats, level.statsScratch)
+	targetStats := level.targetStats
 
 	err := parallelRows(ctx, level.active.Min.Y, level.active.Max.Y, func(y int) {
 		for x := level.active.Min.X; x < level.active.Max.X; x++ {
@@ -234,16 +300,16 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, par
 				candidate = hashedPMSource(level, x, y, round)
 			}
 			current[id] = candidate
-			currentCost[id] = pmPatchCost(level, &targetPlanes, targetFeature, x, y, candidate, float32(math.Inf(1)))
+			currentCost[id] = pmPatchCost(level, targetPlanes, targetStats, x, y, candidate, float32(math.Inf(1)))
 		}
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	for pass := 0; pass < iterations; pass++ {
 		if err := ctx.Err(); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		err = parallelRows(ctx, level.active.Min.Y, level.active.Max.Y, func(y int) {
 			for x := level.active.Min.X; x < level.active.Max.X; x++ {
@@ -258,7 +324,7 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, par
 					if !validPMPoint(level, candidate) {
 						return
 					}
-					cost := pmPatchCost(level, &targetPlanes, targetFeature, x, y, candidate, bestCost)
+					cost := pmPatchCost(level, targetPlanes, targetStats, x, y, candidate, bestCost)
 					if cost < bestCost {
 						best = candidate
 						bestCost = cost
@@ -303,15 +369,15 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, par
 			}
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		current, next = next, current
 		currentCost, nextCost = nextCost, currentCost
 	}
-	return current, currentCost, nil
+	return current, currentCost, targetStats, nil
 }
 
-func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf []pmPoint, costs []float32) (*image.NRGBA, error) {
+func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf []pmPoint, costs []float32, targetStats []pmPatchStats) (*image.NRGBA, error) {
 	out := cloneNRGBA(previous)
 	spatial := make([]float32, level.patchSize)
 	for i := range spatial {
@@ -334,7 +400,8 @@ func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRG
 			minCY := maxInt(level.active.Min.Y, y-level.half)
 			maxCY := minInt(level.active.Max.Y-1, y+level.half)
 
-			var sumR, sumG, sumB, sumAlpha, sumWeight float32
+			var clusters [pmVoteClusterCount]pmVoteCluster
+			var baseR, baseG, baseB, baseAlpha, baseWeight float32
 			for cy := minCY; cy <= maxCY; cy++ {
 				for cx := minCX; cx <= maxCX; cx++ {
 					id := cy*level.w + cx
@@ -345,24 +412,76 @@ func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRG
 						continue
 					}
 					weight := spatial[x-cx+level.half] * spatial[y-cy+level.half]
-					weight /= 1 + costs[id]/1024
+					weight /= 1 + costs[id]/256
+					cluster := pmFindVoteCluster(&clusters, match.x-int32(cx), match.y-int32(cy))
+					if cluster == nil {
+						continue
+					}
 					si := sy*level.src.Stride + sx*4
 					alpha := float32(level.src.Pix[si+3])
 					alphaWeight := weight * alpha
-					sumR += alphaWeight * float32(level.src.Pix[si])
-					sumG += alphaWeight * float32(level.src.Pix[si+1])
-					sumB += alphaWeight * float32(level.src.Pix[si+2])
-					sumAlpha += alphaWeight
-					sumWeight += weight
+					gain, bias := pmGainBias(targetStats[id], level.srcStats[int(match.y)*level.w+int(match.x)])
+					cluster.count++
+					cluster.support += weight
+					cluster.sumAlpha += alphaWeight
+					bi := sy*level.srcBase.Stride + sx*4
+					adjustedBaseR := gain*float32(level.srcBase.Pix[bi]) + bias[0]
+					adjustedBaseG := gain*float32(level.srcBase.Pix[bi+1]) + bias[1]
+					adjustedBaseB := gain*float32(level.srcBase.Pix[bi+2]) + bias[2]
+					baseR += alphaWeight * adjustedBaseR
+					baseG += alphaWeight * adjustedBaseG
+					baseB += alphaWeight * adjustedBaseB
+					baseAlpha += alphaWeight
+					baseWeight += weight
+					if weight > cluster.bestWeight {
+						cluster.bestWeight = weight
+						cluster.bestDX = match.x - int32(cx)
+						cluster.bestDY = match.y - int32(cy)
+						cluster.bestGain = gain
+						cluster.bestBias = bias
+						cluster.texture = level.srcStats[int(match.y)*level.w+int(match.x)].gradientEnergy
+					}
+				}
+			}
+
+			var dominant *pmVoteCluster
+			for i := range clusters {
+				cluster := &clusters[i]
+				if !cluster.used || cluster.sumAlpha == 0 {
+					continue
+				}
+				// Support selects a displacement shared by many overlapping
+				// patches. The small count term breaks close contests in favor
+				// of the more spatially coherent mapping.
+				score := cluster.support * (1 + 0.03*float32(cluster.count))
+				if dominant == nil || score > dominant.support*(1+0.03*float32(dominant.count)) {
+					dominant = cluster
 				}
 			}
 
 			var fillR, fillG, fillB, fillA float32
-			if sumWeight > 0 && sumAlpha > 0 {
-				fillR = sumR / sumAlpha
-				fillG = sumG / sumAlpha
-				fillB = sumB / sumAlpha
-				fillA = sumAlpha / sumWeight
+			if dominant != nil && baseWeight > 0 && baseAlpha > 0 {
+				// Low frequencies can be safely averaged across plausible votes;
+				// doing so gives a stable tonal estimate. High-frequency residual
+				// comes from one coherent mapping so grain and fine scratches do
+				// not cancel each other out.
+				detailX := clampInt(x+int(dominant.bestDX), 0, level.w-1)
+				detailY := clampInt(y+int(dominant.bestDY), 0, level.h-1)
+				chosenGain := dominant.bestGain
+				chosenBias := dominant.bestBias
+				texture := dominant.texture
+				detailIndex := detailY*level.src.Stride + detailX*4
+				baseIndex := detailY*level.srcBase.Stride + detailX*4
+				detailGain := minFloat32(1.15, maxFloat32(0.85, chosenGain))
+				structureBlend := minFloat32(1, maxFloat32(0, (texture-2)/12))
+				globalBaseR, globalBaseG, globalBaseB := baseR/baseAlpha, baseG/baseAlpha, baseB/baseAlpha
+				dominantBaseR := chosenGain*float32(level.srcBase.Pix[baseIndex]) + chosenBias[0]
+				dominantBaseG := chosenGain*float32(level.srcBase.Pix[baseIndex+1]) + chosenBias[1]
+				dominantBaseB := chosenGain*float32(level.srcBase.Pix[baseIndex+2]) + chosenBias[2]
+				fillR = globalBaseR*(1-structureBlend) + dominantBaseR*structureBlend + detailGain*(float32(level.src.Pix[detailIndex])-float32(level.srcBase.Pix[baseIndex]))
+				fillG = globalBaseG*(1-structureBlend) + dominantBaseG*structureBlend + detailGain*(float32(level.src.Pix[detailIndex+1])-float32(level.srcBase.Pix[baseIndex+1]))
+				fillB = globalBaseB*(1-structureBlend) + dominantBaseB*structureBlend + detailGain*(float32(level.src.Pix[detailIndex+2])-float32(level.srcBase.Pix[baseIndex+2]))
+				fillA = baseAlpha / baseWeight
 			} else {
 				fallback := hashedPMSource(level, x, y, 0)
 				si := int(fallback.y)*level.src.Stride + int(fallback.x)*4
@@ -390,7 +509,7 @@ func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRG
 
 func seedPMWorking(level *pmLevel, parent *pmSolution) *image.NRGBA {
 	if parent == nil {
-		return cloneNRGBA(level.src)
+		return pmHealedWorking(level.src, level.mask)
 	}
 	out := cloneNRGBA(level.src)
 	weights := [...]int{1, 4, 6, 4, 1}
@@ -475,6 +594,44 @@ func downsampleNRGBA(src *image.NRGBA, w, h int) *image.NRGBA {
 				out.Pix[i+2] = byte(premulB / alpha)
 			}
 			out.Pix[i+3] = byte(alpha / count)
+		}
+	}
+	return out
+}
+
+// pmLowPassNRGBA returns the base layer used for frequency-separated voting.
+// The separable [1 4 6 4 1] kernel removes pixel-scale texture while retaining
+// the gradients that should blend smoothly across an inpainted region.
+func pmLowPassNRGBA(src *image.NRGBA) *image.NRGBA {
+	w, h := src.Bounds().Dx(), src.Bounds().Dy()
+	out := image.NewNRGBA(image.Rect(0, 0, w, h))
+	if w == 0 || h == 0 {
+		return out
+	}
+	weights := [...]int{1, 4, 6, 4, 1}
+	tmp := make([]uint16, w*h*4)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			for channel := 0; channel < 4; channel++ {
+				sum := 0
+				for k := -2; k <= 2; k++ {
+					sx := clampInt(x+k, 0, w-1)
+					sum += weights[k+2] * int(src.Pix[y*src.Stride+sx*4+channel])
+				}
+				tmp[(y*w+x)*4+channel] = uint16(sum)
+			}
+		}
+	}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			for channel := 0; channel < 4; channel++ {
+				sum := 0
+				for k := -2; k <= 2; k++ {
+					sy := clampInt(y+k, 0, h-1)
+					sum += weights[k+2] * int(tmp[(sy*w+x)*4+channel])
+				}
+				out.Pix[y*out.Stride+x*4+channel] = byte((sum + 128) / 256)
+			}
 		}
 	}
 	return out

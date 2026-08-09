@@ -12,6 +12,7 @@ import (
 type pmPackedPlanes struct {
 	channel [4][]float32
 	luma    []float32
+	data    []float32
 	stride  int
 }
 
@@ -33,15 +34,25 @@ type pmKernelArgs struct {
 }
 
 func packPMPixels(src *image.NRGBA) pmPackedPlanes {
+	return packPMPixelsInto(src, pmPackedPlanes{})
+}
+
+func packPMPixelsInto(src *image.NRGBA, planes pmPackedPlanes) pmPackedPlanes {
 	w, h := src.Bounds().Dx(), src.Bounds().Dy()
 	stride := (w + 15) &^ 7
-	planes := pmPackedPlanes{stride: stride}
-	data := make([]float32, stride*h*5)
+	required := stride * h * 5
+	if cap(planes.data) < required {
+		planes.data = make([]float32, required)
+	} else {
+		planes.data = planes.data[:required]
+		clear(planes.data)
+	}
+	planes.stride = stride
 	for channel := range planes.channel {
 		start := channel * stride * h
-		planes.channel[channel] = data[start : start+stride*h]
+		planes.channel[channel] = planes.data[start : start+stride*h]
 	}
-	planes.luma = data[4*stride*h:]
+	planes.luma = planes.data[4*stride*h:]
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			srcIndex := y*src.Stride + x*4
@@ -60,8 +71,12 @@ func packPMPixels(src *image.NRGBA) pmPackedPlanes {
 	return planes
 }
 
-func buildPMFeaturesPacked(planes *pmPackedPlanes, w, h int) []pmFeature {
-	features := make([]pmFeature, w*h)
+func buildPMFeaturesPacked(planes *pmPackedPlanes, w, h int, features []pmFeature) []pmFeature {
+	if cap(features) < w*h {
+		features = make([]pmFeature, w*h)
+	} else {
+		features = features[:w*h]
+	}
 	for y := 0; y < h; y++ {
 		up := maxInt(0, y-1) * planes.stride
 		row := y * planes.stride
@@ -83,31 +98,58 @@ func packPMConfidence(mask *image.Alpha) (values []float32, stride int, integral
 	stride = (w + 15) &^ 7
 	values = make([]float32, stride*h)
 	integral = make([]float32, (w+1)*(h+1))
+	updatePMConfidence(mask, values, stride, integral, 0)
+	return values, stride, integral
+}
+
+func updatePMConfidence(mask *image.Alpha, values []float32, stride int, integral []float32, accepted float32) {
+	w, h := mask.Bounds().Dx(), mask.Bounds().Dy()
+	clear(values)
+	clear(integral)
 	for y := 0; y < h; y++ {
 		var rowSum float32
 		for x := 0; x < w; x++ {
 			confidence := float32(255-mask.Pix[y*mask.Stride+x]) / 255
-			if confidence < 0.04 {
-				confidence = 0.04
+			if accepted > 0 && confidence < 1 {
+				confidence += (1 - confidence) * accepted
 			}
 			values[y*stride+x] = confidence
 			rowSum += confidence
 			integral[(y+1)*(w+1)+x+1] = integral[y*(w+1)+x+1] + rowSum
 		}
 	}
-	return values, stride, integral
 }
 
-func pmPatchCost(level *pmLevel, target *pmPackedPlanes, targetFeature []pmFeature, tx, ty int, source pmPoint, bestCost float32) float32 {
+func pmPatchCost(level *pmLevel, target *pmPackedPlanes, targetStats []pmPatchStats, tx, ty int, source pmPoint, bestCost float32) float32 {
 	sx, sy := int(source.x), int(source.y)
-	tf := targetFeature[ty*level.w+tx]
-	sf := level.srcFeature[sy*level.w+sx]
-	dgx := tf.gx - sf.gx
-	dgy := tf.gy - sf.gy
-	gradientCost := (dgx*dgx + dgy*dgy) * 3
-	if gradientCost >= bestCost {
-		return gradientCost
+	targetStat := targetStats[ty*level.w+tx]
+	sourceStat := level.srcStats[sy*level.w+sx]
+	if targetStat.weight < 0.5 {
+		// A fully unsupported patch has no defensible appearance descriptor
+		// yet. Its healed estimate becomes comparable only after a coherent
+		// reconstruction raises the progressive confidence.
+		targetStat = sourceStat
 	}
+	dgx := targetStat.meanGradient[0] - sourceStat.meanGradient[0]
+	dgy := targetStat.meanGradient[1] - sourceStat.meanGradient[1]
+	detailDifference := targetStat.gradientEnergy - sourceStat.gradientEnergy
+	varianceDifference := targetStat.lumaStd - sourceStat.lumaStd
+	chromaVarianceDifference := targetStat.chromaStd - sourceStat.chromaStd
+	targetLuma := 0.299*targetStat.mean[0] + 0.587*targetStat.mean[1] + 0.114*targetStat.mean[2]
+	sourceLuma := 0.299*sourceStat.mean[0] + 0.587*sourceStat.mean[1] + 0.114*sourceStat.mean[2]
+	lumaDifference := targetLuma - sourceLuma
+	targetCb, targetCr := targetStat.mean[2]-targetLuma, targetStat.mean[0]-targetLuma
+	sourceCb, sourceCr := sourceStat.mean[2]-sourceLuma, sourceStat.mean[0]-sourceLuma
+	chromaMeanCost := squareFloat32(targetCb-sourceCb) + squareFloat32(targetCr-sourceCr)
+	descriptorCost := (dgx*dgx+dgy*dgy)*1.5 + detailDifference*detailDifference*0.6 +
+		varianceDifference*varianceDifference*0.8 + chromaVarianceDifference*chromaVarianceDifference*0.3 +
+		chromaMeanCost*0.12 + lumaDifference*lumaDifference*0.02
+	if descriptorCost >= bestCost {
+		return descriptorCost
+	}
+	meanDifferenceCost := (squareFloat32(targetStat.mean[0]-sourceStat.mean[0]) +
+		squareFloat32(targetStat.mean[1]-sourceStat.mean[1]) +
+		squareFloat32(targetStat.mean[2]-sourceStat.mean[2])) / 3
 
 	half := level.half
 	x0, y0 := tx-half, ty-half
@@ -115,9 +157,11 @@ func pmPatchCost(level *pmLevel, target *pmPackedPlanes, targetFeature []pmFeatu
 	denominator := confidenceSum*3 + 0.0001
 	rawLimit := float32(math.Inf(1))
 	if !float32IsInf(bestCost) {
-		rawLimit = (bestCost - gradientCost) * denominator
+		// Mean normalization may remove this much energy from the raw SSD,
+		// so include it in the SIMD kernel's safe early-exit allowance.
+		rawLimit = (bestCost - descriptorCost + meanDifferenceCost) * denominator
 		if rawLimit <= 0 {
-			return gradientCost
+			return descriptorCost
 		}
 	}
 
@@ -138,8 +182,11 @@ func pmPatchCost(level *pmLevel, target *pmPackedPlanes, targetFeature []pmFeatu
 		limit:      rawLimit,
 	}
 	sum := pmRunPatchKernel(&args)
-	return sum/denominator + gradientCost
+	normalizedPixelCost := maxFloat32(0, sum/denominator-meanDifferenceCost)
+	return normalizedPixelCost + descriptorCost
 }
+
+func squareFloat32(value float32) float32 { return value * value }
 
 func pmConfidenceRectSum(level *pmLevel, x0, y0, x1, y1 int) float32 {
 	stride := level.w + 1
