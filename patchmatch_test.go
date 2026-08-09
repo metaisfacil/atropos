@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"image"
@@ -111,16 +112,16 @@ func TestPatchMatchFillPreCancelledContext(t *testing.T) {
 // cancelled after a short delay; with many iterations PatchMatch would
 // otherwise take several seconds to finish.
 func TestPatchMatchFillMidOperationCancel(t *testing.T) {
-	src, mask := makeFilledSrc(400, 300)
+	src, mask := makeFilledSrc(800, 600)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(time.Millisecond)
 		cancel()
 	}()
 
 	start := time.Now()
-	_, err := PatchMatchFill(ctx, src, mask, 7, 50) // 50 iterations would take many seconds
+	_, err := PatchMatchFill(ctx, src, mask, 7, 500)
 	elapsed := time.Since(start)
 
 	if !errors.Is(err, context.Canceled) {
@@ -200,5 +201,130 @@ func TestPatchMatchChunkedFill(t *testing.T) {
 	}
 	if !unchanged {
 		t.Fatalf("expected unmasked pixels to remain unchanged")
+	}
+}
+
+func TestPatchMatchRegionsSplitDistantStrokes(t *testing.T) {
+	bounds := image.Rect(0, 0, 1600, 400)
+	mask := image.NewAlpha(bounds)
+	mask.SetAlpha(100, 200, color.Alpha{A: 255})
+	mask.SetAlpha(1450, 200, color.Alpha{A: 255})
+
+	regions, err := patchMatchRegions(context.Background(), mask, 256, bounds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(regions) != 2 {
+		t.Fatalf("distant strokes produced %d jobs, want 2: %v", len(regions), regions)
+	}
+}
+
+func TestPatchMatchRegionsMergeOverlappingContext(t *testing.T) {
+	bounds := image.Rect(0, 0, 800, 400)
+	mask := image.NewAlpha(bounds)
+	mask.SetAlpha(100, 200, color.Alpha{A: 255})
+	mask.SetAlpha(500, 200, color.Alpha{A: 255})
+
+	regions, err := patchMatchRegions(context.Background(), mask, 256, bounds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(regions) != 1 {
+		t.Fatalf("overlapping context windows produced %d jobs, want 1: %v", len(regions), regions)
+	}
+}
+
+func TestPatchMatchFillCompletesLargeHole(t *testing.T) {
+	const w, h = 192, 144
+	want := color.NRGBA{R: 176, G: 118, B: 73, A: 255}
+	src := image.NewNRGBA(image.Rect(0, 0, w, h))
+	draw.Draw(src, src.Bounds(), &image.Uniform{C: want}, image.Point{}, draw.Src)
+	mask := image.NewAlpha(src.Bounds())
+
+	hole := image.Rect(48, 36, 144, 108)
+	for y := hole.Min.Y; y < hole.Max.Y; y++ {
+		for x := hole.Min.X; x < hole.Max.X; x++ {
+			mask.Pix[y*mask.Stride+x] = 255
+			i := y*src.Stride + x*4
+			src.Pix[i] = 0
+			src.Pix[i+1] = 0
+			src.Pix[i+2] = 0
+		}
+	}
+
+	out, err := PatchMatchFill(context.Background(), src, mask, 7, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for y := hole.Min.Y; y < hole.Max.Y; y++ {
+		for x := hole.Min.X; x < hole.Max.X; x++ {
+			got := out.NRGBAAt(x, y)
+			if channelDelta(got.R, want.R) > 2 ||
+				channelDelta(got.G, want.G) > 2 ||
+				channelDelta(got.B, want.B) > 2 {
+				t.Fatalf("large-hole pixel (%d,%d) was not reconstructed: got %v, want %v", x, y, got, want)
+			}
+		}
+	}
+}
+
+func TestPatchMatchFillSoftMaskBlendsRGBA(t *testing.T) {
+	const w, h = 48, 40
+	background := color.NRGBA{R: 200, G: 100, B: 50, A: 255}
+	src := image.NewNRGBA(image.Rect(0, 0, w, h))
+	draw.Draw(src, src.Bounds(), &image.Uniform{C: background}, image.Point{}, draw.Src)
+	mask := image.NewAlpha(src.Bounds())
+
+	x, y := w/2, h/2
+	i := y*src.Stride + x*4
+	src.Pix[i] = 0
+	src.Pix[i+1] = 0
+	src.Pix[i+2] = 0
+	src.Pix[i+3] = 64
+	mask.Pix[y*mask.Stride+x] = 128
+
+	out, err := PatchMatchFill(context.Background(), src, mask, 7, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := out.NRGBAAt(x, y)
+	if got.R < 95 || got.R > 105 || got.G < 47 || got.G > 53 || got.B < 22 || got.B > 28 {
+		t.Fatalf("soft-mask RGB was not blended: got %v", got)
+	}
+	if got.A < 158 || got.A > 161 {
+		t.Fatalf("soft-mask alpha was not blended: got %d, want about 160", got.A)
+	}
+}
+
+func TestPatchMatchFillDeterministic(t *testing.T) {
+	src, mask := makeFilledSrc(120, 96)
+	first, err := PatchMatchFill(context.Background(), src, mask, 7, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := PatchMatchFill(context.Background(), src, mask, 7, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first.Pix, second.Pix) {
+		t.Fatal("PatchMatchFill produced different results for identical inputs")
+	}
+}
+
+func channelDelta(a, b uint8) int {
+	if a > b {
+		return int(a - b)
+	}
+	return int(b - a)
+}
+
+func BenchmarkPatchMatchFill(b *testing.B) {
+	src, mask := makeFilledSrc(512, 384)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := PatchMatchFill(context.Background(), src, mask, 7, 4); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
