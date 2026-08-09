@@ -122,13 +122,21 @@ func updatePMConfidence(mask *image.Alpha, values []float32, stride int, integra
 
 func pmPatchCost(level *pmLevel, target *pmPackedPlanes, targetStats []pmPatchStats, tx, ty int, source pmPoint, bestCost float32) float32 {
 	sx, sy := int(source.x), int(source.y)
-	targetStat := targetStats[ty*level.w+tx]
+	rawTargetStat := targetStats[ty*level.w+tx]
+	targetStat := pmGuidedTargetStats(rawTargetStat, level.guideStats[ty*level.w+tx])
 	sourceStat := level.srcStats[sy*level.w+sx]
-	if targetStat.weight < 0.5 {
-		// A fully unsupported patch has no defensible appearance descriptor
-		// yet. Its healed estimate becomes comparable only after a coherent
-		// reconstruction raises the progressive confidence.
-		targetStat = sourceStat
+	if rawTargetStat.weight < 0.5 {
+		// A flat guide supplies local color but no reliable structure. A strong
+		// guide edge is different: opposite known boundaries have continued an
+		// observed feature through the hole, and discarding that gradient lets
+		// an unrelated source edge cut across it. Blend from neutral source
+		// descriptors to the guide according to the guide's own edge strength.
+		structure := minFloat32(1, maxFloat32(0, (level.guideStats[ty*level.w+tx].gradientEnergy-2)/10))
+		targetStat.meanGradient[0] = sourceStat.meanGradient[0]*(1-structure) + targetStat.meanGradient[0]*structure
+		targetStat.meanGradient[1] = sourceStat.meanGradient[1]*(1-structure) + targetStat.meanGradient[1]*structure
+		targetStat.lumaStd = sourceStat.lumaStd*(1-structure) + targetStat.lumaStd*structure
+		targetStat.chromaStd = sourceStat.chromaStd*(1-structure) + targetStat.chromaStd*structure
+		targetStat.gradientEnergy = sourceStat.gradientEnergy*(1-structure) + targetStat.gradientEnergy*structure
 	}
 	dgx := targetStat.meanGradient[0] - sourceStat.meanGradient[0]
 	dgy := targetStat.meanGradient[1] - sourceStat.meanGradient[1]
