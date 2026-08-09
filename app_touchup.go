@@ -8,9 +8,125 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+// TouchUpPoint is an image-space point in a touch-up brush stroke.
+type TouchUpPoint struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+// TouchUpStrokeRequest is the compact brush representation sent by the
+// frontend. Keeping the stroke as points avoids constructing, PNG-encoding,
+// base64-encoding, transferring, decoding, and rescanning a full-size mask.
+type TouchUpStrokeRequest struct {
+	Points     []TouchUpPoint `json:"points"`
+	BrushSize  float64        `json:"brushSize"`
+	PatchSize  int            `json:"patchSize"`
+	Iterations int            `json:"iterations"`
+}
+
+// buildStrokeMask rasterizes round brush segments into an Alpha image whose
+// bounds are limited to the painted area but remain in source-image coordinates.
+func buildStrokeMask(bounds image.Rectangle, points []TouchUpPoint, brushSize float64) (*image.Alpha, error) {
+	if bounds.Empty() {
+		return nil, fmt.Errorf("no image loaded")
+	}
+	if len(points) == 0 {
+		return nil, fmt.Errorf("touch-up stroke is empty")
+	}
+	if len(points) > 1_000_000 {
+		return nil, fmt.Errorf("touch-up stroke has too many points")
+	}
+	if brushSize <= 0 || math.IsNaN(brushSize) || math.IsInf(brushSize, 0) {
+		return nil, fmt.Errorf("invalid touch-up brush size")
+	}
+
+	minX, minY := points[0].X, points[0].Y
+	maxX, maxY := minX, minY
+	for _, p := range points {
+		if math.IsNaN(p.X) || math.IsNaN(p.Y) || math.IsInf(p.X, 0) || math.IsInf(p.Y, 0) {
+			return nil, fmt.Errorf("invalid touch-up stroke point")
+		}
+		minX, minY = math.Min(minX, p.X), math.Min(minY, p.Y)
+		maxX, maxY = math.Max(maxX, p.X), math.Max(maxY, p.Y)
+	}
+
+	radius := brushSize / 2
+	pad := radius + 1
+	maskBounds := image.Rect(
+		int(math.Floor(minX-pad)),
+		int(math.Floor(minY-pad)),
+		int(math.Ceil(maxX+pad)),
+		int(math.Ceil(maxY+pad)),
+	).Intersect(bounds)
+	if maskBounds.Empty() {
+		return nil, fmt.Errorf("touch-up stroke is outside the image")
+	}
+
+	mask := image.NewAlpha(maskBounds)
+	if len(points) == 1 {
+		paintStrokeSegment(mask, points[0], points[0], radius)
+	} else {
+		for i := 1; i < len(points); i++ {
+			paintStrokeSegment(mask, points[i-1], points[i], radius)
+		}
+	}
+	return mask, nil
+}
+
+// paintStrokeSegment paints one antialiased round-ended segment, taking the
+// maximum coverage so overlapping segments behave like a canvas brush stroke.
+func paintStrokeSegment(mask *image.Alpha, a, b TouchUpPoint, radius float64) {
+	outer := radius + 0.5
+	inner := math.Max(0, radius-0.5)
+	segmentBounds := image.Rect(
+		int(math.Floor(math.Min(a.X, b.X)-outer)),
+		int(math.Floor(math.Min(a.Y, b.Y)-outer)),
+		int(math.Ceil(math.Max(a.X, b.X)+outer)),
+		int(math.Ceil(math.Max(a.Y, b.Y)+outer)),
+	).Intersect(mask.Bounds())
+	if segmentBounds.Empty() {
+		return
+	}
+
+	dx, dy := b.X-a.X, b.Y-a.Y
+	lengthSquared := dx*dx + dy*dy
+	innerSquared := inner * inner
+	outerSquared := outer * outer
+	for y := segmentBounds.Min.Y; y < segmentBounds.Max.Y; y++ {
+		py := float64(y) + 0.5
+		row := (y - mask.Rect.Min.Y) * mask.Stride
+		for x := segmentBounds.Min.X; x < segmentBounds.Max.X; x++ {
+			px := float64(x) + 0.5
+			t := 0.0
+			if lengthSquared > 0 {
+				t = ((px-a.X)*dx + (py-a.Y)*dy) / lengthSquared
+				t = math.Max(0, math.Min(1, t))
+			}
+			qx, qy := a.X+t*dx, a.Y+t*dy
+			distX, distY := px-qx, py-qy
+			distanceSquared := distX*distX + distY*distY
+			if distanceSquared >= outerSquared {
+				continue
+			}
+
+			alpha := uint8(255)
+			if distanceSquared > innerSquared {
+				coverage := outer - math.Sqrt(distanceSquared)
+				alpha = uint8(math.Round(math.Max(0, math.Min(1, coverage)) * 255))
+			}
+			index := row + x - mask.Rect.Min.X
+			if alpha > mask.Pix[index] {
+				mask.Pix[index] = alpha
+			}
+		}
+	}
+}
 
 // patchMatchChunkedFill splits distant mask regions into independent jobs,
 // crops each to its bounding box (+ margin), then composites only filled mask
@@ -255,40 +371,60 @@ type touchUpDoneEvent struct {
 	DescreenReset bool   `json:"descreenReset,omitempty"`
 }
 
-// TouchUpApply builds the mask synchronously (fast), then launches a goroutine
-// for the slow fill and returns immediately. This keeps the Wails IPC queue free
-// so that CancelTouchup() can interrupt the in-flight operation at any time.
-// The fill result is delivered via the "touchup-done" event.
+// TouchUpApply accepts the legacy full-size PNG mask. New brush callers should
+// use TouchUpApplyStrokes to avoid the full-image encode/decode path.
 func (a *App) TouchUpApply(maskB64 string, patchSize int, iterations int) (*ProcessResult, error) {
 	a.logf("TouchUpApply: backend=%q patchSize=%d iterations=%d patchKernel=%s", a.touchupBackend, patchSize, iterations, pmActivePatchKernel())
 	if a.currentImage == nil && a.warpedImage == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
 
-	// Cancel any previous in-flight operation, then register this one.
 	a.cancelTouchup()
-	ctx, cancel := context.WithCancel(context.Background())
-	a.touchupMu.Lock()
-	a.touchupCancel = cancel
-	a.touchupMu.Unlock()
-
 	mask, err := a.buildMask(maskB64)
 	if err != nil {
-		cancel()
-		a.touchupMu.Lock()
-		a.touchupCancel = nil
-		a.touchupMu.Unlock()
 		return nil, err
 	}
 
 	srcImg := a.workingImage()
 	if srcImg == nil {
-		cancel()
-		a.touchupMu.Lock()
-		a.touchupCancel = nil
-		a.touchupMu.Unlock()
 		return nil, fmt.Errorf("no image loaded")
 	}
+	return a.startTouchup(srcImg, mask, patchSize, iterations)
+}
+
+// TouchUpApplyStrokes rasterizes a compact image-space brush stroke directly
+// into a bounded mask and starts the asynchronous fill.
+func (a *App) TouchUpApplyStrokes(request TouchUpStrokeRequest) (*ProcessResult, error) {
+	started := time.Now()
+	a.logf("TouchUpApplyStrokes: backend=%q points=%d brushSize=%.1f patchSize=%d iterations=%d patchKernel=%s",
+		a.touchupBackend, len(request.Points), request.BrushSize, request.PatchSize, request.Iterations, pmActivePatchKernel())
+	if a.currentImage == nil && a.warpedImage == nil {
+		return nil, fmt.Errorf("no image loaded")
+	}
+
+	// Cancel first so a prior fill cannot commit while this stroke is being
+	// rasterized. The bounded rasterizer normally completes in a few milliseconds.
+	a.cancelTouchup()
+	srcImg := a.workingImage()
+	if srcImg == nil {
+		return nil, fmt.Errorf("no image loaded")
+	}
+	mask, err := buildStrokeMask(srcImg.Bounds(), request.Points, request.BrushSize)
+	if err != nil {
+		return nil, err
+	}
+	a.logf("TouchUpApplyStrokes: mask=%v bytes=%d rasterize=%s", mask.Bounds(), len(mask.Pix), time.Since(started))
+	return a.startTouchup(srcImg, mask, request.PatchSize, request.Iterations)
+}
+
+// startTouchup registers cancellation, launches the fill, and returns without
+// holding up Wails' IPC queue. Completion is delivered via "touchup-done".
+func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, iterations int) (*ProcessResult, error) {
+	a.cancelTouchup()
+	ctx, cancel := context.WithCancel(context.Background())
+	a.touchupMu.Lock()
+	a.touchupCancel = cancel
+	a.touchupMu.Unlock()
 
 	go func() {
 		a.logf("TouchUpApply goroutine: starting fill, backend=%s", a.touchupBackend)

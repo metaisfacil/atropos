@@ -210,6 +210,10 @@ export function TouchUpApply(arg1, arg2, arg3) {
   return window['go']['main']['App']['TouchUpApply'](arg1, arg2, arg3);
 }
 
+export function TouchUpApplyStrokes(arg1) {
+  return window['go']['main']['App']['TouchUpApplyStrokes'](arg1);
+}
+
 export function TrimBorders() {
   return window['go']['main']['App']['TrimBorders']();
 }
