@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	"math"
 	"testing"
 	"time"
 )
@@ -309,6 +310,166 @@ func TestPatchMatchFillDeterministic(t *testing.T) {
 	if !bytes.Equal(first.Pix, second.Pix) {
 		t.Fatal("PatchMatchFill produced different results for identical inputs")
 	}
+}
+
+func TestPatchMatchFillPreservesMicrotextureEnergy(t *testing.T) {
+	const w, h = 128, 96
+	original := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			// A deterministic 16x16 stochastic tile gives PatchMatch several
+			// exact source realizations while retaining photographic high
+			// frequencies that incoherent averaging would suppress.
+			hash := pmHash(uint32(x&15), uint32(y&15), 91)
+			grain := int(hash%37) - 18
+			base := 132 + x/16
+			i := y*original.Stride + x*4
+			original.Pix[i] = byte(clampInt(base+grain, 0, 255))
+			original.Pix[i+1] = byte(clampInt(base+grain/2, 0, 255))
+			original.Pix[i+2] = byte(clampInt(base-grain/3, 0, 255))
+			original.Pix[i+3] = 255
+		}
+	}
+
+	src := cloneNRGBA(original)
+	mask := image.NewAlpha(src.Bounds())
+	hole := image.Rect(57, 41, 71, 55)
+	for y := hole.Min.Y; y < hole.Max.Y; y++ {
+		for x := hole.Min.X; x < hole.Max.X; x++ {
+			mask.Pix[y*mask.Stride+x] = 255
+			i := y*src.Stride + x*4
+			src.Pix[i], src.Pix[i+1], src.Pix[i+2] = 8, 8, 8
+		}
+	}
+
+	out, err := PatchMatchFill(context.Background(), src, mask, 9, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedEnergy := patchHighFrequencyEnergy(original, hole)
+	actualEnergy := patchHighFrequencyEnergy(out, hole)
+	if actualEnergy < expectedEnergy*0.70 {
+		t.Fatalf("microtexture energy collapsed: got %.2f, want at least 70%% of %.2f", actualEnergy, expectedEnergy)
+	}
+	expectedDeviation := patchLumaDeviation(original, hole)
+	actualDeviation := patchLumaDeviation(out, hole)
+	if actualDeviation < expectedDeviation*0.65 {
+		t.Fatalf("local texture variance collapsed: got %.2f, want at least 65%% of %.2f", actualDeviation, expectedDeviation)
+	}
+}
+
+func TestPatchMatchFillFollowsLowFrequencyGradient(t *testing.T) {
+	const w, h = 120, 80
+	original := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			value := 54 + x
+			i := y*original.Stride + x*4
+			original.Pix[i] = byte(value)
+			original.Pix[i+1] = byte(value - 5)
+			original.Pix[i+2] = byte(value - 10)
+			original.Pix[i+3] = 255
+		}
+	}
+	src := cloneNRGBA(original)
+	mask := image.NewAlpha(src.Bounds())
+	hole := image.Rect(54, 34, 66, 46)
+	paintTestHole(src, mask, hole, color.NRGBA{R: 5, G: 5, B: 5, A: 255})
+
+	out, err := PatchMatchFill(context.Background(), src, mask, 9, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mae := patchLumaMAE(out, original, hole); mae > 12 {
+		t.Fatalf("low-frequency gradient did not blend through fill: MAE %.2f, want <= 12", mae)
+	}
+}
+
+func TestPatchMatchFillContinuesStructuredEdge(t *testing.T) {
+	const w, h = 128, 88
+	original := image.NewNRGBA(image.Rect(0, 0, w, h))
+	draw.Draw(original, original.Bounds(), &image.Uniform{C: color.NRGBA{R: 48, G: 52, B: 55, A: 255}}, image.Point{}, draw.Src)
+	for y := 42; y <= 45; y++ {
+		for x := 0; x < w; x++ {
+			i := y*original.Stride + x*4
+			original.Pix[i], original.Pix[i+1], original.Pix[i+2] = 210, 196, 162
+		}
+	}
+	src := cloneNRGBA(original)
+	mask := image.NewAlpha(src.Bounds())
+	hole := image.Rect(57, 36, 71, 52)
+	paintTestHole(src, mask, hole, color.NRGBA{R: 8, G: 8, B: 8, A: 255})
+
+	out, err := PatchMatchFill(context.Background(), src, mask, 9, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stripe := patchMeanLuma(out, image.Rect(hole.Min.X+2, 42, hole.Max.X-2, 46))
+	background := patchMeanLuma(out, image.Rect(hole.Min.X+2, 37, hole.Max.X-2, 40))
+	if stripe < 160 || stripe-background < 75 {
+		t.Fatalf("structured edge was not continued: stripe=%.1f background=%.1f", stripe, background)
+	}
+}
+
+func paintTestHole(src *image.NRGBA, mask *image.Alpha, bounds image.Rectangle, value color.NRGBA) {
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			mask.Pix[y*mask.Stride+x] = 255
+			src.SetNRGBA(x, y, value)
+		}
+	}
+}
+
+func pixelLuma(src *image.NRGBA, x, y int) float64 {
+	pixel := src.NRGBAAt(x, y)
+	return 0.299*float64(pixel.R) + 0.587*float64(pixel.G) + 0.114*float64(pixel.B)
+}
+
+func patchMeanLuma(src *image.NRGBA, bounds image.Rectangle) float64 {
+	var sum float64
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			sum += pixelLuma(src, x, y)
+		}
+	}
+	return sum / float64(bounds.Dx()*bounds.Dy())
+}
+
+func patchLumaDeviation(src *image.NRGBA, bounds image.Rectangle) float64 {
+	mean := patchMeanLuma(src, bounds)
+	var sum float64
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			difference := pixelLuma(src, x, y) - mean
+			sum += difference * difference
+		}
+	}
+	return math.Sqrt(sum / float64(bounds.Dx()*bounds.Dy()))
+}
+
+func patchHighFrequencyEnergy(src *image.NRGBA, bounds image.Rectangle) float64 {
+	var sum float64
+	var count int
+	for y := maxInt(1, bounds.Min.Y); y < minInt(src.Bounds().Dy()-1, bounds.Max.Y); y++ {
+		for x := maxInt(1, bounds.Min.X); x < minInt(src.Bounds().Dx()-1, bounds.Max.X); x++ {
+			center := pixelLuma(src, x, y)
+			neighbours := (pixelLuma(src, x-1, y) + pixelLuma(src, x+1, y) +
+				pixelLuma(src, x, y-1) + pixelLuma(src, x, y+1)) * 0.25
+			sum += math.Abs(center - neighbours)
+			count++
+		}
+	}
+	return sum / float64(count)
+}
+
+func patchLumaMAE(actual, expected *image.NRGBA, bounds image.Rectangle) float64 {
+	var sum float64
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			sum += math.Abs(pixelLuma(actual, x, y) - pixelLuma(expected, x, y))
+		}
+	}
+	return sum / float64(bounds.Dx()*bounds.Dy())
 }
 
 func channelDelta(a, b uint8) int {

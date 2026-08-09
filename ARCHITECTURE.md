@@ -566,7 +566,23 @@ TouchUpApply(maskB64, patchSize, iterations) → ProcessResult{Message:"running"
 
 ### PatchMatch (`patchmatch.go`, used via `patchMatchChunkedFill`)
 
-Nearest-neighbour patch matching with forward and reverse passes (parallelised). `ctx.Err()` is checked at entry (critical — mask building can take ~1 s on large images) and periodically throughout. For `context.Background()` (warp outpaint) the done channel is nil and the select takes the default branch with zero overhead.
+PatchMatch uses a coarse-to-fine NNF with parallel Jacobi propagation and random
+search. Each pyramid level runs two EM rounds: the first reconstruction becomes
+a progressively trusted target for the second round. The coarsest target is an
+alpha-normalized pull/push heal, so pixels inside the hard mask never seed the
+search with the dust or damage being removed.
+
+Patch comparison combines the SIMD RGB SSD kernel with whole-patch luminance,
+chroma, variance, and gradient descriptors. Reconstruction clusters overlapping
+votes by source displacement. Low frequencies may be averaged across plausible
+votes in smooth areas, while structure-adaptive coherent voting transfers the
+high-frequency residual from one source mapping. Bounded local gain/bias aligns
+tone without averaging away grain.
+
+`ctx.Err()` is checked at entry and periodically throughout. Quality regression
+tests cover high-frequency energy/local variance, low-frequency gradient
+continuity, and structured-edge continuation in addition to completion,
+cancellation, soft-mask blending, and determinism.
 
 ### iopaintFill (`app_iopaint.go`)
 
