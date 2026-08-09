@@ -40,6 +40,12 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
   const [resultDims, setResultDims] = useState(null)
   const [rotation, setRotation]     = useState(0)   // 0 | 90 | 180 | 270
 
+  // Hooks must run in the same order whether the fading modal is mounted or
+  // not. Calling this only after `mounted` becomes true crashes React when the
+  // compositor is opened because that render has more hooks than the previous
+  // closed render.
+  const displayPreview = useProgressivePreview(preview)
+
   // ── Fade mount/unmount ───────────────────────────────────────────────────
   useEffect(() => {
     if (open) {
@@ -166,7 +172,6 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
 
   // ── Render ───────────────────────────────────────────────────────────────
   const hasResult = preview !== null
-  const displayPreview = useProgressivePreview(preview)
   const previewPresentationPending = isPreviewPresentationPending(preview, presentedPreview)
   const stitchBusy = stitching || previewPresentationPending
   const canStitch = paths.length >= 2 && !stitchBusy
