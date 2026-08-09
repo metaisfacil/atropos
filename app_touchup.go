@@ -467,7 +467,7 @@ func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, it
 		a.saveUndo()
 		a.setWorkingImage(out)
 
-		preview, encErr := imageToBase64(out)
+		preview, encErr := a.imagePreviewURL(out)
 		if encErr != nil {
 			emit(touchUpDoneEvent{Error: encErr.Error()})
 			return

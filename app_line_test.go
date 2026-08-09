@@ -155,8 +155,8 @@ func TestProcessLines_ReturnsPreview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(res.Preview, "data:image/") {
-		t.Fatal("preview is not a data URI")
+	if !strings.HasPrefix(res.Preview, previewAssetPathPrefix) {
+		t.Fatal("preview is not an asset URL")
 	}
 }
 
@@ -253,8 +253,8 @@ func TestClearLines_ReturnsCurrentImagePreview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(res.Preview, "data:image/") {
-		t.Fatal("preview is not a data URI")
+	if !strings.HasPrefix(res.Preview, previewAssetPathPrefix) {
+		t.Fatal("preview is not an asset URL")
 	}
 }
 

@@ -119,8 +119,8 @@ func TestClickCorner_FourthClickDoneIsTrue(t *testing.T) {
 func TestClickCorner_FourthClickReturnsPreview(t *testing.T) {
 	a := newLoadedTestApp(200, 200)
 	res := clickFourCorners(t, a)
-	if !strings.HasPrefix(res.Preview, "data:image/") {
-		t.Fatalf("expected data URI preview after 4th click, got: %q", res.Preview[:min(len(res.Preview), 50)])
+	if !strings.HasPrefix(res.Preview, previewAssetPathPrefix) {
+		t.Fatalf("expected asset preview after 4th click, got: %q", res.Preview[:min(len(res.Preview), 50)])
 	}
 }
 
@@ -221,8 +221,8 @@ func TestResetCorners_PreviewIsDataURI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(res.Preview, "data:image/") {
-		t.Fatal("preview is not a data URI")
+	if !strings.HasPrefix(res.Preview, previewAssetPathPrefix) {
+		t.Fatal("preview is not an asset URL")
 	}
 }
 
@@ -289,8 +289,8 @@ func TestRestoreCornerOverlay_PreviewIsDataURI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(res.Preview, "data:image/") {
-		t.Fatal("preview is not a data URI")
+	if !strings.HasPrefix(res.Preview, previewAssetPathPrefix) {
+		t.Fatal("preview is not an asset URL")
 	}
 }
 

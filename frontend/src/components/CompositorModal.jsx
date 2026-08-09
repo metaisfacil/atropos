@@ -5,6 +5,7 @@ import {
   CompositorLoadResult,
 } from '../../wailsjs/go/main/App'
 import DelayedHint from './DelayedHint'
+import { isPreviewPresentationPending, isPreviewVariant, useProgressivePreview } from '../hooks/useProgressivePreview'
 
 const FADE_MS = 150
 
@@ -35,6 +36,7 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
   const [loading, setLoading]       = useState(false)
   const [status, setStatus]         = useState('')
   const [preview, setPreview]       = useState(null)
+  const [presentedPreview, setPresentedPreview] = useState(null)
   const [resultDims, setResultDims] = useState(null)
   const [rotation, setRotation]     = useState(0)   // 0 | 90 | 180 | 270
 
@@ -163,8 +165,11 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
-  const canStitch = paths.length >= 2 && !stitching
   const hasResult = preview !== null
+  const displayPreview = useProgressivePreview(preview)
+  const previewPresentationPending = isPreviewPresentationPending(preview, presentedPreview)
+  const stitchBusy = stitching || previewPresentationPending
+  const canStitch = paths.length >= 2 && !stitchBusy
 
   return (
     <div
@@ -249,7 +254,7 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
 
           <div className="compositor-file-controls">
             <DelayedHint hint="Open a file picker to add images to the sequence.">
-              <button className="load-btn" onClick={handleAddFiles} disabled={stitching}>
+              <button className="load-btn" onClick={handleAddFiles} disabled={stitchBusy}>
                 Add images…
               </button>
             </DelayedHint>
@@ -258,7 +263,7 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
                 <button
                   className="reset-btn-danger"
                   onClick={handleClearAll}
-                  disabled={stitching}
+                  disabled={stitchBusy}
                 >
                   Clear all
                 </button>
@@ -282,12 +287,19 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
                   >↺</button>
                 </DelayedHint>
                 <div className={`compositor-preview-frame${Math.abs(rotation) % 180 !== 0 ? ' compositor-preview-frame--sideways' : ''}`}>
-                  <img
-                    src={preview}
-                    alt="Stitched preview"
-                    className="compositor-preview"
-                    style={{ transform: `rotate(${rotation}deg)` }}
-                  />
+                  {displayPreview && (
+                    <img
+                      src={displayPreview}
+                      alt="Stitched preview"
+                      className="compositor-preview"
+                      style={{ transform: `rotate(${rotation}deg)` }}
+                      onLoad={() => {
+                        if (isPreviewVariant(displayPreview, preview)) {
+                          setPresentedPreview(preview)
+                        }
+                      }}
+                    />
+                  )}
                 </div>
                 <DelayedHint hint="Rotate 90° clockwise.">
                   <button
@@ -322,14 +334,14 @@ export default function CompositorModal({ open, onClose, onLoad, dropRef }) {
                 onClick={handleStitch}
                 disabled={!canStitch}
               >
-                {stitching ? <span className="btn-spinner" /> : 'Stitch images'}
+                {stitchBusy ? <span className="btn-spinner" /> : 'Stitch images'}
               </button>
             </DelayedHint>
             <DelayedHint hint="Load the stitched result as the active image for cropping and adjustment.">
               <button
                 className="load-btn"
                 onClick={handleLoadForCropping}
-                disabled={!hasResult || stitching || loading}
+                disabled={!hasResult || stitchBusy || loading}
               >
                 {loading ? <span className="btn-spinner" /> : 'Load output'}
               </button>

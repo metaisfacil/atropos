@@ -127,9 +127,9 @@ func (a *App) CompositorStitch(req CompositorStitchRequest) (*CompositorResult, 
 	a.compositorResult = result
 	a.compositorMu.Unlock()
 
-	preview, err := imageToBase64(result)
+	preview, err := a.imagePreviewURL(result)
 	if err != nil {
-		return nil, fmt.Errorf("preview encoding failed: %w", err)
+		return nil, fmt.Errorf("preview registration failed: %w", err)
 	}
 
 	b := result.Bounds()
@@ -196,9 +196,9 @@ func (a *App) CompositorLoadResult(req CompositorLoadResultRequest) (*ImageInfo,
 	a.postDiscBlack = 0
 	a.postDiscWhite = 255
 
-	preview, err := imageToBase64(a.currentImage)
+	preview, err := a.imagePreviewURL(a.currentImage)
 	if err != nil {
-		return nil, fmt.Errorf("preview encoding failed: %w", err)
+		return nil, fmt.Errorf("preview registration failed: %w", err)
 	}
 
 	b := img.Bounds()
