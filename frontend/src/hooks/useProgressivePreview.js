@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 export const PREVIEW_ASSET_PREFIX = '/__atropos/preview/'
+export const FULL_RESOLUTION_PROMOTION_DELAY_MS = 750
 
 export function lowResolutionPreviewURL(source) {
   if (typeof source !== 'string' || !source.startsWith(PREVIEW_ASSET_PREFIX) || !source.endsWith('.jpg')) {
@@ -42,54 +43,95 @@ export function usePresentedValue(value, presentationPending) {
 
 // Keeps the previous image visible while the next small preview loads, then
 // promotes the same immutable revision to its full-resolution resource.
-export function useProgressivePreview(source) {
+function abortImageLoad(loader) {
+  if (!loader) return
+  loader.onload = null
+  loader.onerror = null
+  if (typeof loader.removeAttribute === 'function') loader.removeAttribute('src')
+}
+
+export function useProgressivePreview(source, deferFullResolution = false) {
   const [displaySource, setDisplaySource] = useState(null)
+  const [lowState, setLowState] = useState({ source: null, status: 'idle' })
 
   useEffect(() => {
     if (!source) {
       setDisplaySource(null)
+      setLowState({ source: null, status: 'idle' })
       return undefined
     }
 
     const lowSource = lowResolutionPreviewURL(source)
     if (!lowSource) {
       setDisplaySource(source)
+      setLowState({ source, status: 'unavailable' })
       return undefined
     }
 
     let cancelled = false
-    let fullLoader = null
-    const loadFullResolution = () => {
-      fullLoader = new Image()
-      fullLoader.onload = () => {
-        if (!cancelled) setDisplaySource(source)
-      }
-      // Retain the previous or low-resolution image on failure. A URL is
-      // assigned to the visible element only after successful browser decode.
-      fullLoader.onerror = () => {}
-      fullLoader.src = source
-    }
+    let settled = false
+    setLowState({ source, status: 'loading' })
     const lowLoader = new Image()
     lowLoader.onload = () => {
       if (cancelled) return
+      settled = true
       setDisplaySource(lowSource)
-      loadFullResolution()
+      setLowState({ source, status: 'ready' })
     }
     lowLoader.onerror = () => {
-      if (!cancelled) loadFullResolution()
+      if (cancelled) return
+      settled = true
+      setLowState({ source, status: 'failed' })
     }
     lowLoader.src = lowSource
 
     return () => {
       cancelled = true
-      lowLoader.onload = null
-      lowLoader.onerror = null
-      if (fullLoader) {
-        fullLoader.onload = null
-        fullLoader.onerror = null
-      }
+      if (!settled) abortImageLoad(lowLoader)
     }
   }, [source])
+
+  useEffect(() => {
+    const lowSource = lowResolutionPreviewURL(source)
+    if (!lowSource || lowState.source !== source) return undefined
+
+    const lowFailed = lowState.status === 'failed'
+    const lowPresented = lowState.status === 'ready' && displaySource === lowSource
+    if (!lowFailed && !lowPresented) return undefined
+    if (deferFullResolution && !lowFailed) return undefined
+
+    let cancelled = false
+    let settled = false
+    let fullLoader = null
+    const loadFullResolution = () => {
+      if (cancelled) return
+      fullLoader = new Image()
+      fullLoader.onload = () => {
+        if (cancelled) return
+        settled = true
+        setDisplaySource(source)
+      }
+      // Retain the previous or low-resolution image on failure. A URL is
+      // assigned to the visible element only after successful browser decode.
+      fullLoader.onerror = () => { settled = true }
+      fullLoader.src = source
+    }
+
+    // A failed low asset has no visible fallback, so request full immediately.
+    // Otherwise wait for an idle window before starting the expensive encode.
+    let fullTimer = null
+    if (lowFailed) {
+      loadFullResolution()
+    } else {
+      fullTimer = setTimeout(loadFullResolution, FULL_RESOLUTION_PROMOTION_DELAY_MS)
+    }
+
+    return () => {
+      cancelled = true
+      if (fullTimer !== null) clearTimeout(fullTimer)
+      if (!settled) abortImageLoad(fullLoader)
+    }
+  }, [source, lowState, displaySource, deferFullResolution])
 
   if (!source) return null
   const sourceSession = previewAssetSession(source)

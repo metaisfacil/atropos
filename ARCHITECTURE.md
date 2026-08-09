@@ -659,6 +659,12 @@ the frontend synchronously hide a prior image while a new image loads. Encodes a
 requests can cancel while waiting instead of queueing every intermediate image
 from a rapid adjustment drag. `useProgressivePreview` promotes each revision
 from its low-resolution URL to its full-resolution URL after browser decode.
+Full-resolution promotion has a short settling delay. A newer revision cancels
+that timer and explicitly aborts superseded preload requests, so a rapid edit
+sequence remains at a consistent preview quality and sharpens only once after
+the sequence becomes idle. Backend processing and active canvas drags also
+pause and restart the promotion window, preventing a full encode from starting
+between a touch-up stroke and the arrival of its replacement revision.
 The frontend tracks the last revision whose visible `<img>` fired `onLoad`.
 User-facing busy state is `backend loading || preview presentation pending`, so
 spinners and core canvas/action guards remain active after a Go call returns until the
