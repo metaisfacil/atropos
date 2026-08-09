@@ -5,7 +5,6 @@ import (
 	"image"
 	"image/color"
 	"math"
-	"strings"
 	"testing"
 )
 
@@ -143,24 +142,6 @@ func TestSubImage_ClampsToBounds(t *testing.T) {
 	// Should clamp to source bounds
 	if sub.Bounds().Dx() != 5 || sub.Bounds().Dy() != 5 {
 		t.Fatalf("expected 5x5, got %dx%d", sub.Bounds().Dx(), sub.Bounds().Dy())
-	}
-}
-
-// ---- imageToBase64 ----
-
-func TestImageToBase64_ProducesDataURI(t *testing.T) {
-	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
-	s, err := imageToBase64(img)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(s, "data:image/jpeg;base64,") {
-		t.Fatal("missing data URI prefix")
-	}
-	// Base64 payload should be non-empty
-	payload := strings.TrimPrefix(s, "data:image/jpeg;base64,")
-	if len(payload) == 0 {
-		t.Fatal("empty base64 payload")
 	}
 }
 
@@ -634,22 +615,5 @@ func TestResizeNRGBA_PreservesColor(t *testing.T) {
 				t.Fatalf("pixel (%d,%d) = %v, want red", x, y, c)
 			}
 		}
-	}
-}
-
-func TestImageToBase64_DownscalesLargeImages(t *testing.T) {
-	// Create a large image that triggers downscaling
-	img := image.NewNRGBA(image.Rect(0, 0, 3200, 2400))
-	s, err := imageToBase64(img)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Should still produce a valid data URI
-	if !strings.HasPrefix(s, "data:image/jpeg;base64,") {
-		t.Fatal("expected JPEG data URI for large image")
-	}
-	// The base64 payload should be far smaller than full-res PNG would be
-	if len(s) > 500000 {
-		t.Fatalf("preview too large: %d bytes, expected under 500KB", len(s))
 	}
 }

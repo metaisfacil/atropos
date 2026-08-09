@@ -99,7 +99,7 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 	// Keep a no-mask preview for live drag mode (disc overlay is decoupled from
 	// content during momentum interactions).
 	if a.discBaseImage != nil {
-		if p, err := imageToBase64(a.discBaseImage); err == nil {
+		if p, err := a.imagePreviewURL(a.discBaseImage); err == nil {
 			a.discNoMaskPreview = p
 		}
 	}
@@ -187,7 +187,7 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 	if a.postDiscBlack != 0 || a.postDiscWhite != 255 {
 		unmasked = applyLevels(unmasked, a.postDiscBlack, a.postDiscWhite)
 	}
-	if p, err := imageToBase64(unmasked); err == nil {
+	if p, err := a.imagePreviewURL(unmasked); err == nil {
 		a.discNoMaskPreview = p
 	}
 
@@ -211,7 +211,7 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 	// from the freshly rendered disc image.
 	a.levelsBaseImage = nil
 
-	preview, err := imageToBase64(a.warpedImage)
+	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +380,7 @@ func (a *App) ResetDisc() (*ProcessResult, error) {
 	if a.currentImage == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
-	preview, err := imageToBase64(a.currentImage)
+	preview, err := a.imagePreviewURL(a.currentImage)
 	if err != nil {
 		return nil, err
 	}

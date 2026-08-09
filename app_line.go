@@ -150,7 +150,7 @@ func (a *App) ProcessLines() (*ProcessResult, error) {
 	a.warpedImage = warped
 	a.lines = nil
 
-	preview, err := imageToBase64(a.warpedImage)
+	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +169,7 @@ func (a *App) ClearLines() (*ProcessResult, error) {
 	if a.currentImage == nil {
 		return &ProcessResult{Message: "Lines cleared"}, nil
 	}
-	preview, err := imageToBase64(a.currentImage)
+	preview, err := a.imagePreviewURL(a.currentImage)
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,14 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { LogFrontend, SetFeatherSize } from '../../wailsjs/go/main/App'
 
+export function maxUsefulZoom(naturalWidth, fitWidth) {
+  if (!(naturalWidth > 0) || !(fitWidth > 0)) return 5
+  // Preserve the historical 5x minimum while allowing two screen pixels per
+  // source pixel on large scans. Keep a defensive ceiling for pathological
+  // dimensions and accidental layout values.
+  return Math.min(40, Math.max(5, (naturalWidth / fitWidth) * 2))
+}
+
 export function useZoomPan({ imgRef, mode, discActive, featherSize, setFeatherSize, setPreview }) {
   const [zoom, setZoom]               = useState(1)
   const [fitWidth, setFitWidth]       = useState(0)
@@ -64,8 +72,9 @@ export function useZoomPan({ imgRef, mode, discActive, featherSize, setFeatherSi
       }
 
       const factor = e.deltaY < 0 ? 1.1 : 0.9
+      const maxZoom = maxUsefulZoom(imgRef.current?.naturalWidth || imgNatural.w, fitWidth)
       setZoom(z => {
-        const newZ = Math.min(5, Math.max(0.1, z * factor))
+        const newZ = Math.min(maxZoom, Math.max(0.1, z * factor))
         if (newZ === z) return z
         const canvasRect = el.getBoundingClientRect()
         const imgEl      = imgRef.current
@@ -90,7 +99,7 @@ export function useZoomPan({ imgRef, mode, discActive, featherSize, setFeatherSi
       el.removeEventListener('wheel', handler, { capture: true })
       el.removeEventListener('scroll', scrollSpy)
     }
-  }, [mode, discActive, featherSize]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, discActive, featherSize, fitWidth, imgNatural.w]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Space-key pan mode ────────────────────────────────────────────────────
   useEffect(() => {
