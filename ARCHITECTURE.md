@@ -261,8 +261,12 @@ SkipCrop()
     require currentImage != nil
     warpedImage     = cloneImage(currentImage)
     selectedCorners = nil
-    return currentImage preview + dims + "Crop skipped — image ready to save"
+    return dims + "Crop skipped — image ready to save"
 ```
+
+`SkipCrop` deliberately does not publish a preview revision: its committed
+pixels are identical to the preview already on screen, so replacing the asset
+would only trigger a redundant low/full decode and redraw.
 
 `SkipCrop` is available in all four modes. The frontend sets mode-specific state to transition past phase 1 without performing a warp:
 
@@ -561,8 +565,17 @@ TouchUpApply(maskB64, patchSize, iterations) → ProcessResult{Message:"running"
         if cancelled  → EventsEmit("touchup-done", {cancelled:true})
         if error      → EventsEmit("touchup-done", {error})
         saveUndo(); setWorkingImage(out)
-        EventsEmit("touchup-done", {preview, message, width, height, descreenReset})
+        encode only the nonzero mask bounds as a transparent PNG replacement
+        EventsEmit("touchup-done", {patch, message, width, height, descreenReset})
 ```
+
+Touch-up does not register a new full-frame preview revision. The frontend
+positions the returned patch in full-image coordinates above the current base
+image and keeps it there across that revision's low-to-full promotion. Rapid
+touch-ups therefore add only their changed rectangles; neither base asset is
+re-encoded or swapped. The busy indicator remains active until the patch
+element fires `onLoad`. Any later non-touch-up preview revision contains the
+committed pixels and clears the temporary patch stack.
 
 ### PatchMatch (`patchmatch.go`, used via `patchMatchChunkedFill`)
 
@@ -650,7 +663,8 @@ GET /__atropos/preview/{session}/{revision}.jpg
     return immutable browser-cache headers
 ```
 
-Preview pixels never travel through the Wails JSON/base64 method bridge. The
+Full-frame preview pixels never travel through the Wails JSON/base64 method
+bridge; only bounded touch-up replacement patches use an event data URI. The
 asset handler accepts only its random per-image-session token and numeric
 internal revision paths; it never exposes arbitrary filesystem paths. The
 session token rotates on full image-state resets, prevents a persistent WebView
@@ -664,7 +678,10 @@ that timer and explicitly aborts superseded preload requests, so a rapid edit
 sequence remains at a consistent preview quality and sharpens only once after
 the sequence becomes idle. Backend processing and active canvas drags also
 pause and restart the promotion window, preventing a full encode from starting
-between a touch-up stroke and the arrival of its replacement revision.
+between a touch-up stroke and the arrival of its replacement patch.
+Touch-up commits are the exception to revision replacement: their transparent
+changed-pixel overlays apply equally to both variants of the existing revision,
+so they do not restart low/full loading or the settling timer.
 The frontend tracks the last revision whose visible `<img>` fired `onLoad`.
 User-facing busy state is `backend loading || preview presentation pending`, so
 spinners and core canvas/action guards remain active after a Go call returns until the

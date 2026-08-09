@@ -355,6 +355,17 @@ func TestSkipCrop_ReturnsDims(t *testing.T) {
 	}
 }
 
+func TestSkipCrop_DoesNotPublishRedundantPreview(t *testing.T) {
+	a := newTestApp(100, 80)
+	res, err := a.SkipCrop()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Preview != "" {
+		t.Fatalf("SkipCrop published an unchanged preview revision: %q", res.Preview)
+	}
+}
+
 func TestSkipCrop_ClearsSelectedCorners(t *testing.T) {
 	a := newTestApp(100, 100)
 	a.selectedCorners = []image.Point{{10, 10}, {50, 50}}

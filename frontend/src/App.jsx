@@ -55,6 +55,8 @@ export default function App() {
   const [mode, setMode]             = useState('corner')
   const [preview, setPreview]       = useState(null)
   const [presentedPreview, setPresentedPreview] = useState(null)
+  const [touchupPreviewPatches, setTouchupPreviewPatches] = useState([])
+  const touchupPatchIDRef = useRef(0)
   const [imageLoaded, setImageLoaded] = useState(false)
   const [loading, setLoading]       = useState(false)
   const [errorMessage, setErrorMessage] = useState(null)
@@ -78,6 +80,31 @@ export default function App() {
   const shiftDragRef = useRef(null)
   const touchupDraggingRef = useRef(false)
   const flushPendingSaveRef = useRef(null)
+
+  const presentTouchupPatch = (patch) => new Promise((resolve) => {
+    let resolver = resolve
+    const entry = {
+      ...patch,
+      basePreview: preview,
+      id: ++touchupPatchIDRef.current,
+      settle: () => {
+        const pending = resolver
+        resolver = null
+        pending?.()
+      },
+    }
+    setTouchupPreviewPatches(current => [...current, entry])
+  })
+
+  // A non-touch-up preview revision already contains every committed edit.
+  // Remove the temporary overlays only when that base revision changes; low
+  // to full promotion keeps the same revision and therefore keeps the patches.
+  useEffect(() => {
+    setTouchupPreviewPatches(current => {
+      current.forEach(patch => patch.settle())
+      return []
+    })
+  }, [preview])
 
   // ── Drag / interaction state ───────────────────────────────────────────────
   const [dragging, setDragging]       = useState(false)
@@ -206,6 +233,7 @@ export default function App() {
     touchupRemainsActive, setUseTouchupTool, setUseDescreenTool,
     setUnsavedChanges,
     touchupDraggingRef,
+    presentTouchupPatch,
   })
 
   const {
@@ -594,6 +622,28 @@ export default function App() {
                     : { maxWidth: `${zoom * 100}%`, height: 'auto' }),
                 }}
               />
+              {touchupPreviewPatches.filter(patch => patch.basePreview === preview).map(patch => (
+                <img
+                  key={patch.id}
+                  src={patch.source}
+                  alt=""
+                  draggable={false}
+                  onLoad={patch.settle}
+                  onError={patch.settle}
+                  style={{
+                    position: 'absolute',
+                    pointerEvents: 'none',
+                    zIndex: 1,
+                    margin: 0,
+                    left: `${patch.x * 100 / patch.imageWidth}%`,
+                    top: `${patch.y * 100 / patch.imageHeight}%`,
+                    width: `${patch.width * 100 / patch.imageWidth}%`,
+                    height: `${patch.height * 100 / patch.imageHeight}%`,
+                    maxWidth: 'none',
+                    maxHeight: 'none',
+                  }}
+                />
+              ))}
               <ImageOverlays
                 realImageDims={presentedVisual.realImageDims}
                 fitWidth={fitWidth}
