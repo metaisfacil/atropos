@@ -489,13 +489,8 @@ func (a *App) SkipCrop() (*ProcessResult, error) {
 	a.warpedImage = cloneImage(a.currentImage)
 	a.selectedCorners = nil
 
-	preview, err := a.imagePreviewURL(a.warpedImage)
-	if err != nil {
-		return nil, err
-	}
 	b := a.warpedImage.Bounds()
 	return &ProcessResult{
-		Preview:       preview,
 		Width:         b.Dx(),
 		Height:        b.Dy(),
 		Message:       "Crop skipped — image ready to save",
