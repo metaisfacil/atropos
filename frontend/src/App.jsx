@@ -24,6 +24,7 @@ import { useTouchup }            from './hooks/useTouchup'
 import { useImageActions }       from './hooks/useImageActions'
 import { useMouseHandlers }      from './hooks/useMouseHandlers'
 import { useKeyboardShortcuts }  from './hooks/useKeyboardShortcuts'
+import { isPreviewPresentationPending, isPreviewVariant, previewAssetSession, usePresentedValue, useProgressivePreview } from './hooks/useProgressivePreview'
 
 export default function App() {
   // ── Sidebar resize ────────────────────────────────────────────────────────
@@ -53,6 +54,9 @@ export default function App() {
   // ── Shared state ──────────────────────────────────────────────────────────
   const [mode, setMode]             = useState('corner')
   const [preview, setPreview]       = useState(null)
+  const [presentedPreview, setPresentedPreview] = useState(null)
+  const [touchupPreviewPatches, setTouchupPreviewPatches] = useState([])
+  const touchupPatchIDRef = useRef(0)
   const [imageLoaded, setImageLoaded] = useState(false)
   const [loading, setLoading]       = useState(false)
   const [errorMessage, setErrorMessage] = useState(null)
@@ -76,6 +80,31 @@ export default function App() {
   const shiftDragRef = useRef(null)
   const touchupDraggingRef = useRef(false)
   const flushPendingSaveRef = useRef(null)
+
+  const presentTouchupPatch = (patch) => new Promise((resolve) => {
+    let resolver = resolve
+    const entry = {
+      ...patch,
+      basePreview: preview,
+      id: ++touchupPatchIDRef.current,
+      settle: () => {
+        const pending = resolver
+        resolver = null
+        pending?.()
+      },
+    }
+    setTouchupPreviewPatches(current => [...current, entry])
+  })
+
+  // A non-touch-up preview revision already contains every committed edit.
+  // Remove the temporary overlays only when that base revision changes; low
+  // to full promotion keeps the same revision and therefore keeps the patches.
+  useEffect(() => {
+    setTouchupPreviewPatches(current => {
+      current.forEach(patch => patch.settle())
+      return []
+    })
+  }, [preview])
 
   // ── Drag / interaction state ───────────────────────────────────────────────
   const [dragging, setDragging]       = useState(false)
@@ -165,6 +194,14 @@ export default function App() {
     autoDetectOnModeSwitch, setAutoDetectOnModeSwitch,
   } = usePersistentSettings({ setPreview })
 
+  const activePreview = discLiveActive && discNoMaskPreview ? discNoMaskPreview : preview
+  const displayPreview = useProgressivePreview(activePreview, loading || dragging)
+  const previewPresentationPending = isPreviewPresentationPending(preview, presentedPreview)
+  const previewSession = previewAssetSession(preview)
+  const presentedSession = previewAssetSession(presentedPreview)
+  const newImagePresentationPending = previewPresentationPending && previewSession !== presentedSession
+  const busy = loading || previewPresentationPending
+
   const {
     zoom, setZoom,
     fitWidth, setFitWidth,
@@ -176,12 +213,19 @@ export default function App() {
     setImgNatural,
   } = useZoomPan({ imgRef, mode, discActive, featherSize, setFeatherSize, setPreview })
 
+  const handleVisiblePreviewLoad = () => {
+    handleImgLoad()
+    if (isPreviewVariant(displayPreview, preview)) {
+      setPresentedPreview(preview)
+    }
+  }
+
   const {
     touchupStrokes, setTouchupStrokes,
     brushSize, setBrushSize,
     clearTouchup, commitTouchup,
   } = useTouchup({
-    imageLoaded, loading, setLoading, showStatus,
+    imageLoaded, loading: busy, setLoading, showStatus,
     realImageDims, touchupBackend,
     setErrorMessage, setPreview,
     onDragEnd: () => { setDragging(false); setDragStart(null); setDragCurrent(null) },
@@ -189,6 +233,7 @@ export default function App() {
     touchupRemainsActive, setUseTouchupTool, setUseDescreenTool,
     setUnsavedChanges,
     touchupDraggingRef,
+    presentTouchupPatch,
   })
 
   const {
@@ -209,7 +254,7 @@ export default function App() {
     handleUndo,
     handleCompositorLoad,
   } = useImageActions({
-    mode, loading, imageLoaded, discActive, linesProcessed, normalCropApplied,
+    mode, loading: busy, imageLoaded, discActive, linesProcessed, normalCropApplied,
     cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, setCloseAfterSave, postSaveEnabled, setPostSaveEnabled, postSaveCommand, setPostSaveCommand, autoDetectOnModeSwitch,
     setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setInputImageDims, setImgNatural,
     setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
@@ -229,7 +274,7 @@ export default function App() {
   const {
     handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave, handleContextMenu, displayToImage, lineStartImgRef,
   } = useMouseHandlers({
-    imageLoaded, loading, mode, dragging, dragStart, dragCurrent,
+    imageLoaded, loading: busy, mode, dragging, dragStart, dragCurrent,
     useTouchupTool, useStraightEdgeTool, discActive, linesProcessed, touchupStrokes,
     cornerState, dotRadius, cornersDetected, customCorner, linesDone, normalRect, lines,
     realImageDims, discNoMaskPreview, discCenter, discRadius, discRotation,
@@ -258,6 +303,36 @@ export default function App() {
     cornerState, setCornerState, setSelectedCornerPts,
   })
 
+  // Image-result state is updated as soon as Go returns, but it must not be
+  // rendered against the previous bitmap. Freeze the last presented canvas
+  // metadata and status until the visible low-resolution image fires onLoad.
+  const presentedVisual = usePresentedValue({
+    imageInfo,
+    imageInfoVisible,
+    realImageDims,
+    mode,
+    dragging,
+    dragStart,
+    dragCurrent,
+    useTouchupTool,
+    touchupStrokes,
+    brushSize,
+    useStraightEdgeTool,
+    discActive,
+    discLiveActive,
+    discCenter,
+    discRadius,
+    discBgColor,
+    discCenterCutout,
+    discCutoutPercent,
+    detectedCornerPts,
+    selectedCornerPts,
+    dotRadius,
+    normalRect,
+    lines,
+    lineDragKind,
+  }, previewPresentationPending)
+
   React.useEffect(() => {
     const handleBeforeUnload = (e) => {
       if (!unsavedChanges) return
@@ -274,7 +349,7 @@ export default function App() {
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="app">
-      {loadingFull && (
+      {(loadingFull || newImagePresentationPending) && (
         <div className="loading-overlay opaque">
           <div className="spinner" />
           <div className="loading-text">{imageInfo}</div>
@@ -341,14 +416,14 @@ export default function App() {
             <div className="sidebar-actions">
               {mode === 'corner' && (
                 <DelayedHint hint="Run corner detection, then click 4 corners to apply the perspective crop.">
-                  <button className="primary mode-action-btn" onClick={handleDetectCorners} disabled={!imageLoaded || loading || cropSkipped}>
+                  <button className="primary mode-action-btn" onClick={handleDetectCorners} disabled={!imageLoaded || busy || cropSkipped}>
                     Detect
                   </button>
                 </DelayedHint>
               )}
               {mode === 'normal' && (
                 <DelayedHint hint="Apply a drawn rectangle as a crop to the image. You can also press Enter.">
-                  <button className="primary mode-action-btn" onClick={handleNormalCrop} disabled={!imageLoaded || loading || !normalRect}>
+                  <button className="primary mode-action-btn" onClick={handleNormalCrop} disabled={!imageLoaded || busy || !normalRect}>
                     Crop
                   </button>
                 </DelayedHint>
@@ -358,7 +433,7 @@ export default function App() {
                 (mode === 'line'   && !linesProcessed) ||
                 (mode === 'normal' && !normalCropApplied)) && (
                 <DelayedHint hint="Skip the cropping step and proceed to adjustments/touch-up. (You can re-crop later.)">
-                  <button className="skip-crop-btn" onClick={handleSkipCrop} disabled={!imageLoaded || loading}>
+                  <button className="skip-crop-btn" onClick={handleSkipCrop} disabled={!imageLoaded || busy}>
                     Skip crop
                   </button>
                 </DelayedHint>
@@ -373,7 +448,7 @@ export default function App() {
                     (mode === 'line'   && linesProcessed) ||
                     (mode === 'normal' && normalCropApplied)) && (
                     <DelayedHint hint="Promote the current output to be the new source image and restart cropping.">
-                      <button className="recrop-btn" onClick={handleRecrop} disabled={!imageLoaded || loading}>
+                      <button className="recrop-btn" onClick={handleRecrop} disabled={!imageLoaded || busy}>
                         Re-crop
                       </button>
                     </DelayedHint>
@@ -381,7 +456,7 @@ export default function App() {
                   <DelayedHint hint="Reset this mode's crop/selection and clear the current warp result.">
                     <button
                       className="reset-btn-danger"
-                      disabled={loading}
+                      disabled={busy}
                       onClick={
                         mode === 'corner' ? handleResetCorners :
                         mode === 'disc'   ? handleResetDisc    :
@@ -445,12 +520,12 @@ export default function App() {
 
           <div className="file-ops">
             <DelayedHint hint="Open a file dialog to select and load an image into the app.">
-              <button onClick={handleLoadImage} className="load-btn" disabled={loading && !saving}>
+              <button onClick={handleLoadImage} className="load-btn" disabled={busy && !saving}>
                 Load image
               </button>
             </DelayedHint>
             <DelayedHint hint="Save the currently cropped/adjusted image to disk.">
-              <button onClick={handleSaveImage} className="save-btn" disabled={loading || !(imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive))}>
+              <button onClick={handleSaveImage} className="save-btn" disabled={busy || !(imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive))}>
                 Save image
               </button>
             </DelayedHint>
@@ -513,8 +588,8 @@ export default function App() {
 
       <main className="main-content">
         <header className="toolbar">
-          {loading && <div className="header-spinner" />}
-          <span className={imageInfoVisible ? 'toolbar-message' : 'toolbar-message toolbar-message--fading'}>{imageInfo}</span>
+          {busy && <div className="header-spinner" />}
+          <span className={presentedVisual.imageInfoVisible ? 'toolbar-message' : 'toolbar-message toolbar-message--fading'}>{presentedVisual.imageInfo}</span>
           <button className="about-btn" onClick={() => setAboutOpen(true)} aria-label="About">?</button>
         </header>
         <div
@@ -526,14 +601,14 @@ export default function App() {
           onContextMenu={handleContextMenu}
           style={spacePanMode ? { cursor: 'grab' } : undefined}
         >
-          {preview ? (
+          {displayPreview ? (
             <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0, margin: 'auto', overflow: 'hidden', flexShrink: 0, alignSelf: 'center' }}>
               <img
                 ref={imgRef}
-                src={discLiveActive && discNoMaskPreview ? discNoMaskPreview : preview}
+                src={displayPreview}
                 alt="preview"
                 draggable={false}
-                onLoad={handleImgLoad}
+                onLoad={handleVisiblePreviewLoad}
                 onMouseLeave={handleImageMouseLeave}
                 style={{
                   cursor: spacePanMode ? 'grab' : (normalDragKind === 'move' ? 'move' : 'crosshair'),
@@ -547,38 +622,60 @@ export default function App() {
                     : { maxWidth: `${zoom * 100}%`, height: 'auto' }),
                 }}
               />
+              {touchupPreviewPatches.filter(patch => patch.basePreview === preview).map(patch => (
+                <img
+                  key={patch.id}
+                  src={patch.source}
+                  alt=""
+                  draggable={false}
+                  onLoad={patch.settle}
+                  onError={patch.settle}
+                  style={{
+                    position: 'absolute',
+                    pointerEvents: 'none',
+                    zIndex: 1,
+                    margin: 0,
+                    left: `${patch.x * 100 / patch.imageWidth}%`,
+                    top: `${patch.y * 100 / patch.imageHeight}%`,
+                    width: `${patch.width * 100 / patch.imageWidth}%`,
+                    height: `${patch.height * 100 / patch.imageHeight}%`,
+                    maxWidth: 'none',
+                    maxHeight: 'none',
+                  }}
+                />
+              ))}
               <ImageOverlays
-                realImageDims={realImageDims}
+                realImageDims={presentedVisual.realImageDims}
                 fitWidth={fitWidth}
                 zoom={zoom}
-                mode={mode}
-                dragging={dragging}
-                dragStart={dragStart}
-                dragCurrent={dragCurrent}
-                useTouchupTool={useTouchupTool}
-                touchupStrokes={touchupStrokes}
-                brushSize={brushSize}
-                useStraightEdgeTool={useStraightEdgeTool}
-                discActive={discActive}
-                discLiveActive={discLiveActive}
-                discCenter={discCenter}
-                discRadius={discRadius}
-                discBgColor={discBgColor}
-                discCenterCutout={discCenterCutout}
-                discCutoutPercent={discCutoutPercent}
+                mode={presentedVisual.mode}
+                dragging={presentedVisual.dragging}
+                dragStart={presentedVisual.dragStart}
+                dragCurrent={presentedVisual.dragCurrent}
+                useTouchupTool={presentedVisual.useTouchupTool}
+                touchupStrokes={presentedVisual.touchupStrokes}
+                brushSize={presentedVisual.brushSize}
+                useStraightEdgeTool={presentedVisual.useStraightEdgeTool}
+                discActive={presentedVisual.discActive}
+                discLiveActive={presentedVisual.discLiveActive}
+                discCenter={presentedVisual.discCenter}
+                discRadius={presentedVisual.discRadius}
+                discBgColor={presentedVisual.discBgColor}
+                discCenterCutout={presentedVisual.discCenterCutout}
+                discCutoutPercent={presentedVisual.discCutoutPercent}
                 ctrlDragRef={ctrlDragRef}
                 shiftDragRef={shiftDragRef}
-                detectedCornerPts={detectedCornerPts}
-                selectedCornerPts={selectedCornerPts}
-                dotRadius={dotRadius}
-                normalRect={normalRect}
-                lines={lines}
+                detectedCornerPts={presentedVisual.detectedCornerPts}
+                selectedCornerPts={presentedVisual.selectedCornerPts}
+                dotRadius={presentedVisual.dotRadius}
+                normalRect={presentedVisual.normalRect}
+                lines={presentedVisual.lines}
                 displayToImage={displayToImage}
                 lineStartImgRef={lineStartImgRef}
-                lineDragKind={lineDragKind}
+                lineDragKind={presentedVisual.lineDragKind}
               />
             </div>
-          ) : !loading ? (
+          ) : !preview && !busy ? (
             <div className="placeholder">Load or drop an image to begin</div>
           ) : null}
         </div>
@@ -586,7 +683,7 @@ export default function App() {
           imageLoaded={imageLoaded}
           imageMeta={imageMeta}
           inputImageDims={inputImageDims}
-          realImageDims={realImageDims}
+          realImageDims={presentedVisual.realImageDims}
           zoom={zoom}
           onResetZoom={() => setZoom(1)}
         />

@@ -330,7 +330,7 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	a.logf("DetectCorners: %d corners mapped to full resolution", len(a.detectedCorners))
 
 	// Return the clean (unmodified) image; the frontend renders dots via SVG.
-	preview, err := imageToBase64(a.currentImage)
+	preview, err := a.imagePreviewURL(a.currentImage)
 	if err != nil {
 		return nil, err
 	}
@@ -400,7 +400,7 @@ func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
 	}
 	a.selectedCorners = nil
 
-	preview, err := imageToBase64(a.warpedImage)
+	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
 		return nil, err
 	}
@@ -429,7 +429,7 @@ func (a *App) RestoreCornerOverlay(req RestoreCornerOverlayRequest) (*ProcessRes
 	if len(a.detectedCorners) == 0 {
 		return nil, fmt.Errorf("no cached corners")
 	}
-	preview, err := imageToBase64(a.currentImage)
+	preview, err := a.imagePreviewURL(a.currentImage)
 	if err != nil {
 		return nil, err
 	}
@@ -463,7 +463,7 @@ func (a *App) ResetCorners() (*ProcessResult, error) {
 	a.selectedCorners = nil
 	a.warpedImage = nil
 
-	preview, err := imageToBase64(a.currentImage)
+	preview, err := a.imagePreviewURL(a.currentImage)
 	if err != nil {
 		return nil, err
 	}
@@ -489,13 +489,8 @@ func (a *App) SkipCrop() (*ProcessResult, error) {
 	a.warpedImage = cloneImage(a.currentImage)
 	a.selectedCorners = nil
 
-	preview, err := imageToBase64(a.warpedImage)
-	if err != nil {
-		return nil, err
-	}
 	b := a.warpedImage.Bounds()
 	return &ProcessResult{
-		Preview:       preview,
 		Width:         b.Dx(),
 		Height:        b.Dy(),
 		Message:       "Crop skipped — image ready to save",

@@ -14,7 +14,7 @@ global.ResizeObserver = class ResizeObserver {
   disconnect() {}
 }
 
-import { useZoomPan } from './useZoomPan'
+import { maxUsefulZoom, useZoomPan } from './useZoomPan'
 
 function makeProps(overrides = {}) {
   return {
@@ -117,18 +117,22 @@ describe('useZoomPan – setZoom clamping', () => {
     act(() => { result.current.setZoom(0.001) })
     // setZoom is a direct state setter here; the wheel handler is what clamps.
     // Verify the zoom value accepted by the hook is unchanged (no built-in clamp in setter itself).
-    // The clamp lives in the wheel handler formula: Math.min(5, Math.max(0.1, z * factor))
-    // We test the formula directly here.
+    // The minimum remains fixed even though the maximum now depends on the
+    // full-resolution image width.
     const clamp = (z, factor) => Math.min(5, Math.max(0.1, z * factor))
     expect(clamp(0.15, 0.9)).toBeCloseTo(0.135)
     expect(clamp(0.11, 0.9)).toBeCloseTo(0.1)   // hits floor
     expect(clamp(0.1, 0.9)).toBe(0.1)            // already at floor — no change
   })
 
-  it('zoom formula clamps to maximum of 5', () => {
-    const clamp = (z, factor) => Math.min(5, Math.max(0.1, z * factor))
-    expect(clamp(4.8, 1.1)).toBeCloseTo(5)       // hits ceiling
-    expect(clamp(5, 1.1)).toBe(5)                // already at ceiling — no change
+  it('keeps the historical 5x ceiling for images already near display size', () => {
+    expect(maxUsefulZoom(1600, 1000)).toBe(5)
+  })
+
+  it('allows native-detail zoom for large full-resolution previews', () => {
+    expect(maxUsefulZoom(6000, 1000)).toBe(12)
+    expect(maxUsefulZoom(12000, 1000)).toBe(24)
+    expect(maxUsefulZoom(100000, 100)).toBe(40)
   })
 })
 
