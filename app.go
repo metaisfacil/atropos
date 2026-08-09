@@ -14,6 +14,10 @@ type App struct {
 	logger *log.Logger
 	loadMu sync.Mutex
 
+	// previewAssets serves immutable, versioned full-resolution previews
+	// directly to the WebView without carrying image bytes through Wails IPC.
+	previewAssets *previewAssetStore
+
 	// Image state
 	// ----------------
 	// `originalImage`:
@@ -78,7 +82,7 @@ type App struct {
 	// shift / rotate / feather operation.
 	discBaseImage *image.NRGBA
 
-	// discNoMaskPreview keeps a base preview image for disc mode that does not
+	// discNoMaskPreview keeps a versioned preview asset URL for the disc source that does not
 	// include the masking/fill overlay; used by real-time translate/rotate drags.
 	discNoMaskPreview string
 
@@ -152,6 +156,7 @@ type App struct {
 // NewApp creates a new App application struct.
 func NewApp() *App {
 	return &App{
+		previewAssets:     newPreviewAssetStore(previewAssetCacheSize),
 		undoLimit:         10,
 		featherSize:       15,
 		cropAmount:        3,
