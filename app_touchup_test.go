@@ -2,12 +2,115 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"image"
 	"image/color"
 	"strings"
 	"testing"
 )
+
+func solidTouchupTestImage(value uint8) *image.NRGBA {
+	img := image.NewNRGBA(image.Rect(0, 0, 8, 6))
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i] = value
+		img.Pix[i+1] = value
+		img.Pix[i+2] = value
+		img.Pix[i+3] = 255
+	}
+	return img
+}
+
+func registerTouchupTestOperation(a *App) uint64 {
+	a.touchupMu.Lock()
+	defer a.touchupMu.Unlock()
+	a.touchupGen++
+	a.touchupCancel = func() {}
+	return a.touchupGen
+}
+
+func TestTouchupUndoTouchupUndoKeepsHistoryConsistent(t *testing.T) {
+	a := NewApp()
+	base := solidTouchupTestImage(10)
+	a.currentImage = cloneImage(base)
+	a.warpedImage = cloneImage(base)
+
+	firstSource := a.workingImage()
+	firstGeneration := registerTouchupTestOperation(a)
+	if committed, _ := a.commitTouchupResult(context.Background(), firstGeneration, firstSource, solidTouchupTestImage(20)); !committed {
+		t.Fatal("first touch-up did not commit")
+	}
+	if len(a.undoStack) != 1 {
+		t.Fatalf("first touch-up undo depth = %d, want 1", len(a.undoStack))
+	}
+	if _, err := a.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.workingImage().NRGBAAt(0, 0).R; got != 10 {
+		t.Fatalf("first undo restored pixel %d, want 10", got)
+	}
+
+	secondSource := a.workingImage()
+	secondGeneration := registerTouchupTestOperation(a)
+	if committed, _ := a.commitTouchupResult(context.Background(), secondGeneration, secondSource, solidTouchupTestImage(30)); !committed {
+		t.Fatal("second touch-up did not commit")
+	}
+	if len(a.undoStack) != 1 {
+		t.Fatalf("second touch-up undo depth = %d, want 1", len(a.undoStack))
+	}
+	if _, err := a.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.workingImage().NRGBAAt(0, 0).R; got != 10 {
+		t.Fatalf("second undo restored pixel %d, want 10", got)
+	}
+	if len(a.undoStack) != 0 {
+		t.Fatalf("final undo depth = %d, want 0", len(a.undoStack))
+	}
+}
+
+func TestTouchupCommitRejectsStaleSourceWithoutChangingUndo(t *testing.T) {
+	a := NewApp()
+	oldSource := solidTouchupTestImage(10)
+	a.currentImage = cloneImage(oldSource)
+	a.warpedImage = oldSource
+	generation := registerTouchupTestOperation(a)
+
+	newerImage := solidTouchupTestImage(20)
+	a.warpedImage = newerImage
+	committed, _ := a.commitTouchupResult(context.Background(), generation, oldSource, solidTouchupTestImage(30))
+	if committed {
+		t.Fatal("touch-up based on a stale source was committed")
+	}
+	if a.workingImage() != newerImage {
+		t.Fatal("stale touch-up replaced the newer working image")
+	}
+	if len(a.undoStack) != 0 {
+		t.Fatalf("stale touch-up changed undo depth to %d", len(a.undoStack))
+	}
+}
+
+func TestUndoCancelsInFlightTouchupWithoutPoppingHistory(t *testing.T) {
+	a := NewApp()
+	a.currentImage = solidTouchupTestImage(10)
+	a.warpedImage = solidTouchupTestImage(20)
+	a.undoStack = append(a.undoStack, undoEntry{image: solidTouchupTestImage(5)})
+	registerTouchupTestOperation(a)
+
+	res, err := a.Undo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Message != "Touch-up cancelled" {
+		t.Fatalf("message = %q, want touch-up cancellation", res.Message)
+	}
+	if len(a.undoStack) != 1 {
+		t.Fatalf("undo depth = %d, want existing entry preserved", len(a.undoStack))
+	}
+	if got := a.workingImage().NRGBAAt(0, 0).R; got != 20 {
+		t.Fatalf("working image changed to %d while cancelling touch-up", got)
+	}
+}
 
 func TestBuildStrokeMaskUsesBoundedGlobalCoordinates(t *testing.T) {
 	mask, err := buildStrokeMask(

@@ -131,9 +131,11 @@ type App struct {
 	closeConfirmed bool
 
 	// touchupCancel cancels an in-flight TouchUpApply (PatchMatch or IOPaint).
-	// Protected by touchupMu; nil when no operation is running.
+	// touchupGen identifies the registered operation so an older worker cannot
+	// clear or commit over a newer one. Both are protected by touchupMu.
 	touchupMu     sync.Mutex
 	touchupCancel context.CancelFunc
+	touchupGen    uint64
 
 	// cornerDetectCancel cancels an in-flight DetectCorners call.
 	// Protected by cornerDetectMu; nil when no operation is running.

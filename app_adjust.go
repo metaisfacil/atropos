@@ -117,6 +117,28 @@ func (a *App) saveDiscRotationUndo() {
 // disc state accumulated since then is also cleared.  The response carries
 // Uncropped=true so the frontend can return to the initial cropping UI.
 func (a *App) Undo() (*ProcessResult, error) {
+	// An in-flight touch-up has not entered history yet. Cancel it and leave
+	// the existing stack alone; otherwise Undo could pop the preceding edit and
+	// the worker could later push a snapshot of that wrong state.
+	if a.cancelTouchup() {
+		img := a.workingImage()
+		if img == nil {
+			return &ProcessResult{Message: "Touch-up cancelled"}, nil
+		}
+		preview, err := a.imagePreviewURL(img)
+		if err != nil {
+			return nil, err
+		}
+		b := img.Bounds()
+		a.logf("Undo: cancelled in-flight touch-up; stack unchanged at depth=%d", len(a.undoStack))
+		return &ProcessResult{
+			Preview: preview,
+			Message: "Touch-up cancelled",
+			Width:   b.Dx(),
+			Height:  b.Dy(),
+		}, nil
+	}
+
 	a.logf("Undo: stack depth=%d", len(a.undoStack))
 	if len(a.undoStack) == 0 {
 		a.logf("Undo: nothing to undo")

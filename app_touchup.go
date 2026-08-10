@@ -349,16 +349,21 @@ func (a *App) CancelTouchup() {
 }
 
 // cancelTouchup cancels any in-flight TouchUpApply operation. Safe to call
-// from any goroutine. No-op when no operation is running.
-func (a *App) cancelTouchup() {
+// from any goroutine. It also advances the generation so a worker that has
+// already returned from its fill cannot commit stale pixels afterward.
+// The return value reports whether an operation was active.
+func (a *App) cancelTouchup() bool {
 	a.touchupMu.Lock()
 	fn := a.touchupCancel
 	a.touchupCancel = nil
+	a.touchupGen++
 	a.touchupMu.Unlock()
 	if fn != nil {
 		a.logf("cancelTouchup: calling cancel()")
 		fn()
+		return true
 	}
+	return false
 }
 
 // touchUpDoneEvent is the payload sent on the "touchup-done" Wails event.
@@ -434,6 +439,22 @@ func encodeTouchUpPreviewPatch(out *image.NRGBA, mask *image.Alpha) (*touchUpPre
 	}, nil
 }
 
+// commitTouchupResult atomically verifies and records a completed touch-up.
+// A result is valid only while it is still the newest registered operation and
+// the working image is the exact source from which the fill was calculated.
+func (a *App) commitTouchupResult(ctx context.Context, generation uint64, srcImg, out *image.NRGBA) (bool, bool) {
+	a.touchupMu.Lock()
+	defer a.touchupMu.Unlock()
+	if ctx.Err() != nil || a.touchupGen != generation || a.workingImage() != srcImg {
+		return false, false
+	}
+	descreenReset := a.descreenResultImage != nil
+	a.saveUndo()
+	a.setWorkingImage(out)
+	a.touchupCancel = nil
+	return true, descreenReset
+}
+
 // TouchUpApply accepts the legacy full-size PNG mask. New brush callers should
 // use TouchUpApplyStrokes to avoid the full-image encode/decode path.
 func (a *App) TouchUpApply(maskB64 string, patchSize int, iterations int) (*ProcessResult, error) {
@@ -486,6 +507,8 @@ func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, it
 	a.cancelTouchup()
 	ctx, cancel := context.WithCancel(context.Background())
 	a.touchupMu.Lock()
+	a.touchupGen++
+	generation := a.touchupGen
 	a.touchupCancel = cancel
 	a.touchupMu.Unlock()
 
@@ -494,7 +517,9 @@ func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, it
 		defer func() {
 			cancel()
 			a.touchupMu.Lock()
-			a.touchupCancel = nil
+			if a.touchupGen == generation {
+				a.touchupCancel = nil
+			}
 			a.touchupMu.Unlock()
 			a.logf("TouchUpApply goroutine: exited")
 		}()
@@ -520,16 +545,15 @@ func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, it
 			return
 		}
 
-		// Guard against a reset that arrived while the fill was in flight.
+		// Guard against a reset/undo that arrived while the fill was in flight.
 		if ctx.Err() != nil {
 			emit(touchUpDoneEvent{Cancelled: true})
 			return
 		}
 
-		descreenReset := a.descreenResultImage != nil
-		a.saveUndo()
-		a.setWorkingImage(out)
-
+		// Encode before committing. Besides keeping the state lock brief, this
+		// ensures a preview-encoding failure cannot leave an invisible committed
+		// edit and a stray undo entry behind.
 		patchStarted := time.Now()
 		patch, encErr := encodeTouchUpPreviewPatch(out, mask)
 		if encErr != nil {
@@ -538,6 +562,16 @@ func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, it
 		}
 		a.logf("TouchUpApply goroutine: encoded preview patch (%d,%d %dx%d), payload=%d bytes in %s",
 			patch.X, patch.Y, patch.Width, patch.Height, len(patch.Source), time.Since(patchStarted))
+
+		// Serialize the small state commit with cancellation. The generation and
+		// source-pointer checks prevent a superseded worker from snapshotting a
+		// newer image into undo and then overwriting it with stale output.
+		committed, descreenReset := a.commitTouchupResult(ctx, generation, srcImg, out)
+		if !committed {
+			emit(touchUpDoneEvent{Cancelled: true})
+			return
+		}
+
 		b := out.Bounds()
 		emit(touchUpDoneEvent{Patch: patch, Message: "Touch-up applied.", Width: b.Dx(), Height: b.Dy(), DescreenReset: descreenReset})
 	}()
