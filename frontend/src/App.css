@@ -685,6 +685,20 @@ kbd {
   overflow: auto;
 }
 
+/* The stage owns the display width so the preview and its absolute overlays
+   share the same layout box. This is important on fractional-DPI WebView2
+   configurations, where independently rounded replaced-element dimensions
+   can otherwise diverge as zoom increases. */
+.image-stage {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  margin: auto;
+  overflow: hidden;
+  flex-shrink: 0;
+  align-self: center;
+}
+
 .canvas-area img {
   object-fit: contain;
   user-select: none;

@@ -220,6 +220,13 @@ export default function App() {
     }
   }
 
+  // Give the preview and every overlay one authoritative CSS-pixel box. When
+  // the wrapper shrink-wraps a replaced <img>, WebView2 can round the image
+  // and wrapper widths differently at fractional Windows display scales. The
+  // discrepancy starts at a zoom-dependent threshold and then grows with the
+  // requested width, making overlays appear to drift horizontally.
+  const displayWidth = fitWidth > 0 ? fitWidth * zoom : null
+
   const {
     touchupStrokes, setTouchupStrokes,
     brushSize, setBrushSize,
@@ -602,7 +609,10 @@ export default function App() {
           style={spacePanMode ? { cursor: 'grab' } : undefined}
         >
           {displayPreview ? (
-            <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0, margin: 'auto', overflow: 'hidden', flexShrink: 0, alignSelf: 'center' }}>
+            <div
+              className="image-stage"
+              style={displayWidth !== null ? { width: `${displayWidth}px` } : undefined}
+            >
               <img
                 ref={imgRef}
                 src={displayPreview}
@@ -617,8 +627,9 @@ export default function App() {
                     ? `translate(${discLiveTransform.dx}px, ${discLiveTransform.dy}px) rotate(${discLiveTransform.angle}deg)`
                     : 'none',
                   transformOrigin: 'center center',
-                  ...(fitWidth > 0
-                    ? { width: `${fitWidth * zoom}px`, height: 'auto', maxWidth: 'none', maxHeight: 'none' }
+                  margin: 0,
+                  ...(displayWidth !== null
+                    ? { width: '100%', height: 'auto', maxWidth: 'none', maxHeight: 'none' }
                     : { maxWidth: `${zoom * 100}%`, height: 'auto' }),
                 }}
               />
