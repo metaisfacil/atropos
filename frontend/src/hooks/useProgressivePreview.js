@@ -10,6 +10,17 @@ export function lowResolutionPreviewURL(source) {
   return source.slice(0, -4) + '-low.jpg'
 }
 
+// Reports the resource variant that is actually being shown. Sources without
+// a progressive low-resolution variant are the highest-resolution preview
+// available to the UI and are therefore reported as high.
+export function previewResolutionTier(source) {
+  if (!source) return null
+  return typeof source === 'string' &&
+    source.startsWith(PREVIEW_ASSET_PREFIX) && source.endsWith('-low.jpg')
+    ? 'low'
+    : 'high'
+}
+
 export function previewAssetSession(source) {
   if (typeof source !== 'string' || !source.startsWith(PREVIEW_ASSET_PREFIX)) return null
   const remainder = source.slice(PREVIEW_ASSET_PREFIX.length)

@@ -7,6 +7,7 @@ import {
   isPreviewVariant,
   lowResolutionPreviewURL,
   previewAssetSession,
+  previewResolutionTier,
   usePresentedValue,
   useProgressivePreview,
 } from './useProgressivePreview'
@@ -28,6 +29,15 @@ describe('lowResolutionPreviewURL', () => {
     expect(previewAssetSession('/__atropos/preview/session-token/42.jpg')).toBe('session-token')
     expect(previewAssetSession('/__atropos/preview/42.jpg')).toBeNull()
     expect(previewAssetSession('/assets/session/42.jpg')).toBeNull()
+  })
+})
+
+describe('previewResolutionTier', () => {
+  it('reports the variant that is currently displayed', () => {
+    expect(previewResolutionTier('/__atropos/preview/session-token/42-low.jpg')).toBe('low')
+    expect(previewResolutionTier('/__atropos/preview/session-token/42.jpg')).toBe('high')
+    expect(previewResolutionTier('data:image/jpeg;base64,abc')).toBe('high')
+    expect(previewResolutionTier(null)).toBeNull()
   })
 })
 

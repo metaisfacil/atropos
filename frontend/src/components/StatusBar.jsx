@@ -1,7 +1,7 @@
 import React from 'react'
 import DelayedHint from './DelayedHint'
 
-export default function StatusBar({ imageLoaded, imageMeta, inputImageDims, realImageDims, zoom, onResetZoom }) {
+export default function StatusBar({ imageLoaded, imageMeta, inputImageDims, realImageDims, previewResolution, zoom, onResetZoom }) {
   // Each item: { text, hint, onClick? }
   const items = []
 
@@ -31,6 +31,12 @@ export default function StatusBar({ imageLoaded, imageMeta, inputImageDims, real
         ? `${Math.round(dpiX)} DPI`
         : `${Math.round(dpiX)} × ${Math.round(dpiY)} DPI`
       items.push({ text: dpiText, hint: 'Print resolution stored in the image file (dots per inch)' })
+    }
+
+    if (previewResolution === 'low') {
+      items.push({ text: 'Low-res preview', hint: 'The faster low-resolution preview is currently displayed' })
+    } else if (previewResolution === 'high') {
+      items.push({ text: 'High-res preview', hint: 'The full-resolution preview is currently displayed' })
     }
 
     items.push({ text: `${Math.round(zoom * 100)}%`, hint: 'Current zoom level — click to reset to 100%', onClick: onResetZoom })

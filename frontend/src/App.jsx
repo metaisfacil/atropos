@@ -24,7 +24,7 @@ import { useTouchup }            from './hooks/useTouchup'
 import { useImageActions }       from './hooks/useImageActions'
 import { useMouseHandlers }      from './hooks/useMouseHandlers'
 import { useKeyboardShortcuts }  from './hooks/useKeyboardShortcuts'
-import { isPreviewPresentationPending, isPreviewVariant, previewAssetSession, usePresentedValue, useProgressivePreview } from './hooks/useProgressivePreview'
+import { isPreviewPresentationPending, isPreviewVariant, previewAssetSession, previewResolutionTier, usePresentedValue, useProgressivePreview } from './hooks/useProgressivePreview'
 
 export default function App() {
   // ── Sidebar resize ────────────────────────────────────────────────────────
@@ -695,6 +695,7 @@ export default function App() {
           imageMeta={imageMeta}
           inputImageDims={inputImageDims}
           realImageDims={presentedVisual.realImageDims}
+          previewResolution={previewResolutionTier(displayPreview)}
           zoom={zoom}
           onResetZoom={() => setZoom(1)}
         />
