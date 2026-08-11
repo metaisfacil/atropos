@@ -10,6 +10,11 @@ const MAX_RENDER_DIMENSION = 4096
 const MAX_RENDER_PIXELS = 16 * 1024 * 1024
 const CLIENT_RASTER_CACHE_SIZE = 4
 const REQUEST_DEBOUNCE_MS = 120
+const CHECKER_SIZE = 16
+const CHECKER_DARK = '#252525'
+const CHECKER_LIGHT = '#303030'
+
+const checkerPatternCache = new WeakMap()
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
@@ -238,6 +243,48 @@ function visibleImageRect(layout, dims, scrollLeft, scrollTop, viewport) {
     w: clamp((intersection.w / layout.stageWidth) * dims.w, 1, dims.w),
     h: clamp((intersection.h / layout.stageHeight) * dims.h, 1, dims.h),
   }
+}
+
+function checkerboardPattern(ctx) {
+  const cached = checkerPatternCache.get(ctx)
+  if (cached) return cached
+
+  const tile = document.createElement('canvas')
+  tile.width = CHECKER_SIZE * 2
+  tile.height = CHECKER_SIZE * 2
+  const tileCtx = tile.getContext('2d')
+  if (!tileCtx) return null
+
+  tileCtx.fillStyle = CHECKER_DARK
+  tileCtx.fillRect(0, 0, tile.width, tile.height)
+  tileCtx.fillStyle = CHECKER_LIGHT
+  tileCtx.fillRect(0, 0, CHECKER_SIZE, CHECKER_SIZE)
+  tileCtx.fillRect(CHECKER_SIZE, CHECKER_SIZE, CHECKER_SIZE, CHECKER_SIZE)
+
+  const pattern = ctx.createPattern(tile, 'repeat')
+  if (pattern) checkerPatternCache.set(ctx, pattern)
+  return pattern
+}
+
+export function shouldDrawCheckerboard(source, dims) {
+  return Boolean(source) && validDims(dims)
+}
+
+export function drawCheckerboardSkeleton(ctx, layout) {
+  if (!ctx || !layout || !(layout.stageWidth > 0) || !(layout.stageHeight > 0)) return
+
+  const pattern = checkerboardPattern(ctx)
+  if (!pattern) return
+
+  // Anchor the checkerboard to image space rather than viewport space. Panning
+  // therefore moves the skeleton with the logical image instead of making the
+  // pattern appear to swim underneath it. The canvas itself clips anything
+  // outside the visible viewport.
+  ctx.save()
+  ctx.translate(layout.stageX, layout.stageY)
+  ctx.fillStyle = pattern
+  ctx.fillRect(0, 0, layout.stageWidth, layout.stageHeight)
+  ctx.restore()
 }
 
 function drawCircle(ctx, x, y, radius, fill, stroke, lineWidth = 1) {
@@ -494,6 +541,15 @@ export default function PreviewCanvas({
         stageX: currentLayout.stageLeft - scroller.scrollLeft,
         stageY: currentLayout.stageTop - scroller.scrollTop,
       }
+      // The logical image stage always gets a muted checkerboard first. Any
+      // cached/current raster paints opaquely over it, so the skeleton remains
+      // visible only in source areas that have not been rendered yet. This is
+      // especially useful when zooming out exposes more of a large image than
+      // the currently cached viewport raster covers.
+      if (shouldDrawCheckerboard(props.source, props.imageDims)) {
+        drawCheckerboardSkeleton(ctx, drawLayout)
+      }
+
       const raster = activeRasterRef.current
       if (raster && validDims(raster.dims)) {
         const drawRaster = candidate => {
