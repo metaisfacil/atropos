@@ -93,6 +93,22 @@ func patchMatchFillLocal(ctx context.Context, source *image.NRGBA, targetMask *i
 		}
 
 		level := preparePMLevel(images[levelIndex], targetMasks[levelIndex], sourceMasks[levelIndex], patchSize)
+		// Level ranges for several regularizers. The expensive ambiguity-resolving
+		// features matter most at the two finest levels; coarse levels are
+		// intentionally kept close to the fast geometric solver.
+		switch levelIndex {
+		case 0:
+			level.uniformityStrength = 1
+			level.photoEnabled = true
+			level.regionEnabled = true
+		case 1:
+			level.uniformityStrength = 0.55
+			level.photoEnabled = true
+			level.regionEnabled = true
+		}
+		if level.photoEnabled {
+			pmPreparePhotoSourceStats(level)
+		}
 		// Fine texture and exact colour-edge structure are only useful at native
 		// resolution. Coarse levels solve large displacement cheaply.
 		if levelIndex == 0 {
@@ -249,6 +265,28 @@ type pmLevel struct {
 
 	searchRadius int
 	coherence    []float32
+
+	// Bounded gain/bias is estimated per active correspondence and cached for
+	// reconstruction. The PatchMatch cost uses the same transform model.
+	photo            []pmPhotoTransform
+	photoSourceStats pmPhotoIntegral
+	photoTargetStats pmPhotoIntegral
+	photoEnabled     bool
+	regionEnabled    bool
+
+	// Source-occurrence regularization. occurrenceRaw stores the current source
+	// density and occurrenceIntegral makes candidate pressure O(1).
+	uniformityStrength float32
+	occurrenceRaw      []float32
+	occurrenceIntegral []float32
+	occurrenceCost     []float32
+	occurrenceReady    bool
+	maskIntegral       []int
+
+	// Connected coherent-region state used after each E-step.
+	regionIDs        []int32
+	regionConfidence []float32
+	regionQueue      []int
 }
 
 type pmSolution struct {
@@ -297,6 +335,7 @@ func preparePMLevel(src *image.NRGBA, targetMask, sourceMask *image.Alpha, reque
 	}
 	level.confidence, level.confStride, level.confSum = packPMConfidence(targetMask)
 	level.insideDepth = pmMaskInteriorDistance(targetMask)
+	level.maskIntegral = maskedIntegral(targetMask)
 
 	// A source center is valid only when the entire search/vote patch avoids the
 	// conservative source exclusion mask. No center-only fallback is allowed.
@@ -338,6 +377,9 @@ type pmSolveStats struct {
 func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, seed *pmSolution, iterations, round int) ([]pmPoint, []float32, pmSolveStats, error) {
 	updatePMConfidence(level, round, seed != nil)
 	level.targetPlanes = packPMPixelsInto(working, level.targetPlanes)
+	if level.photoEnabled {
+		pmPreparePhotoTargetStats(level, &level.targetPlanes)
+	}
 
 	size := level.w * level.h
 	if cap(level.nnf) < size {
@@ -405,6 +447,13 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, see
 			return nil, nil, stats, err
 		}
 	}
+
+	// Uniformity is evaluated against a frozen occurrence field for each search
+	// pass. Build it from the initialized NNF and then make stored incumbent costs
+	// use exactly the same objective candidates will see.
+	pmCaptureOccurrenceCosts(level, nnf)
+	pmUpdateOccurrence(level, nnf)
+	pmRefreshOccurrenceCosts(level, nnf, costs)
 
 	if cap(level.rowChanges) < activeRows {
 		level.rowChanges = make([]int, activeRows)
@@ -491,6 +540,12 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, see
 			changes += n
 		}
 
+		// Freeze a fresh source-occurrence field for the next pass and ensure the
+		// incumbent cost array reflects it. This avoids races/order dependence in
+		// parallel random search while still steering later passes away from reuse.
+		pmUpdateOccurrence(level, nnf)
+		pmRefreshOccurrenceCosts(level, nnf, costs)
+
 		stats.passes = pass + 1
 		stats.lastChanges = changes
 		// Require at least one forward and one reverse pass. Thereafter stop when
@@ -498,10 +553,22 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, see
 		// cases while avoiding two redundant passes on the common easy brush dab.
 		stableThreshold := maxInt(2, stats.active/250)
 		if pass >= 1 && changes <= stableThreshold {
-			stats.stable = true
-			break
+			// If the NNF is still materially crowding one source neighborhood, spend
+			// one more configured pass so uniformity gets a chance to resolve it.
+			if pmOccurrencePressure(level) < 5.5 || pass+1 >= iterations {
+				stats.stable = true
+				break
+			}
 		}
 	}
+	// Search may accept an obvious raw-SSD improvement without invoking the
+	// gain/bias rescue path. Normalize the final incumbent costs once here so
+	// coherent-region thresholds and reconstruction weights see the complete
+	// photometric objective. This is one O(active) pass, not candidate-time work.
+	if err := pmRecomputeActiveCosts(ctx, level, nnf, costs); err != nil {
+		return nil, nil, stats, err
+	}
+	pmCaptureOccurrenceCosts(level, nnf)
 	return nnf, costs, stats, nil
 }
 
@@ -609,6 +676,10 @@ func pmTryCandidate(level *pmLevel, target *pmPackedPlanes, tx, ty int, candidat
 	if cost < *bestCost {
 		*best = candidate
 		*bestCost = cost
+		id := ty*level.w + tx
+		if id >= 0 && id < len(level.occurrenceCost) {
+			level.occurrenceCost[id] = pmOccurrencePenaltyForTarget(level, tx, ty, candidate)
+		}
 		return true
 	}
 	return false

@@ -16,6 +16,7 @@ import (
 //  3. Away from structure, a coherent source residual restores stochastic
 //     texture that ordinary voting would attenuate.
 func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf []pmPoint, costs []float32) (*image.NRGBA, error) {
+	pmPreparePhotoTransforms(level, nnf)
 	coherence := pmNNFCoherenceWeights(level, nnf)
 	warped, err := pmPatchVote(ctx, level, previous, nnf, costs, coherence)
 	if err != nil {
@@ -54,6 +55,7 @@ type pmStructureVoteCluster struct {
 	dx, dy     int32
 	support    float32
 	bestWeight float32
+	bestID     int
 }
 
 func pmFindStructureVoteCluster(clusters *[256]pmStructureVoteCluster, dx, dy int32) *pmStructureVoteCluster {
@@ -63,6 +65,7 @@ func pmFindStructureVoteCluster(clusters *[256]pmStructureVoteCluster, dx, dy in
 		if !cluster.used {
 			cluster.used = true
 			cluster.dx, cluster.dy = dx, dy
+			cluster.bestID = -1
 			return cluster
 		}
 		if cluster.dx == dx && cluster.dy == dy {
@@ -76,9 +79,10 @@ func pmFindStructureVoteCluster(clusters *[256]pmStructureVoteCluster, dx, dy in
 // +/-1-pixel hypotheses partial support when deciding which exact bucket is the
 // coherent family. Rendering still uses only the winning exact displacement;
 // the neighboring buckets are never averaged into the output edge.
-func pmBestStructureVote(clusters *[256]pmStructureVoteCluster, totalSupport float32) (dx, dy int32, dominance float32, ok bool) {
+func pmBestStructureVote(clusters *[256]pmStructureVoteCluster, totalSupport float32) (dx, dy int32, bestID int, dominance float32, ok bool) {
+	bestID = -1
 	if totalSupport <= 1e-7 {
-		return 0, 0, 0, false
+		return 0, 0, -1, 0, false
 	}
 	bestScore := float32(-1)
 	bestNeighborhood := float32(0)
@@ -107,6 +111,7 @@ func pmBestStructureVote(clusters *[256]pmStructureVoteCluster, totalSupport flo
 			bestScore = score
 			bestNeighborhood = neighborhood
 			dx, dy = candidate.dx, candidate.dy
+			bestID = candidate.bestID
 			ok = true
 		}
 	}
@@ -183,9 +188,14 @@ func pmPatchVote(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf
 						continue
 					}
 					si := sy*level.src.Stride + sx*4
-					for c := 0; c < 4; c++ {
-						sum[c] += float64(weight) * float64(level.src.Pix[si+c])
+					photo := pmIdentityPhotoTransform()
+					if id < len(level.photo) {
+						photo = level.photo[id]
 					}
+					for c := 0; c < 3; c++ {
+						sum[c] += float64(weight) * float64(pmApplyPhotoRGBFloat(float32(level.src.Pix[si+c]), c, photo))
+					}
+					sum[3] += float64(weight) * float64(level.src.Pix[si+3])
 					total += float64(weight)
 
 					if structure > 0.015 {
@@ -196,6 +206,7 @@ func pmPatchVote(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf
 							cluster.support += weight
 							if weight > cluster.bestWeight {
 								cluster.bestWeight = weight
+								cluster.bestID = id
 							}
 							structureSupport += weight
 						}
@@ -208,7 +219,14 @@ func pmPatchVote(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf
 				if idOut >= 0 && idOut < len(nnf) && validPMPoint(level, nnf[idOut]) {
 					sx, sy := int(nnf[idOut].x), int(nnf[idOut].y)
 					si := sy*level.src.Stride + sx*4
-					copy(warped.Pix[di:di+4], level.src.Pix[si:si+4])
+					photo := pmIdentityPhotoTransform()
+					if idOut < len(level.photo) {
+						photo = level.photo[idOut]
+					}
+					for c := 0; c < 3; c++ {
+						warped.Pix[di+c] = pmApplyPhotoRGB(level.src.Pix[si+c], c, photo)
+					}
+					warped.Pix[di+3] = level.src.Pix[si+3]
 				}
 				continue
 			}
@@ -221,12 +239,19 @@ func pmPatchVote(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf
 			structureMix := float32(0)
 			var direct [4]byte
 			if structure > 0.015 {
-				dx, dy, dominance, ok := pmBestStructureVote(&structureClusters, structureSupport)
+				dx, dy, bestID, dominance, ok := pmBestStructureVote(&structureClusters, structureSupport)
 				if ok {
 					sx, sy := x+int(dx), y+int(dy)
 					if sx >= 0 && sy >= 0 && sx < level.w && sy < level.h {
 						si := sy*level.src.Stride + sx*4
-						copy(direct[:], level.src.Pix[si:si+4])
+						photo := pmIdentityPhotoTransform()
+						if bestID >= 0 && bestID < len(level.photo) {
+							photo = level.photo[bestID]
+						}
+						for c := 0; c < 3; c++ {
+							direct[c] = pmApplyPhotoRGB(level.src.Pix[si+c], c, photo)
+						}
+						direct[3] = level.src.Pix[si+3]
 						sourceStructure := float32(0)
 						if sy*level.w+sx < len(level.structureSource.strength) {
 							sourceStructure = level.structureSource.strength[sy*level.w+sx]
@@ -263,6 +288,7 @@ type pmDetailCluster struct {
 	keyX, keyY          int32
 	bestDX, bestDY      int32
 	support, bestWeight float32
+	bestID              int
 }
 
 func pmDetailClusterKey(value int32) int32 {
@@ -281,6 +307,7 @@ func pmFindDetailCluster(clusters *[128]pmDetailCluster, dx, dy int32) *pmDetail
 			cluster.used = true
 			cluster.keyX, cluster.keyY = keyX, keyY
 			cluster.bestDX, cluster.bestDY = dx, dy
+			cluster.bestID = -1
 			return cluster
 		}
 		if cluster.keyX == keyX && cluster.keyY == keyY {
@@ -293,6 +320,7 @@ func pmFindDetailCluster(clusters *[128]pmDetailCluster, dx, dy int32) *pmDetail
 type pmTextureWarpPixel struct {
 	dx, dy    int32
 	dominance float32
+	photoGain float32
 	mapped    bool
 }
 
@@ -368,6 +396,7 @@ func pmDominantTextureWarp(ctx context.Context, level *pmLevel, voted *image.NRG
 					if weight > cluster.bestWeight {
 						cluster.bestWeight = weight
 						cluster.bestDX, cluster.bestDY = offsetX, offsetY
+						cluster.bestID = id
 					}
 				}
 			}
@@ -387,6 +416,10 @@ func pmDominantTextureWarp(ctx context.Context, level *pmLevel, voted *image.NRG
 			pixel := field.at(x, y)
 			pixel.dx, pixel.dy = best.bestDX, best.bestDY
 			pixel.dominance = best.support / maxFloat32(totalSupport, 1e-6)
+			pixel.photoGain = 1
+			if best.bestID >= 0 && best.bestID < len(level.photo) {
+				pixel.photoGain = level.photo[best.bestID].gain
+			}
 			pixel.mapped = true
 		}
 	})
@@ -542,7 +575,11 @@ func pmRestoreTextureDetail(ctx context.Context, level *pmLevel, voted *image.NR
 			vi := y*voted.Stride + x*4
 			for c := 0; c < 3; c++ {
 				residual := float32(level.src.Pix[si+c]) - sourceBase[c]
-				detailed := votedBase[c] + residual*scale
+				photoGain := warpPixel.photoGain
+				if photoGain <= 0 {
+					photoGain = 1
+				}
+				detailed := votedBase[c] + residual*scale*photoGain
 				value := float32(voted.Pix[vi+c])*(1-mix) + detailed*mix
 				out.Pix[di+c] = byte(clampFloat32(value))
 			}

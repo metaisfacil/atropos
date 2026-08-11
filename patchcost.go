@@ -140,10 +140,11 @@ func updatePMConfidence(level *pmLevel, round int, haveSeed bool) {
 	}
 }
 
-// pmPatchCost uses the same appearance model that reconstruction uses: raw
-// source pixels. There is deliberately no mean-subtraction or un-applied
-// gain/bias model. A weak locality prior is used only where target evidence is
-// missing; it vanishes as a patch becomes observed/reconstructed.
+// pmPatchCost combines full-patch SIMD SSD with three bounded priors that are
+// also represented in reconstruction: photometric gain/bias, source occurrence
+// uniformity, and structure/texture guidance. Gain/bias is estimated from nine
+// confident samples and only reweights the vectorized full-patch SSD; the hot
+// pixel loop therefore remains in the existing architecture-specific kernel.
 func pmPatchCost(level *pmLevel, target *pmPackedPlanes, tx, ty int, source pmPoint, bestCost float32) float32 {
 	if !validPMPoint(level, source) {
 		return float32(math.Inf(1))
@@ -181,7 +182,8 @@ func pmPatchCost(level *pmLevel, target *pmPackedPlanes, tx, ty int, source pmPo
 	}
 
 	structurePenalty := pmStructurePatchPenalty(level, tx, ty, sx, sy, unknown)
-	prior := localityPrior + texturePenalty + structurePenalty
+	uniformityPenalty := pmOccurrencePenalty(level, source, unknown)
+	prior := localityPrior + texturePenalty + structurePenalty + uniformityPenalty
 	if confidenceSum < 0.01 {
 		return prior
 	}
@@ -194,7 +196,10 @@ func pmPatchCost(level *pmLevel, target *pmPackedPlanes, tx, ty int, source pmPo
 		if remaining <= 0 {
 			return prior
 		}
-		rawLimit = remaining * denominator
+		// We have not estimated gain/bias yet. The bounded model is not allowed
+		// to reduce full-patch SSD below pmPhotoMinRatio, so this conservative
+		// threshold is sufficient to preserve every rescuable candidate.
+		rawLimit = remaining * denominator / pmPhotoMinRatio
 	}
 
 	targetIndex := y0*target.stride + x0
@@ -214,7 +219,20 @@ func pmPatchCost(level *pmLevel, target *pmPackedPlanes, tx, ty int, source pmPo
 		limit:      rawLimit,
 	}
 	sum := pmRunPatchKernel(&args)
-	return sum/denominator + prior
+	rawAppearance := sum / denominator
+
+	// Most propagation/random-search candidates either clearly improve raw SSD or
+	// clearly lose. Only invoke the photometric model when it can change that
+	// decision (or when recomputing an incumbent with no finite threshold). This
+	// keeps gain/bias out of the dominant hot path while still rescuing the exact
+	// case it is meant for: structurally good patches with shifted illumination.
+	if !float32IsInf(bestCost) && rawAppearance+prior < bestCost*0.985 {
+		return rawAppearance + prior
+	}
+	photo := pmEstimatePhotoTransform(level, target, tx, ty, source)
+	photoExplained, photoRegularizer := pmPhotoCostAdjustment(level, tx, ty, source, photo)
+	correctedAppearance := maxFloat32(rawAppearance*pmPhotoMinRatio, rawAppearance-photoExplained)
+	return correctedAppearance + photoRegularizer + prior
 }
 
 func pmConfidenceRectSum(level *pmLevel, x0, y0, x1, y1 int) float32 {
