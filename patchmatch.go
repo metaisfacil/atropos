@@ -10,101 +10,198 @@ import (
 	"sync"
 )
 
-// PatchMatchFill fills mask from patches elsewhere in src.
-//
-// The implementation follows the same broad shape as production content-aware
-// fill engines: a coarse-to-fine image pyramid, a persistent nearest-neighbour
-// field (NNF), propagation/random search, progressive confidence, coherent
-// displacement voting, and frequency-separated reconstruction.
+// PatchMatchFill replaces pixels covered by mask with patches sampled from
+// elsewhere in src. It preserves the original API; performance-sensitive brush
+// code should prefer PatchMatchFillROI or PatchMatchFillBounds with a known
+// dirty rectangle.
 func PatchMatchFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha, patchSize, iterations int) (*image.NRGBA, error) {
-	if err := ctx.Err(); err != nil {
+	return PatchMatchFillBounds(ctx, src, mask, image.Rectangle{}, patchSize, iterations)
+}
+
+// PatchMatchFillBounds is the drop-in full-image result API with an optional
+// dirty rectangle. dirtyBounds is expressed relative to src.Bounds().Min and
+// must contain every non-zero mask pixel. Passing an empty rectangle scans mask
+// to discover it.
+func PatchMatchFillBounds(ctx context.Context, src *image.NRGBA, mask *image.Alpha, dirtyBounds image.Rectangle, patchSize, iterations int) (*image.NRGBA, error) {
+	local, workBounds, err := PatchMatchFillROI(ctx, src, mask, dirtyBounds, patchSize, iterations)
+	if err != nil {
 		return nil, err
 	}
 	if src == nil {
 		return nil, errors.New("PatchMatch: nil source image")
 	}
+	out := normalizeNRGBA(src)
+	if local != nil && !workBounds.Empty() {
+		draw.Draw(out, workBounds, local, image.Point{}, draw.Src)
+	}
+	return out, nil
+}
 
-	source := normalizeNRGBA(src)
-	w, h := source.Bounds().Dx(), source.Bounds().Dy()
-	if w == 0 || h == 0 {
-		return source, nil
+// PatchMatchFillROI is the lowest-latency integration API. It returns only the
+// local working image and the rectangle where it belongs in the source image.
+// An editor that already owns a mutable/tiled document buffer can composite
+// this ROI itself and avoid the final full-document copy performed by
+// PatchMatchFill/PatchMatchFillBounds.
+//
+// dirtyBounds follows the same convention as PatchMatchFillBounds. If there is
+// nothing to fill, local is nil and workBounds is empty.
+func PatchMatchFillROI(ctx context.Context, src *image.NRGBA, mask *image.Alpha, dirtyBounds image.Rectangle, patchSize, iterations int) (local *image.NRGBA, workBounds image.Rectangle, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, image.Rectangle{}, err
 	}
-	fillMask := normalizeAlpha(mask, w, h)
-	if maskBounds(fillMask).Empty() {
-		return source, nil
+	if src == nil {
+		return nil, image.Rectangle{}, errors.New("PatchMatch: nil source image")
 	}
-
-	if patchSize < 3 {
-		patchSize = 3
+	w, h := src.Bounds().Dx(), src.Bounds().Dy()
+	if w == 0 || h == 0 || mask == nil {
+		return nil, image.Rectangle{}, nil
 	}
-	if patchSize%2 == 0 {
-		patchSize++
-	}
-	maxPatch := minInt(w, h)
-	if maxPatch%2 == 0 {
-		maxPatch--
-	}
-	if maxPatch < 1 {
-		return source, nil
-	}
-	if patchSize > maxPatch {
-		patchSize = maxPatch
-	}
+	patchSize = normalizePatchSize(patchSize, w, h)
 	if iterations < 1 {
 		iterations = 1
 	}
 
-	srcPyramid, maskPyramid := buildPatchPyramid(source, fillMask, patchSize)
+	imageBounds := image.Rect(0, 0, w, h)
+	maskBoundsFull := dirtyBounds.Intersect(imageBounds)
+	if maskBoundsFull.Empty() {
+		maskBoundsFull = maskBoundsInImage(mask, w, h)
+	}
+	if maskBoundsFull.Empty() {
+		return nil, image.Rectangle{}, nil
+	}
+
+	workBounds = pmWorkingROI(maskBoundsFull, imageBounds, patchSize)
+	localSource := cropNRGBA(src, workBounds)
+	localMask := cropAlpha(mask, workBounds, w, h)
+	if maskBounds(localMask).Empty() {
+		return nil, image.Rectangle{}, nil
+	}
+	local, err = patchMatchFillLocal(ctx, localSource, localMask, patchSize, iterations)
+	if err != nil {
+		return nil, image.Rectangle{}, err
+	}
+	return local, workBounds, nil
+}
+
+func patchMatchFillLocal(ctx context.Context, source *image.NRGBA, targetMask *image.Alpha, patchSize, iterations int) (*image.NRGBA, error) {
+	images, targetMasks, sourceMasks := buildPatchPyramid(source, targetMask, patchSize)
 	var parent *pmSolution
 
-	for levelIndex := len(srcPyramid) - 1; levelIndex >= 0; levelIndex-- {
+	for levelIndex := len(images) - 1; levelIndex >= 0; levelIndex-- {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		level := preparePMLevel(srcPyramid[levelIndex], maskPyramid[levelIndex], patchSize)
-		if len(level.sources) == 0 {
-			// A tiny coarse level can lose every legal source patch. The next
-			// finer level still has useful source data, so simply start there.
+
+		level := preparePMLevel(images[levelIndex], targetMasks[levelIndex], sourceMasks[levelIndex], patchSize)
+		// Fine texture and exact colour-edge structure are only useful at native
+		// resolution. Coarse levels solve large displacement cheaply.
+		if levelIndex == 0 {
+			if err := pmPrepareStructureModel(ctx, level); err != nil {
+				return nil, err
+			}
+			pmPrepareTextureModel(level)
+		}
+		if len(level.sources) == 0 || level.active.Empty() {
 			continue
 		}
 
 		working := seedPMWorking(level, parent)
-		// A second EM round lets the first coherent reconstruction become a
-		// progressively trusted target. This is essential for carrying lines
-		// and texture through pixels whose initial patch was entirely masked.
 		rounds := 2
+		if parent == nil {
+			rounds = 3
+		}
 
 		var nnf []pmPoint
 		var costs []float32
-		var targetStats []pmPatchStats
 		var err error
+		seed := parent
 		for round := 0; round < rounds; round++ {
-			nnf, costs, targetStats, err = solvePMLevel(ctx, level, working, parent, iterations, round)
+			var stats pmSolveStats
+			nnf, costs, stats, err = solvePMLevel(ctx, level, working, seed, iterations, round)
 			if err != nil {
 				return nil, err
 			}
-			working, err = reconstructPMLevel(ctx, level, working, nnf, costs, targetStats)
+			working, err = reconstructPMLevel(ctx, level, working, nnf, costs)
 			if err != nil {
 				return nil, err
 			}
-			// Once reconstruction has produced an estimate, refine against it
-			// rather than repeatedly consulting the coarser NNF.
-			parent = nil
+			seed = &pmSolution{level: level, working: working, nnf: nnf}
+
+			// A well-seeded fine level frequently converges after one EM round. Keep
+			// the configured counts as maxima, not mandatory work.
+			if stats.stable && (parent != nil || round > 0) {
+				break
+			}
 		}
 
-		parent = &pmSolution{
-			level:   level,
-			working: working,
-			nnf:     nnf,
-		}
+		parent = &pmSolution{level: level, working: working, nnf: nnf}
 	}
 
 	if parent == nil {
-		// Preserve the original image when the mask covers every possible
-		// source patch. There is no defensible content-aware estimate to make.
-		return source, nil
+		return cloneNRGBA(source), nil
 	}
 	return parent.working, nil
+}
+
+// pmWorkingROI contains every target center used by voting plus a generous
+// random-search/source halo. It mirrors the solver's search-radius policy, so
+// small touch-ups do not accidentally trigger full-document preprocessing.
+func pmWorkingROI(maskBounds, imageBounds image.Rectangle, patchSize int) image.Rectangle {
+	brushSpan := maxInt(maskBounds.Dx(), maskBounds.Dy())
+	searchRadius := maxInt(48, brushSpan*6+patchSize*2)
+	// Random search is centred on the current winner, so retain an additional
+	// half-radius beyond the nominal target-centred search domain. The descriptor
+	// and patch filters need only a few more pixels.
+	halo := searchRadius + searchRadius/2 + patchSize + 8
+	return image.Rect(
+		maskBounds.Min.X-halo,
+		maskBounds.Min.Y-halo,
+		maskBounds.Max.X+halo,
+		maskBounds.Max.Y+halo,
+	).Intersect(imageBounds)
+}
+
+func cropNRGBA(src *image.NRGBA, bounds image.Rectangle) *image.NRGBA {
+	out := image.NewNRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
+	point := src.Bounds().Min.Add(bounds.Min)
+	draw.Draw(out, out.Bounds(), src, point, draw.Src)
+	return out
+}
+
+func cropAlpha(src *image.Alpha, bounds image.Rectangle, fullW, fullH int) *image.Alpha {
+	out := image.NewAlpha(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
+	if src == nil {
+		return out
+	}
+	// Preserve the original API convention: mask's top-left corresponds to the
+	// source image's top-left regardless of either rectangle's absolute Min.
+	point := src.Bounds().Min.Add(bounds.Min)
+	draw.Draw(out, out.Bounds(), src, point, draw.Src)
+	return out
+}
+
+func maskBoundsInImage(mask *image.Alpha, w, h int) image.Rectangle {
+	if mask == nil || w <= 0 || h <= 0 {
+		return image.Rectangle{}
+	}
+	mw, mh := minInt(w, mask.Bounds().Dx()), minInt(h, mask.Bounds().Dy())
+	minX, minY, maxX, maxY := mw, mh, 0, 0
+	for y := 0; y < mh; y++ {
+		row := y * mask.Stride
+		for x := 0; x < mw; x++ {
+			if mask.Pix[row+x] == 0 {
+				continue
+			}
+			minX = minInt(minX, x)
+			minY = minInt(minY, y)
+			maxX = maxInt(maxX, x+1)
+			maxY = maxInt(maxY, y+1)
+		}
+	}
+	if minX == mw {
+		return image.Rectangle{}
+	}
+	return image.Rect(minX, minY, maxX, maxY)
 }
 
 type pmPoint struct {
@@ -112,37 +209,46 @@ type pmPoint struct {
 	y int32
 }
 
-type pmFeature struct {
-	gx float32
-	gy float32
-}
-
 type pmLevel struct {
-	src           *image.NRGBA
-	srcBase       *image.NRGBA
-	guide         *image.NRGBA
-	guideBase     *image.NRGBA
-	mask          *image.Alpha
-	w             int
-	h             int
-	patchSize     int
-	half          int
-	active        image.Rectangle
-	valid         []bool
-	sources       []pmPoint
-	srcStats      []pmPatchStats
-	guideStats    []pmPatchStats
-	targetStats   []pmPatchStats
-	statsScratch  []float32
-	targetPlanes  pmPackedPlanes
-	targetFeature []pmFeature
-	srcPlanes     pmPackedPlanes
-	confidence    []float32
-	confStride    int
-	confSum       []float32
-	coherence     []float32
-	coherenceTags []int32
-	coherenceQ    []int
+	src        *image.NRGBA
+	mask       *image.Alpha // target coverage; preserves antialiasing/partial coverage
+	sourceMask *image.Alpha // conservative binary source exclusion
+	w          int
+	h          int
+	patchSize  int
+	half       int
+	active     image.Rectangle
+
+	valid   []bool
+	sources []pmPoint
+
+	// NNF/cost storage is retained for every EM round at this level. v3
+	// reallocated these full arrays for each round.
+	nnf        []pmPoint
+	costs      []float32
+	rowChanges []int
+
+	srcPlanes    pmPackedPlanes
+	targetPlanes pmPackedPlanes
+
+	// Texture synthesis state. textureEnergy measures local high-frequency
+	// gradient RMS in source space; textureGuide carries the surrounding
+	// texture level through the hole independently of provisional RGB.
+	textureEnergy []float32
+	textureGuide  []float32
+
+	// Colour-aware low-frequency structure fields. structureGuide is derived
+	// only from image content outside the brush mask.
+	structureSource pmStructureField
+	structureGuide  pmStructureField
+
+	confidence  []float32
+	confStride  int
+	confSum     []float32
+	insideDepth []int
+
+	searchRadius int
+	coherence    []float32
 }
 
 type pmSolution struct {
@@ -151,544 +257,438 @@ type pmSolution struct {
 	nnf     []pmPoint
 }
 
-const pmVoteClusterCount = 64
-
-// pmVoteCluster groups overlapping patch votes by their source displacement.
-// PatchMatch propagation naturally produces runs of nearly identical offsets;
-// treating those runs as one hypothesis prevents unrelated source textures
-// from being averaged together during reconstruction.
-type pmVoteCluster struct {
-	keyX, keyY int32
-	bestDX     int32
-	bestDY     int32
-	used       bool
-	count      int
-	support    float32
-	bestWeight float32
-	bestGain   float32
-	bestBias   [3]float32
-	texture    float32
-	sumAlpha   float32
-}
-
-func pmVoteClusterKey(value int32) int32 {
-	// A two-pixel bucket tolerates the small displacement drift produced by
-	// neighboring patch searches without merging visibly different mappings.
-	if value >= 0 {
-		return value / 2
+func normalizePatchSize(patchSize, w, h int) int {
+	if patchSize < 3 {
+		patchSize = 3
 	}
-	return -((-value + 1) / 2)
-}
-
-func pmFindVoteCluster(clusters *[pmVoteClusterCount]pmVoteCluster, dx, dy int32) *pmVoteCluster {
-	keyX, keyY := pmVoteClusterKey(dx), pmVoteClusterKey(dy)
-	hash := uint32(keyX)*0x9e3779b1 ^ uint32(keyY)*0x85ebca77
-	for probe := 0; probe < len(clusters); probe++ {
-		cluster := &clusters[(int(hash)+probe)&(len(clusters)-1)]
-		if !cluster.used {
-			cluster.used = true
-			cluster.keyX = keyX
-			cluster.keyY = keyY
-			cluster.bestDX = dx
-			cluster.bestDY = dy
-			return cluster
-		}
-		if cluster.keyX == keyX && cluster.keyY == keyY {
-			return cluster
-		}
+	if patchSize > 15 {
+		patchSize = 15
 	}
-	return nil
+	if patchSize&1 == 0 {
+		patchSize++
+	}
+	maxPatch := minInt(w, h)
+	if maxPatch&1 == 0 {
+		maxPatch--
+	}
+	if maxPatch < 1 {
+		return 1
+	}
+	if patchSize > maxPatch {
+		patchSize = maxPatch
+	}
+	return patchSize
 }
 
-func preparePMLevel(src *image.NRGBA, mask *image.Alpha, patchSize int) *pmLevel {
+func preparePMLevel(src *image.NRGBA, targetMask, sourceMask *image.Alpha, requestedPatchSize int) *pmLevel {
 	w, h := src.Bounds().Dx(), src.Bounds().Dy()
-	if patchSize > minInt(w, h) {
-		patchSize = minInt(w, h)
-		if patchSize%2 == 0 {
-			patchSize--
-		}
-	}
-	if patchSize < 1 {
-		patchSize = 1
-	}
+	patchSize := normalizePatchSize(requestedPatchSize, w, h)
 	half := patchSize / 2
-	srcPlanes := packPMPixels(src)
-	srcFeature := buildPMFeaturesPacked(&srcPlanes, w, h, nil)
 	level := &pmLevel{
-		src:       src,
-		srcBase:   pmLowPassNRGBA(src),
-		mask:      mask,
-		w:         w,
-		h:         h,
-		patchSize: patchSize,
-		half:      half,
-		valid:     make([]bool, w*h),
-		srcPlanes: srcPlanes,
+		src:        src,
+		mask:       targetMask,
+		sourceMask: sourceMask,
+		w:          w,
+		h:          h,
+		patchSize:  patchSize,
+		half:       half,
+		valid:      make([]bool, w*h),
+		srcPlanes:  packPMPixels(src),
 	}
-	level.srcStats, level.statsScratch = buildPMPatchStats(src, srcFeature, nil, 0, patchSize, nil, nil)
-	// Keep a separate, fully supported appearance guide. The pull/push fill is
-	// deliberately texture-free, but it gives even a patch centered deep inside
-	// the hole a defensible local color target. Without it those centers have
-	// zero comparison support and arbitrary source tones can survive the NNF.
-	guide := pmHealedWorkingFromBase(src, mask, src)
-	level.guide = guide
-	level.guideBase = pmSmoothedDirectionalGuide(guide, mask)
-	level.targetPlanes = packPMPixels(guide)
-	level.targetFeature = buildPMFeaturesPacked(&level.targetPlanes, w, h, level.targetFeature)
-	level.guideStats, level.statsScratch = buildPMPatchStats(
-		guide, level.targetFeature, nil, 0, patchSize, nil, level.statsScratch,
-	)
-	level.confidence, level.confStride, level.confSum = packPMConfidence(mask)
+	level.confidence, level.confStride, level.confSum = packPMConfidence(targetMask)
+	level.insideDepth = pmMaskInteriorDistance(targetMask)
 
-	integral := maskedIntegral(mask)
+	// A source center is valid only when the entire search/vote patch avoids the
+	// conservative source exclusion mask. No center-only fallback is allowed.
+	integral := maskedIntegral(sourceMask)
 	for y := half; y < h-half; y++ {
 		for x := half; x < w-half; x++ {
-			if integralRectSum(integral, w+1, x-half, y-half, x+half+1, y+half+1) == 0 {
-				level.valid[y*w+x] = true
-				level.sources = append(level.sources, pmPoint{int32(x), int32(y)})
+			if integralRectSum(integral, w+1, x-half, y-half, x+half+1, y+half+1) != 0 {
+				continue
 			}
+			id := y*w + x
+			level.valid[id] = true
+			level.sources = append(level.sources, pmPoint{x: int32(x), y: int32(y)})
 		}
 	}
-
-	// At very coarse levels, max-pooling the mask can make a full patch-free
-	// source impossible. Allow unmasked centers there; finer levels restore the
-	// strict full-patch constraint.
-	if len(level.sources) == 0 {
-		for y := half; y < h-half; y++ {
-			for x := half; x < w-half; x++ {
-				if mask.Pix[y*mask.Stride+x] == 0 {
-					level.valid[y*w+x] = true
-					level.sources = append(level.sources, pmPoint{int32(x), int32(y)})
-				}
-			}
-		}
-	}
-
-	bounds := maskBounds(mask)
+	bounds := maskBounds(targetMask)
 	if !bounds.Empty() {
-		padding := patchSize * 2
+		// Only centers whose patches can overlap a painted output pixel need an
+		// NNF. One extra cell keeps the coherence neighborhood available.
+		padding := half + 1
 		level.active = image.Rect(
 			maxInt(half, bounds.Min.X-padding),
 			maxInt(half, bounds.Min.Y-padding),
 			minInt(w-half, bounds.Max.X+padding),
 			minInt(h-half, bounds.Max.Y+padding),
 		)
+		brushSpan := maxInt(bounds.Dx(), bounds.Dy())
+		level.searchRadius = minInt(maxInt(w, h), maxInt(48, brushSpan*6+patchSize*2))
 	}
 	return level
 }
 
-func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, parent *pmSolution, iterations, round int) ([]pmPoint, []float32, []pmPatchStats, error) {
-	size := level.w * level.h
-	current := make([]pmPoint, size)
-	next := make([]pmPoint, size)
-	currentCost := make([]float32, size)
-	nextCost := make([]float32, size)
-	acceptedConfidence := float32(0)
-	if parent != nil {
-		acceptedConfidence = 0.15
-	} else if round > 0 {
-		acceptedConfidence = 0.30
-	}
-	updatePMConfidence(level.mask, level.confidence, level.confStride, level.confSum, acceptedConfidence)
-	level.targetPlanes = packPMPixelsInto(working, level.targetPlanes)
-	targetPlanes := &level.targetPlanes
-	level.targetFeature = buildPMFeaturesPacked(targetPlanes, level.w, level.h, level.targetFeature)
-	level.targetStats, level.statsScratch = buildPMPatchStats(working, level.targetFeature, level.confidence, level.confStride, level.patchSize, level.targetStats, level.statsScratch)
-	targetStats := level.targetStats
+type pmSolveStats struct {
+	passes      int
+	lastChanges int
+	active      int
+	stable      bool
+}
 
-	err := parallelRows(ctx, level.active.Min.Y, level.active.Max.Y, func(y int) {
-		for x := level.active.Min.X; x < level.active.Max.X; x++ {
-			id := y*level.w + x
-			var candidate pmPoint
-			switch {
-			case level.valid[id]:
-				candidate = pmPoint{int32(x), int32(y)}
-			case parent != nil && len(parent.nnf) != 0:
-				px := minInt(parent.level.w-1, x*parent.level.w/level.w)
-				py := minInt(parent.level.h-1, y*parent.level.h/level.h)
-				coarse := parent.nnf[py*parent.level.w+px]
-				candidate = pmPoint{
-					x: int32(int(coarse.x) * level.w / parent.level.w),
-					y: int32(int(coarse.y) * level.h / parent.level.h),
+func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, seed *pmSolution, iterations, round int) ([]pmPoint, []float32, pmSolveStats, error) {
+	updatePMConfidence(level, round, seed != nil)
+	level.targetPlanes = packPMPixelsInto(working, level.targetPlanes)
+
+	size := level.w * level.h
+	if cap(level.nnf) < size {
+		level.nnf = make([]pmPoint, size)
+	} else {
+		level.nnf = level.nnf[:size]
+	}
+	if cap(level.costs) < size {
+		level.costs = make([]float32, size)
+	} else {
+		level.costs = level.costs[:size]
+	}
+	nnf, costs := level.nnf, level.costs
+
+	sameLevelSeed := seed != nil && seed.level == level && len(seed.nnf) == size
+	activeWidth := level.active.Dx()
+	activeRows := level.active.Dy()
+	stats := pmSolveStats{active: maxInt(1, activeWidth*activeRows)}
+
+	if sameLevelSeed {
+		// Keep the exact NNF from the previous EM round, but recompute its cost
+		// against the newly reconstructed target. No reinitialization or copy is
+		// required because seed.nnf and level.nnf intentionally alias.
+		if err := parallelRowsSized(ctx, level.active.Min.Y, level.active.Max.Y, activeWidth, func(y int) {
+			for x := level.active.Min.X; x < level.active.Max.X; x++ {
+				id := y*level.w + x
+				if !validPMPoint(level, nnf[id]) {
+					costs[id] = float32(math.Inf(1))
+					continue
 				}
-				if !validPMPoint(level, candidate) {
-					candidate = hashedPMSource(level, x, y, round)
-				}
-			default:
-				candidate = hashedPMSource(level, x, y, round)
+				costs[id] = pmPatchCost(level, &level.targetPlanes, x, y, nnf[id], float32(math.Inf(1)))
 			}
-			current[id] = candidate
-			currentCost[id] = pmPatchCost(level, targetPlanes, targetStats, x, y, candidate, float32(math.Inf(1)))
+		}); err != nil {
+			return nil, nil, stats, err
 		}
-	})
-	if err != nil {
-		return nil, nil, nil, err
+	} else {
+		// Initialization is independent per center and therefore parallel.
+		if err := parallelRowsSized(ctx, level.active.Min.Y, level.active.Max.Y, activeWidth, func(y int) {
+			for x := level.active.Min.X; x < level.active.Max.X; x++ {
+				id := y*level.w + x
+				nnf[id] = pmPoint{x: -1, y: -1}
+				costs[id] = float32(math.Inf(1))
+				best, ok := pmInitialCandidate(level, seed, x, y)
+				if !ok {
+					continue
+				}
+				bestCost := pmPatchCost(level, &level.targetPlanes, x, y, best, float32(math.Inf(1)))
+
+				// One deterministic local alternative prevents an ambiguous interior
+				// from starting entirely from the same boundary-side hypothesis.
+				state := pmHash(uint32(x), uint32(y), uint32(round+1))
+				altRadius := level.searchRadius
+				if seed != nil {
+					altRadius = maxInt(16, level.searchRadius/2)
+				}
+				if alternative, ok := pmRandomValidNear(level, x, y, altRadius, &state); ok {
+					candidateCost := pmPatchCost(level, &level.targetPlanes, x, y, alternative, bestCost)
+					if candidateCost < bestCost {
+						best, bestCost = alternative, candidateCost
+					}
+				}
+				nnf[id], costs[id] = best, bestCost
+			}
+		}); err != nil {
+			return nil, nil, stats, err
+		}
+	}
+
+	if cap(level.rowChanges) < activeRows {
+		level.rowChanges = make([]int, activeRows)
+	} else {
+		level.rowChanges = level.rowChanges[:activeRows]
 	}
 
 	for pass := 0; pass < iterations; pass++ {
 		if err := ctx.Err(); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, stats, err
 		}
-		err = parallelRows(ctx, level.active.Min.Y, level.active.Max.Y, func(y int) {
+		changes := 0
+
+		// Classic in-place directional propagation. This stays sequential because
+		// propagating a good displacement through a sweep is central to PatchMatch
+		// quality. The more expensive random-search phase remains parallel.
+		if pass&1 == 0 {
+			for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
+				for x := level.active.Min.X; x < level.active.Max.X; x++ {
+					id := y*level.w + x
+					if x > level.active.Min.X {
+						q := nnf[id-1]
+						if pmTryCandidate(level, &level.targetPlanes, x, y, pmPoint{x: q.x + 1, y: q.y}, &nnf[id], &costs[id]) {
+							changes++
+						}
+					}
+					if y > level.active.Min.Y {
+						q := nnf[id-level.w]
+						if pmTryCandidate(level, &level.targetPlanes, x, y, pmPoint{x: q.x, y: q.y + 1}, &nnf[id], &costs[id]) {
+							changes++
+						}
+					}
+				}
+			}
+		} else {
+			for y := level.active.Max.Y - 1; y >= level.active.Min.Y; y-- {
+				for x := level.active.Max.X - 1; x >= level.active.Min.X; x-- {
+					id := y*level.w + x
+					if x+1 < level.active.Max.X {
+						q := nnf[id+1]
+						if pmTryCandidate(level, &level.targetPlanes, x, y, pmPoint{x: q.x - 1, y: q.y}, &nnf[id], &costs[id]) {
+							changes++
+						}
+					}
+					if y+1 < level.active.Max.Y {
+						q := nnf[id+level.w]
+						if pmTryCandidate(level, &level.targetPlanes, x, y, pmPoint{x: q.x, y: q.y - 1}, &nnf[id], &costs[id]) {
+							changes++
+						}
+					}
+				}
+			}
+		}
+
+		startRadius := pmRandomSearchStartRadius(level.searchRadius, pass, round, seed != nil)
+		clear(level.rowChanges)
+		if err := parallelRowsSized(ctx, level.active.Min.Y, level.active.Max.Y, activeWidth, func(y int) {
+			rowChanges := 0
 			for x := level.active.Min.X; x < level.active.Max.X; x++ {
-				if x&15 == 0 && ctx.Err() != nil {
-					return
-				}
 				id := y*level.w + x
-				best := current[id]
-				bestCost := currentCost[id]
-
-				try := func(candidate pmPoint) {
-					if !validPMPoint(level, candidate) {
-						return
-					}
-					cost := pmPatchCost(level, targetPlanes, targetStats, x, y, candidate, bestCost)
-					if cost < bestCost {
-						best = candidate
-						bestCost = cost
-					}
+				best := nnf[id]
+				bestCost := costs[id]
+				if !validPMPoint(level, best) {
+					continue
 				}
-
-				// Jacobi propagation makes the entire pass safe to parallelize.
-				// Translating the neighbour's match preserves its displacement.
-				if x > level.active.Min.X {
-					q := current[id-1]
-					try(pmPoint{q.x + 1, q.y})
-				}
-				if x+1 < level.active.Max.X {
-					q := current[id+1]
-					try(pmPoint{q.x - 1, q.y})
-				}
-				if y > level.active.Min.Y {
-					q := current[id-level.w]
-					try(pmPoint{q.x, q.y + 1})
-				}
-				if y+1 < level.active.Max.Y {
-					q := current[id+level.w]
-					try(pmPoint{q.x, q.y - 1})
-				}
-
-				state := pmHash(uint32(x), uint32(y), uint32(pass+round*iterations))
-				for radius := maxInt(level.w, level.h); radius >= 1; radius /= 2 {
+				state := pmHash(uint32(x), uint32(y), uint32(pass+1+round*iterations))
+				for radius := startRadius; radius >= 1; radius /= 2 {
 					state = pmNext(state)
 					dx := int(state%uint32(2*radius+1)) - radius
 					state = pmNext(state)
 					dy := int(state%uint32(2*radius+1)) - radius
-					try(pmPoint{best.x + int32(dx), best.y + int32(dy)})
-
-					// A global proposal prevents a large hole from becoming
-					// trapped in a locally coherent but semantically poor basin.
-					state = pmNext(state)
-					try(level.sources[int(state%uint32(len(level.sources)))])
+					candidate := pmPoint{x: best.x + int32(dx), y: best.y + int32(dy)}
+					if pmTryCandidate(level, &level.targetPlanes, x, y, candidate, &best, &bestCost) {
+						rowChanges++
+					}
 				}
-
-				next[id] = best
-				nextCost[id] = bestCost
+				nnf[id], costs[id] = best, bestCost
 			}
-		})
-		if err != nil {
-			return nil, nil, nil, err
+			level.rowChanges[y-level.active.Min.Y] = rowChanges
+		}); err != nil {
+			return nil, nil, stats, err
 		}
-		current, next = next, current
-		currentCost, nextCost = nextCost, currentCost
-	}
-	return current, currentCost, targetStats, nil
-}
-
-func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf []pmPoint, costs []float32, targetStats []pmPatchStats) (*image.NRGBA, error) {
-	out := cloneNRGBA(previous)
-	coherence := pmNNFCoherenceWeights(level, nnf)
-	spatial := make([]float32, level.patchSize)
-	for i := range spatial {
-		d := float32(i - level.half)
-		spatial[i] = 1 / (1 + d*d*0.18)
-	}
-
-	err := parallelRows(ctx, 0, level.h, func(y int) {
-		for x := 0; x < level.w; x++ {
-			if x&15 == 0 && ctx.Err() != nil {
-				return
-			}
-			maskAlpha := level.mask.Pix[y*level.mask.Stride+x]
-			if maskAlpha == 0 {
-				continue
-			}
-
-			minCX := maxInt(level.active.Min.X, x-level.half)
-			maxCX := minInt(level.active.Max.X-1, x+level.half)
-			minCY := maxInt(level.active.Min.Y, y-level.half)
-			maxCY := minInt(level.active.Max.Y-1, y+level.half)
-
-			var clusters [pmVoteClusterCount]pmVoteCluster
-			for cy := minCY; cy <= maxCY; cy++ {
-				for cx := minCX; cx <= maxCX; cx++ {
-					id := cy*level.w + cx
-					match := nnf[id]
-					sx := int(match.x) + x - cx
-					sy := int(match.y) + y - cy
-					if sx < 0 || sy < 0 || sx >= level.w || sy >= level.h {
-						continue
-					}
-					weight := spatial[x-cx+level.half] * spatial[y-cy+level.half] * coherence[id]
-					weight /= 1 + costs[id]/256
-					cluster := pmFindVoteCluster(&clusters, match.x-int32(cx), match.y-int32(cy))
-					if cluster == nil {
-						continue
-					}
-					si := sy*level.src.Stride + sx*4
-					alpha := float32(level.src.Pix[si+3])
-					alphaWeight := weight * alpha
-					guidedTarget := pmGuidedTargetStats(targetStats[id], level.guideStats[id])
-					gain, bias := pmGainBias(guidedTarget, level.srcStats[int(match.y)*level.w+int(match.x)])
-					cluster.count++
-					cluster.support += weight
-					cluster.sumAlpha += alphaWeight
-					if weight > cluster.bestWeight {
-						cluster.bestWeight = weight
-						cluster.bestDX = match.x - int32(cx)
-						cluster.bestDY = match.y - int32(cy)
-						cluster.bestGain = gain
-						cluster.bestBias = bias
-						cluster.texture = guidedTarget.gradientEnergy
-					}
-				}
-			}
-
-			var dominant *pmVoteCluster
-			for i := range clusters {
-				cluster := &clusters[i]
-				if !cluster.used || cluster.sumAlpha == 0 {
-					continue
-				}
-				// Support selects a displacement shared by many overlapping
-				// patches. The small count term breaks close contests in favor
-				// of the more spatially coherent mapping.
-				score := cluster.support * (1 + 0.03*float32(cluster.count))
-				if dominant == nil || score > dominant.support*(1+0.03*float32(dominant.count)) {
-					dominant = cluster
-				}
-			}
-
-			var fillR, fillG, fillB, fillA float32
-			if dominant != nil && dominant.support > 0 && dominant.sumAlpha > 0 {
-				// Both frequency bands must come from the same displacement
-				// hypothesis. Averaging base color across incompatible clusters
-				// produces the conspicuous low-frequency stamp that the coherent
-				// detail layer cannot hide.
-				detailX := clampInt(x+int(dominant.bestDX), 0, level.w-1)
-				detailY := clampInt(y+int(dominant.bestDY), 0, level.h-1)
-				chosenGain := dominant.bestGain
-				chosenBias := dominant.bestBias
-				texture := dominant.texture
-				detailIndex := detailY*level.src.Stride + detailX*4
-				baseIndex := detailY*level.srcBase.Stride + detailX*4
-				guideStructureBlend := minFloat32(1, maxFloat32(0, (texture-2)/12))
-				// Once the directional base has been smoothed, flat fills need
-				// their grain restored from the actual source residual rather than
-				// from row/column variation in the guide. Taper the extra detail to
-				// unity where target structure is present so copied texture cannot
-				// roughen a continued object edge.
-				detailGain := chosenGain * (1.45 - 0.45*guideStructureBlend)
-				detailGain = minFloat32(1.55, maxFloat32(0.85, detailGain))
-				dominantBaseR := chosenGain*float32(level.srcBase.Pix[baseIndex]) + chosenBias[0]
-				dominantBaseG := chosenGain*float32(level.srcBase.Pix[baseIndex+1]) + chosenBias[1]
-				dominantBaseB := chosenGain*float32(level.srcBase.Pix[baseIndex+2]) + chosenBias[2]
-				guideIndex := y*level.guideBase.Stride + x*4
-				guideBaseR := float32(level.guideBase.Pix[guideIndex])
-				guideBaseG := float32(level.guideBase.Pix[guideIndex+1])
-				guideBaseB := float32(level.guideBase.Pix[guideIndex+2])
-				baseDifference := (float32(math.Abs(float64(dominantBaseR-guideBaseR))) +
-					float32(math.Abs(float64(dominantBaseG-guideBaseG))) +
-					float32(math.Abs(float64(dominantBaseB-guideBaseB)))) / 3
-				// A source feature may replace guide structure only when its base
-				// actually agrees with the continued local appearance. This keeps
-				// coherent text and object edges, but prevents an unrelated source
-				// edge from cutting a dark scallop through a bright border.
-				normalizedDifference := baseDifference / 12
-				baseAgreement := 1 / (1 + normalizedDifference*normalizedDifference)
-				guideEdgeEnergy := level.guideStats[y*level.w+x].gradientEnergy
-				// Protect a patch-radius band around the guide edge, not just the
-				// exact gradient pixels. A displaced source edge has a low-pass lobe
-				// several pixels wide and would otherwise reappear immediately beside
-				// the correctly continued edge.
-				edgeSamples := [4]image.Point{{X: -level.half}, {X: level.half}, {Y: -level.half}, {Y: level.half}}
-				for _, offset := range edgeSamples {
-					edgeX := clampInt(x+offset.X, level.active.Min.X, level.active.Max.X-1)
-					edgeY := clampInt(y+offset.Y, level.active.Min.Y, level.active.Max.Y-1)
-					guideEdgeEnergy = maxFloat32(guideEdgeEnergy, level.guideStats[edgeY*level.w+edgeX].gradientEnergy)
-				}
-				guideEdgeBlend := minFloat32(1, maxFloat32(0, (guideEdgeEnergy-2)/10))
-				structureAgreement := 1 - guideEdgeBlend + guideEdgeBlend*baseAgreement
-				structureBlend := guideStructureBlend * structureAgreement
-				baseR := guideBaseR*(1-structureBlend) + dominantBaseR*structureBlend
-				baseG := guideBaseG*(1-structureBlend) + dominantBaseG*structureBlend
-				baseB := guideBaseB*(1-structureBlend) + dominantBaseB*structureBlend
-				// The five-tap residual contains genuine grain in flat regions, but
-				// also contains large edge lobes. At a known guide edge those lobes
-				// would duplicate any small NNF alignment error, so progressively
-				// restrict them to the pixel-scale range.
-				detailLimit := 28 - 20*guideEdgeBlend
-				detailR := detailGain * (float32(level.src.Pix[detailIndex]) - float32(level.srcBase.Pix[baseIndex]))
-				detailG := detailGain * (float32(level.src.Pix[detailIndex+1]) - float32(level.srcBase.Pix[baseIndex+1]))
-				detailB := detailGain * (float32(level.src.Pix[detailIndex+2]) - float32(level.srcBase.Pix[baseIndex+2]))
-				maximumDetail := maxFloat32(float32(math.Abs(float64(detailR))), maxFloat32(float32(math.Abs(float64(detailG))), float32(math.Abs(float64(detailB)))))
-				if maximumDetail > detailLimit {
-					detailScale := detailLimit / maximumDetail
-					detailR *= detailScale
-					detailG *= detailScale
-					detailB *= detailScale
-				}
-				fillR = baseR + detailR
-				fillG = baseG + detailG
-				fillB = baseB + detailB
-				fillA = dominant.sumAlpha / dominant.support
-			} else {
-				fallback := hashedPMSource(level, x, y, 0)
-				si := int(fallback.y)*level.src.Stride + int(fallback.x)*4
-				fillR = float32(level.src.Pix[si])
-				fillG = float32(level.src.Pix[si+1])
-				fillB = float32(level.src.Pix[si+2])
-				fillA = float32(level.src.Pix[si+3])
-			}
-
-			si := y*level.src.Stride + x*4
-			oi := y*out.Stride + x*4
-			a := float32(maskAlpha) / 255
-			invA := 1 - a
-			out.Pix[oi] = byte(clampFloat32(float32(level.src.Pix[si])*invA + fillR*a))
-			out.Pix[oi+1] = byte(clampFloat32(float32(level.src.Pix[si+1])*invA + fillG*a))
-			out.Pix[oi+2] = byte(clampFloat32(float32(level.src.Pix[si+2])*invA + fillB*a))
-			out.Pix[oi+3] = byte(clampFloat32(float32(level.src.Pix[si+3])*invA + fillA*a))
+		for _, n := range level.rowChanges {
+			changes += n
 		}
-	})
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
 
-// pmNNFCoherenceWeights approximates Adobe's coherent-region vote filtering.
-// Spatially connected target centers whose source displacement agrees within
-// two pixels form a segment. Large segments retain full voting power; isolated
-// hypotheses are strongly downweighted so they cannot create blobs or abrupt
-// rectangular source switches in a large fill.
-func pmNNFCoherenceWeights(level *pmLevel, nnf []pmPoint) []float32 {
-	size := level.w * level.h
-	if cap(level.coherence) < size {
-		level.coherence = make([]float32, size)
-	} else {
-		level.coherence = level.coherence[:size]
-		clear(level.coherence)
-	}
-	if cap(level.coherenceTags) < size {
-		level.coherenceTags = make([]int32, size)
-	} else {
-		level.coherenceTags = level.coherenceTags[:size]
-	}
-	weights := level.coherence
-	labels := level.coherenceTags
-	for i := range labels {
-		labels[i] = -1
-	}
-	queue := level.coherenceQ[:0]
-	if cap(queue) < maxInt(64, level.patchSize*level.patchSize) {
-		queue = make([]int, 0, maxInt(64, level.patchSize*level.patchSize))
-	}
-	var label int32
-
-	for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
-		for x := level.active.Min.X; x < level.active.Max.X; x++ {
-			start := y*level.w + x
-			if labels[start] >= 0 {
-				continue
-			}
-			labels[start] = label
-			queue = append(queue[:0], start)
-			for head := 0; head < len(queue); head++ {
-				id := queue[head]
-				cx, cy := id%level.w, id/level.w
-				for ny := maxInt(level.active.Min.Y, cy-1); ny <= minInt(level.active.Max.Y-1, cy+1); ny++ {
-					for nx := maxInt(level.active.Min.X, cx-1); nx <= minInt(level.active.Max.X-1, cx+1); nx++ {
-						next := ny*level.w + nx
-						if next == id || labels[next] >= 0 || !pmDisplacementsAgree(nnf[id], cx, cy, nnf[next], nx, ny) {
-							continue
-						}
-						labels[next] = label
-						queue = append(queue, next)
-					}
-				}
-			}
-
-			componentSize := len(queue)
-			minimumFullSupport := maxInt(8, level.patchSize*2)
-			coherentFraction := minFloat32(1, float32(componentSize)/float32(minimumFullSupport))
-			voteWeight := 0.05 + 0.95*coherentFraction
-			for _, id := range queue {
-				weights[id] = voteWeight
-			}
-			label++
+		stats.passes = pass + 1
+		stats.lastChanges = changes
+		// Require at least one forward and one reverse pass. Thereafter stop when
+		// fewer than roughly 0.4% of active centers improve. This preserves hard
+		// cases while avoiding two redundant passes on the common easy brush dab.
+		stableThreshold := maxInt(2, stats.active/250)
+		if pass >= 1 && changes <= stableThreshold {
+			stats.stable = true
+			break
 		}
 	}
-	level.coherenceQ = queue[:0]
-	return weights
+	return nnf, costs, stats, nil
 }
 
-func pmDisplacementsAgree(a pmPoint, ax, ay int, b pmPoint, bx, by int) bool {
-	adx, ady := int(a.x)-ax, int(a.y)-ay
-	bdx, bdy := int(b.x)-bx, int(b.y)-by
-	return absInt(adx-bdx) <= 2 && absInt(ady-bdy) <= 2
-}
-
-func absInt(value int) int {
-	if value < 0 {
-		return -value
+func pmRandomSearchStartRadius(searchRadius, pass, round int, haveSeed bool) int {
+	radius := maxInt(1, searchRadius)
+	if haveSeed {
+		if round > 0 {
+			radius = minInt(radius, maxInt(20, searchRadius/4))
+		} else if pass > 0 {
+			radius = minInt(radius, maxInt(28, searchRadius/2))
+		}
 	}
-	return value
+	if pass >= 2 {
+		radius = minInt(radius, 32)
+	}
+	return maxInt(1, radius)
+}
+
+func pmInitialCandidate(level *pmLevel, seed *pmSolution, x, y int) (pmPoint, bool) {
+	id := y*level.w + x
+	// Clean target/source patches are already their own perfect local mapping.
+	if level.valid[id] && level.mask.Pix[y*level.mask.Stride+x] == 0 {
+		return pmPoint{x: int32(x), y: int32(y)}, true
+	}
+	if seed != nil && len(seed.nnf) != 0 {
+		if candidate, ok := pmSeedFromSolution(level, seed, x, y); ok && validPMPoint(level, candidate) {
+			return candidate, true
+		}
+	}
+	if candidate, ok := pmNearbyValidSource(level, x, y); ok {
+		return candidate, true
+	}
+	if len(level.sources) != 0 {
+		// Extremely large/fully covered local holes may have no nearby legal
+		// center. A deterministic source-list fallback is sufficient to bootstrap
+		// random search without building a full-image Voronoi field.
+		state := pmHash(uint32(x), uint32(y), 0x243f6a88)
+		return level.sources[int(state%uint32(len(level.sources)))], true
+	}
+	return pmPoint{}, false
+}
+
+func pmNearbyValidSource(level *pmLevel, x, y int) (pmPoint, bool) {
+	maxRadius := minInt(64, maxInt(level.w, level.h))
+	for radius := 1; radius <= maxRadius; radius++ {
+		left, right := x-radius, x+radius
+		top, bottom := y-radius, y+radius
+		for sx := left; sx <= right; sx++ {
+			for _, sy := range [...]int{top, bottom} {
+				p := pmPoint{x: int32(sx), y: int32(sy)}
+				if validPMPoint(level, p) {
+					return p, true
+				}
+			}
+		}
+		for sy := top + 1; sy < bottom; sy++ {
+			for _, sx := range [...]int{left, right} {
+				p := pmPoint{x: int32(sx), y: int32(sy)}
+				if validPMPoint(level, p) {
+					return p, true
+				}
+			}
+		}
+	}
+	return pmPoint{}, false
+}
+
+// pmSeedFromSolution upsamples displacement, not absolute source coordinates.
+// This preserves a constant motion field across odd/even child pixels and
+// avoids the one-pixel checkerboard phase error produced by q_child=scale*q_parent.
+func pmSeedFromSolution(level *pmLevel, seed *pmSolution, x, y int) (pmPoint, bool) {
+	if seed == nil || seed.level == nil || len(seed.nnf) == 0 {
+		return pmPoint{}, false
+	}
+	pw, ph := seed.level.w, seed.level.h
+	if pw == level.w && ph == level.h {
+		id := y*level.w + x
+		if id < 0 || id >= len(seed.nnf) {
+			return pmPoint{}, false
+		}
+		return seed.nnf[id], true
+	}
+
+	px := clampInt(int((float64(x)+0.5)*float64(pw)/float64(level.w)), 0, pw-1)
+	py := clampInt(int((float64(y)+0.5)*float64(ph)/float64(level.h)), 0, ph-1)
+	q := seed.nnf[py*pw+px]
+	if q.x < 0 || q.y < 0 {
+		return pmPoint{}, false
+	}
+	dx := float64(q.x) - float64(px)
+	dy := float64(q.y) - float64(py)
+	sx := float64(level.w) / float64(pw)
+	sy := float64(level.h) / float64(ph)
+	return pmPoint{
+		x: int32(math.Round(float64(x) + dx*sx)),
+		y: int32(math.Round(float64(y) + dy*sy)),
+	}, true
+}
+
+func pmTryCandidate(level *pmLevel, target *pmPackedPlanes, tx, ty int, candidate pmPoint, best *pmPoint, bestCost *float32) bool {
+	if !validPMPoint(level, candidate) {
+		return false
+	}
+	cost := pmPatchCost(level, target, tx, ty, candidate, *bestCost)
+	if cost < *bestCost {
+		*best = candidate
+		*bestCost = cost
+		return true
+	}
+	return false
+}
+
+func pmRandomValidNear(level *pmLevel, tx, ty, radius int, state *uint32) (pmPoint, bool) {
+	for attempt := 0; attempt < 12; attempt++ {
+		*state = pmNext(*state)
+		dx := int(*state%uint32(2*radius+1)) - radius
+		*state = pmNext(*state)
+		dy := int(*state%uint32(2*radius+1)) - radius
+		candidate := pmPoint{x: int32(tx + dx), y: int32(ty + dy)}
+		if validPMPoint(level, candidate) {
+			return candidate, true
+		}
+	}
+	return pmPoint{}, false
+}
+
+func validPMPoint(level *pmLevel, p pmPoint) bool {
+	x, y := int(p.x), int(p.y)
+	return x >= 0 && y >= 0 && x < level.w && y < level.h && level.valid[y*level.w+x]
 }
 
 func seedPMWorking(level *pmLevel, parent *pmSolution) *image.NRGBA {
 	if parent == nil {
-		return pmHealedWorkingFromBase(level.src, level.mask, level.src)
+		// Masked content is ignored by round-zero confidence, so retaining source
+		// bytes here is harmless and avoids inventing a second fill algorithm.
+		return cloneNRGBA(level.src)
 	}
 	out := cloneNRGBA(level.src)
-	weights := [...]int{1, 4, 6, 4, 1}
-	for y := 0; y < level.h; y++ {
-		for x := 0; x < level.w; x++ {
-			maskAlpha := level.mask.Pix[y*level.mask.Stride+x]
-			if maskAlpha == 0 {
+	bounds := maskBounds(level.mask)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			alpha := level.mask.Pix[y*level.mask.Stride+x]
+			if alpha == 0 {
 				continue
 			}
-			px := (2*x + 1) * parent.level.w / (2 * level.w)
-			py := (2*y + 1) * parent.level.h / (2 * level.h)
-			var rgba [4]int
-			var total int
-			for ky := -2; ky <= 2; ky++ {
-				sy := clampInt(py+ky, 0, parent.level.h-1)
-				for kx := -2; kx <= 2; kx++ {
-					sx := clampInt(px+kx, 0, parent.level.w-1)
-					weight := weights[ky+2] * weights[kx+2]
-					i := sy*parent.working.Stride + sx*4
-					for channel := 0; channel < 4; channel++ {
-						rgba[channel] += int(parent.working.Pix[i+channel]) * weight
-					}
-					total += weight
-				}
-			}
+			sample := pmBilinearParent(parent.working, level.w, level.h, x, y)
 			si := y*level.src.Stride + x*4
-			oi := y*out.Stride + x*4
-			a := int(maskAlpha)
-			for channel := 0; channel < 4; channel++ {
-				estimate := rgba[channel] / total
-				out.Pix[oi+channel] = byte((int(level.src.Pix[si+channel])*(255-a) + estimate*a + 127) / 255)
+			di := y*out.Stride + x*4
+			a := int(alpha)
+			for c := 0; c < 4; c++ {
+				out.Pix[di+c] = byte((int(level.src.Pix[si+c])*(255-a) + int(sample[c])*a + 127) / 255)
 			}
 		}
 	}
 	return out
 }
 
-func buildPatchPyramid(src *image.NRGBA, mask *image.Alpha, patchSize int) ([]*image.NRGBA, []*image.Alpha) {
+func pmBilinearParent(src *image.NRGBA, dstW, dstH, x, y int) [4]byte {
+	sw, sh := src.Bounds().Dx(), src.Bounds().Dy()
+	fx := (float64(x)+0.5)*float64(sw)/float64(dstW) - 0.5
+	fy := (float64(y)+0.5)*float64(sh)/float64(dstH) - 0.5
+	x0 := clampInt(int(math.Floor(fx)), 0, sw-1)
+	y0 := clampInt(int(math.Floor(fy)), 0, sh-1)
+	x1 := minInt(sw-1, x0+1)
+	y1 := minInt(sh-1, y0+1)
+	tx := float32(fx - math.Floor(fx))
+	ty := float32(fy - math.Floor(fy))
+	var out [4]byte
+	for c := 0; c < 4; c++ {
+		v00 := float32(src.Pix[y0*src.Stride+x0*4+c])
+		v10 := float32(src.Pix[y0*src.Stride+x1*4+c])
+		v01 := float32(src.Pix[y1*src.Stride+x0*4+c])
+		v11 := float32(src.Pix[y1*src.Stride+x1*4+c])
+		v0 := v00 + (v10-v00)*tx
+		v1 := v01 + (v11-v01)*tx
+		out[c] = byte(clampFloat32(v0 + (v1-v0)*ty))
+	}
+	return out
+}
+
+// buildPatchPyramid keeps two different mask semantics:
+//   - targetMasks preserve fractional coverage for confidence and compositing;
+//   - sourceMasks conservatively mark any covered fine pixel as unusable source.
+func buildPatchPyramid(src *image.NRGBA, mask *image.Alpha, patchSize int) ([]*image.NRGBA, []*image.Alpha, []*image.Alpha) {
 	images := []*image.NRGBA{src}
-	masks := []*image.Alpha{mask}
+	targetMasks := []*image.Alpha{mask}
+	sourceMasks := []*image.Alpha{binarySourceMask(mask)}
 	minSide := maxInt(32, patchSize*4)
 	const maxLevels = 7
 	for len(images) < maxLevels {
@@ -700,123 +700,256 @@ func buildPatchPyramid(src *image.NRGBA, mask *image.Alpha, patchSize int) ([]*i
 		nextW := maxInt(1, (w+1)/2)
 		nextH := maxInt(1, (h+1)/2)
 		images = append(images, downsampleNRGBA(last, nextW, nextH))
-		masks = append(masks, downsampleMask(masks[len(masks)-1], nextW, nextH))
+		targetMasks = append(targetMasks, downsampleTargetMask(targetMasks[len(targetMasks)-1], nextW, nextH))
+		sourceMasks = append(sourceMasks, downsampleSourceMask(sourceMasks[len(sourceMasks)-1], nextW, nextH))
 	}
-	return images, masks
+	return images, targetMasks, sourceMasks
 }
 
+// downsampleNRGBA uses a separable binomial low-pass before resampling. This
+// avoids aliasing halftone dots, thin typography, line art, and print grain into
+// misleading coarse-level structures.
 func downsampleNRGBA(src *image.NRGBA, w, h int) *image.NRGBA {
+	sw, sh := src.Bounds().Dx(), src.Bounds().Dy()
+	if sw == w && sh == h {
+		return cloneNRGBA(src)
+	}
+	weights := [...]int{1, 4, 6, 4, 1}
+	// Premultiplied working channels, scaled by 16 after horizontal filtering.
+	tmp := make([]int64, sw*sh*4)
+	for y := 0; y < sh; y++ {
+		for x := 0; x < sw; x++ {
+			var sum [4]int64
+			for k := -2; k <= 2; k++ {
+				sx := clampInt(x+k, 0, sw-1)
+				i := y*src.Stride + sx*4
+				a := int64(src.Pix[i+3])
+				weight := int64(weights[k+2])
+				sum[0] += int64(src.Pix[i]) * a * weight
+				sum[1] += int64(src.Pix[i+1]) * a * weight
+				sum[2] += int64(src.Pix[i+2]) * a * weight
+				sum[3] += a * 255 * weight
+			}
+			base := (y*sw + x) * 4
+			copy(tmp[base:base+4], sum[:])
+		}
+	}
+
 	out := image.NewNRGBA(image.Rect(0, 0, w, h))
-	srcW, srcH := src.Bounds().Dx(), src.Bounds().Dy()
 	for y := 0; y < h; y++ {
-		y0 := y * srcH / h
-		y1 := maxInt(y0+1, (y+1)*srcH/h)
+		sy := clampInt(int(math.Round((float64(y)+0.5)*float64(sh)/float64(h)-0.5)), 0, sh-1)
 		for x := 0; x < w; x++ {
-			x0 := x * srcW / w
-			x1 := maxInt(x0+1, (x+1)*srcW/w)
-			var premulR, premulG, premulB, alpha, count int
+			sx := clampInt(int(math.Round((float64(x)+0.5)*float64(sw)/float64(w)-0.5)), 0, sw-1)
+			var sum [4]int64
+			for k := -2; k <= 2; k++ {
+				yy := clampInt(sy+k, 0, sh-1)
+				base := (yy*sw + sx) * 4
+				weight := int64(weights[k+2])
+				for c := 0; c < 4; c++ {
+					sum[c] += tmp[base+c] * weight
+				}
+			}
+			di := y*out.Stride + x*4
+			alphaNumerator := sum[3]
+			if alphaNumerator > 0 {
+				out.Pix[di] = byte(clampInt(int((sum[0]*255+alphaNumerator/2)/alphaNumerator), 0, 255))
+				out.Pix[di+1] = byte(clampInt(int((sum[1]*255+alphaNumerator/2)/alphaNumerator), 0, 255))
+				out.Pix[di+2] = byte(clampInt(int((sum[2]*255+alphaNumerator/2)/alphaNumerator), 0, 255))
+			}
+			// 256 is the total 2-D binomial weight; sum[3] contains alpha*255.
+			out.Pix[di+3] = byte(clampInt(int((alphaNumerator+255*128)/(255*256)), 0, 255))
+		}
+	}
+	return out
+}
+
+func binarySourceMask(src *image.Alpha) *image.Alpha {
+	w, h := src.Bounds().Dx(), src.Bounds().Dy()
+	out := image.NewAlpha(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if src.Pix[y*src.Stride+x] != 0 {
+				out.Pix[y*out.Stride+x] = 255
+			}
+		}
+	}
+	return out
+}
+
+func downsampleTargetMask(src *image.Alpha, w, h int) *image.Alpha {
+	out := image.NewAlpha(image.Rect(0, 0, w, h))
+	sw, sh := src.Bounds().Dx(), src.Bounds().Dy()
+	for y := 0; y < h; y++ {
+		y0 := y * sh / h
+		y1 := maxInt(y0+1, (y+1)*sh/h)
+		for x := 0; x < w; x++ {
+			x0 := x * sw / w
+			x1 := maxInt(x0+1, (x+1)*sw/w)
+			sum, count := 0, 0
 			for sy := y0; sy < y1; sy++ {
 				for sx := x0; sx < x1; sx++ {
-					i := sy*src.Stride + sx*4
-					a := int(src.Pix[i+3])
-					premulR += int(src.Pix[i]) * a
-					premulG += int(src.Pix[i+1]) * a
-					premulB += int(src.Pix[i+2]) * a
-					alpha += a
+					sum += int(src.Pix[sy*src.Stride+sx])
 					count++
 				}
 			}
-			i := y*out.Stride + x*4
-			if alpha > 0 {
-				out.Pix[i] = byte(premulR / alpha)
-				out.Pix[i+1] = byte(premulG / alpha)
-				out.Pix[i+2] = byte(premulB / alpha)
-			}
-			out.Pix[i+3] = byte(alpha / count)
+			out.Pix[y*out.Stride+x] = byte((sum + count/2) / count)
 		}
 	}
 	return out
 }
 
-// pmLowPassNRGBA returns the base layer used for frequency-separated voting.
-// The separable [1 4 6 4 1] kernel removes pixel-scale texture while retaining
-// the gradients that should blend smoothly across an inpainted region.
-func pmLowPassNRGBA(src *image.NRGBA) *image.NRGBA {
-	w, h := src.Bounds().Dx(), src.Bounds().Dy()
-	out := image.NewNRGBA(image.Rect(0, 0, w, h))
-	if w == 0 || h == 0 {
-		return out
-	}
-	weights := [...]int{1, 4, 6, 4, 1}
-	tmp := make([]uint16, w*h*4)
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			for channel := 0; channel < 4; channel++ {
-				sum := 0
-				for k := -2; k <= 2; k++ {
-					sx := clampInt(x+k, 0, w-1)
-					sum += weights[k+2] * int(src.Pix[y*src.Stride+sx*4+channel])
-				}
-				tmp[(y*w+x)*4+channel] = uint16(sum)
-			}
-		}
-	}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			for channel := 0; channel < 4; channel++ {
-				sum := 0
-				for k := -2; k <= 2; k++ {
-					sy := clampInt(y+k, 0, h-1)
-					sum += weights[k+2] * int(tmp[(sy*w+x)*4+channel])
-				}
-				out.Pix[y*out.Stride+x*4+channel] = byte((sum + 128) / 256)
-			}
-		}
-	}
-	return out
-}
-
-func downsampleMask(src *image.Alpha, w, h int) *image.Alpha {
+func downsampleSourceMask(src *image.Alpha, w, h int) *image.Alpha {
 	out := image.NewAlpha(image.Rect(0, 0, w, h))
-	srcW, srcH := src.Bounds().Dx(), src.Bounds().Dy()
+	sw, sh := src.Bounds().Dx(), src.Bounds().Dy()
 	for y := 0; y < h; y++ {
-		y0 := y * srcH / h
-		y1 := maxInt(y0+1, (y+1)*srcH/h)
+		y0 := y * sh / h
+		y1 := maxInt(y0+1, (y+1)*sh/h)
 		for x := 0; x < w; x++ {
-			x0 := x * srcW / w
-			x1 := maxInt(x0+1, (x+1)*srcW/w)
-			var maximum byte
-			for sy := y0; sy < y1; sy++ {
+			x0 := x * sw / w
+			x1 := maxInt(x0+1, (x+1)*sw/w)
+			covered := false
+			for sy := y0; sy < y1 && !covered; sy++ {
 				for sx := x0; sx < x1; sx++ {
-					if value := src.Pix[sy*src.Stride+sx]; value > maximum {
-						maximum = value
+					if src.Pix[sy*src.Stride+sx] != 0 {
+						covered = true
+						break
 					}
 				}
 			}
-			out.Pix[y*out.Stride+x] = maximum
+			if covered {
+				out.Pix[y*out.Stride+x] = 255
+			}
 		}
 	}
 	return out
+}
+
+func pmNearestValidSource(valid []bool, w, h int) []pmPoint {
+	nearest := make([]pmPoint, w*h)
+	distance := make([]int, w*h)
+	queue := make([]int, 0, w*h/4)
+	for id := range nearest {
+		nearest[id] = pmPoint{x: -1, y: -1}
+		distance[id] = -1
+		if valid[id] {
+			x, y := id%w, id/w
+			nearest[id] = pmPoint{x: int32(x), y: int32(y)}
+			distance[id] = 0
+			queue = append(queue, id)
+		}
+	}
+	for head := 0; head < len(queue); head++ {
+		id := queue[head]
+		x, y := id%w, id/w
+		neighbors := [4]int{-1, -1, -1, -1}
+		if x > 0 {
+			neighbors[0] = id - 1
+		}
+		if x+1 < w {
+			neighbors[1] = id + 1
+		}
+		if y > 0 {
+			neighbors[2] = id - w
+		}
+		if y+1 < h {
+			neighbors[3] = id + w
+		}
+		for _, next := range neighbors {
+			if next < 0 || distance[next] >= 0 {
+				continue
+			}
+			distance[next] = distance[id] + 1
+			nearest[next] = nearest[id]
+			queue = append(queue, next)
+		}
+	}
+	return nearest
+}
+
+// pmMaskInteriorDistance returns distance (in pixels) from each fully/partly
+// covered target pixel to known image content. It is used only to taper
+// provisional EM confidence; it never changes source validity.
+func pmMaskInteriorDistance(mask *image.Alpha) []int {
+	w, h := mask.Bounds().Dx(), mask.Bounds().Dy()
+	distance := make([]int, w*h)
+	bounds := maskBounds(mask)
+	if bounds.Empty() {
+		return distance
+	}
+	queue := make([]int, 0, bounds.Dx()*bounds.Dy())
+
+	// Only covered pixels participate. v3 enqueued every known pixel in the ROI,
+	// making this tiny brush-distance calculation O(working-image area).
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			if mask.Pix[y*mask.Stride+x] == 0 {
+				continue
+			}
+			id := y*w + x
+			distance[id] = -1
+			boundary := mask.Pix[y*mask.Stride+x] < 255
+			if !boundary {
+				for _, d := range [...]image.Point{{X: -1}, {X: 1}, {Y: -1}, {Y: 1}} {
+					nx, ny := x+d.X, y+d.Y
+					if nx < 0 || ny < 0 || nx >= w || ny >= h || mask.Pix[ny*mask.Stride+nx] < 255 {
+						boundary = true
+						break
+					}
+				}
+			}
+			if boundary {
+				distance[id] = 1
+				queue = append(queue, id)
+			}
+		}
+	}
+	if len(queue) == 0 {
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				if mask.Pix[y*mask.Stride+x] != 0 {
+					distance[y*w+x] = 1
+				}
+			}
+		}
+		return distance
+	}
+	for head := 0; head < len(queue); head++ {
+		id := queue[head]
+		x, y := id%w, id/w
+		nextDistance := distance[id] + 1
+		for _, d := range [...]image.Point{{X: -1}, {X: 1}, {Y: -1}, {Y: 1}} {
+			nx, ny := x+d.X, y+d.Y
+			if nx < bounds.Min.X || ny < bounds.Min.Y || nx >= bounds.Max.X || ny >= bounds.Max.Y {
+				continue
+			}
+			nid := ny*w + nx
+			if mask.Pix[ny*mask.Stride+nx] == 0 || distance[nid] >= 0 {
+				continue
+			}
+			distance[nid] = nextDistance
+			queue = append(queue, nid)
+		}
+	}
+	return distance
 }
 
 func maskedIntegral(mask *image.Alpha) []int {
 	w, h := mask.Bounds().Dx(), mask.Bounds().Dy()
 	integral := make([]int, (w+1)*(h+1))
 	for y := 0; y < h; y++ {
-		rowSum := 0
+		row := 0
 		for x := 0; x < w; x++ {
 			if mask.Pix[y*mask.Stride+x] != 0 {
-				rowSum++
+				row++
 			}
-			integral[(y+1)*(w+1)+x+1] = integral[y*(w+1)+x+1] + rowSum
+			integral[(y+1)*(w+1)+x+1] = integral[y*(w+1)+x+1] + row
 		}
 	}
 	return integral
 }
 
 func integralRectSum(integral []int, stride, x0, y0, x1, y1 int) int {
-	return integral[y1*stride+x1] - integral[y0*stride+x1] -
-		integral[y1*stride+x0] + integral[y0*stride+x0]
+	return integral[y1*stride+x1] - integral[y0*stride+x1] - integral[y1*stride+x0] + integral[y0*stride+x0]
 }
 
 func maskBounds(mask *image.Alpha) image.Rectangle {
@@ -839,16 +972,6 @@ func maskBounds(mask *image.Alpha) image.Rectangle {
 	return image.Rect(minX, minY, maxX, maxY)
 }
 
-func validPMPoint(level *pmLevel, p pmPoint) bool {
-	x, y := int(p.x), int(p.y)
-	return x >= 0 && y >= 0 && x < level.w && y < level.h && level.valid[y*level.w+x]
-}
-
-func hashedPMSource(level *pmLevel, x, y, salt int) pmPoint {
-	state := pmHash(uint32(x), uint32(y), uint32(salt))
-	return level.sources[int(state%uint32(len(level.sources)))]
-}
-
 func pmHash(x, y, salt uint32) uint32 {
 	value := x*0x9e3779b1 ^ y*0x85ebca77 ^ salt*0xc2b2ae3d ^ 0x27d4eb2f
 	value ^= value >> 16
@@ -858,9 +981,7 @@ func pmHash(x, y, salt uint32) uint32 {
 	return value ^ (value >> 16)
 }
 
-func pmNext(state uint32) uint32 {
-	return state*1664525 + 1013904223
-}
+func pmNext(state uint32) uint32 { return state*1664525 + 1013904223 }
 
 func normalizeNRGBA(src *image.NRGBA) *image.NRGBA {
 	out := image.NewNRGBA(image.Rect(0, 0, src.Bounds().Dx(), src.Bounds().Dy()))
@@ -883,6 +1004,12 @@ func cloneNRGBA(src *image.NRGBA) *image.NRGBA {
 }
 
 func parallelRows(ctx context.Context, start, end int, fn func(y int)) error {
+	return parallelRowsSized(ctx, start, end, 256, fn)
+}
+
+// parallelRowsSized avoids goroutine setup on tiny brush regions and uses the
+// existing row-parallel strategy only when there is enough work to amortize it.
+func parallelRowsSized(ctx context.Context, start, end, width int, fn func(y int)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -890,7 +1017,17 @@ func parallelRows(ctx context.Context, start, end int, fn func(y int)) error {
 	if rows <= 0 {
 		return nil
 	}
+	work := rows * maxInt(1, width)
 	workers := minInt(runtime.GOMAXPROCS(0), rows)
+	if workers <= 1 || work < 12000 || rows < 6 {
+		for y := start; y < end; y++ {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			fn(y)
+		}
+		return nil
+	}
 	var wg sync.WaitGroup
 	wg.Add(workers)
 	for worker := 0; worker < workers; worker++ {
