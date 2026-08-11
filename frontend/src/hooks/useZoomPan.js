@@ -1,123 +1,149 @@
-import { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { LogFrontend, SetFeatherSize } from '../../wailsjs/go/main/App'
 
 export function maxUsefulZoom(naturalWidth, fitWidth) {
   if (!(naturalWidth > 0) || !(fitWidth > 0)) return 5
-  // Preserve the historical 5x minimum while allowing two screen pixels per
-  // source pixel on large scans. Keep a defensive ceiling for pathological
-  // dimensions and accidental layout values.
   return Math.min(40, Math.max(5, (naturalWidth / fitWidth) * 2))
 }
 
-export function useZoomPan({ imgRef, mode, discActive, featherSize, setFeatherSize, setPreview }) {
-  const [zoom, setZoom]               = useState(1)
-  const [fitWidth, setFitWidth]       = useState(0)
-  const [spacePanMode, setSpacePanMode] = useState(false)
-  const [imgNatural, setImgNatural]   = useState({ w: 1, h: 1 })
-  const canvasRef        = useRef(null)
-  const pendingScrollRef = useRef(null)
-  const mousePosRef      = useRef({ x: 0, y: 0 })
-  const spaceDownRef     = useRef(false)
-  const panDragRef       = useRef(null)  // {startX, startY, scrollLeft, scrollTop} while space+dragging
-  const lastResizeRef    = useRef(0)     // timestamp of last window resize (to suppress post-maximize clicks)
+function validDims(value) {
+  return value && Number.isFinite(value.w) && Number.isFinite(value.h) && value.w > 0 && value.h > 0
+}
 
-  const handleImgLoad = () => {
-    const el        = imgRef.current
-    const container = canvasRef.current
-    if (el) {
-      const natW = el.naturalWidth; const natH = el.naturalHeight
-      console.log('[handleImgLoad] natW:', natW, 'natH:', natH,
-        '| container clientW:', container?.clientWidth, 'clientH:', container?.clientHeight)
-      setImgNatural({ w: natW, h: natH })
-      if (container && natW > 0 && natH > 0) {
-        const aspect = natW / natH
-        const fw = Math.min(container.clientWidth, container.clientHeight * aspect)
-        console.log('[handleImgLoad] aspect:', aspect.toFixed(4), '| fitWidth calculated:', fw)
-        setFitWidth(fw)
-      }
-    }
+function fitWidthFor(container, dims) {
+  if (!container || !validDims(dims)) return 0
+  const availableWidth = Math.max(1, container.clientWidth)
+  const availableHeight = Math.max(1, container.clientHeight)
+  return Math.min(availableWidth, availableHeight * (dims.w / dims.h))
+}
+
+export function useZoomPan({
+  imgRef,
+  imageDims,
+  mode,
+  discActive,
+  featherSize,
+  setFeatherSize,
+  setPreview,
+}) {
+  const [zoom, setZoom] = useState(1)
+  const [fitWidth, setFitWidth] = useState(0)
+  const [spacePanMode, setSpacePanMode] = useState(false)
+  const [imgNatural, setImgNatural] = useState(validDims(imageDims) ? imageDims : { w: 1, h: 1 })
+
+  const canvasRef = useRef(null)
+  const pendingAnchorRef = useRef(null)
+  const mousePosRef = useRef({ x: 0, y: 0 })
+  const spaceDownRef = useRef(false)
+  const panDragRef = useRef(null)
+  const lastResizeRef = useRef(0)
+
+  const handleImgLoad = (dims) => {
+    const next = validDims(dims)
+      ? dims
+      : {
+          w: Number(imgRef.current?.dataset?.naturalWidth) || Number(imgRef.current?.naturalWidth) || imgNatural.w,
+          h: Number(imgRef.current?.dataset?.naturalHeight) || Number(imgRef.current?.naturalHeight) || imgNatural.h,
+        }
+    if (!validDims(next)) return
+    setImgNatural(next)
+    const fitted = fitWidthFor(canvasRef.current, next)
+    if (fitted > 0) setFitWidth(fitted)
   }
+
+  // The image dimensions now come from backend state, not from an <img>
+  // decode. This keeps zoom math authoritative even while a viewport raster is
+  // still loading.
+  useEffect(() => {
+    if (!validDims(imageDims)) return
+    setImgNatural(current => (
+      current.w === imageDims.w && current.h === imageDims.h ? current : imageDims
+    ))
+  }, [imageDims?.w, imageDims?.h])
 
   useEffect(() => {
     const el = canvasRef.current
-    if (!el || imgNatural.w <= 1) return
-    const observer = new ResizeObserver(() => {
-      const aspect = imgNatural.w / imgNatural.h
-      const fw = Math.min(el.clientWidth, el.clientHeight * aspect)
-      console.log('[ResizeObserver] clientW:', el.clientWidth, 'clientH:', el.clientHeight,
-        '| aspect:', aspect.toFixed(4), '| fitWidth:', fw)
-      setFitWidth(fw)
-    })
+    if (!el || !validDims(imgNatural)) return
+
+    const updateFit = () => {
+      const fitted = fitWidthFor(el, imgNatural)
+      if (fitted > 0) setFitWidth(fitted)
+    }
+    updateFit()
+
+    const observer = new ResizeObserver(updateFit)
     observer.observe(el)
     return () => observer.disconnect()
   }, [imgNatural])
 
-  // ── Scroll-wheel zoom (+ Ctrl+Scroll feather in disc mode) ─────────────────
+  // Wheel zoom remains cursor anchored. Because the visible pixels are now a
+  // viewport canvas, imgRef points to the transparent logical image surface.
   useEffect(() => {
-    const el  = canvasRef.current
-    if (!el) return
-    const log = (msg) => LogFrontend(msg).catch(() => {})
+    const el = canvasRef.current
+    if (!el) return undefined
 
-    const handler = async (e) => {
-      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation()
-      if (e.ctrlKey && mode === 'disc' && discActive) {
-        const delta = e.deltaY < 0 ? 1 : -1
-        const newF  = Math.max(0, Math.min(100, featherSize + delta))
-        setFeatherSize(newF)
+    const log = message => LogFrontend(message).catch(() => {})
+    const handler = async event => {
+      event.preventDefault()
+      event.stopPropagation()
+      event.stopImmediatePropagation()
+
+      if (event.ctrlKey && mode === 'disc' && discActive) {
+        const delta = event.deltaY < 0 ? 1 : -1
+        const nextFeather = Math.max(0, Math.min(100, featherSize + delta))
+        setFeatherSize(nextFeather)
         try {
-          const result = await SetFeatherSize({ size: newF })
+          const result = await SetFeatherSize({ size: nextFeather })
           if (result?.preview) setPreview(result.preview)
-        } catch (err) { console.error(err) }
+        } catch (error) {
+          log(`SetFeatherSize failed: ${error?.message || error}`)
+        }
         return
       }
 
-      const factor = e.deltaY < 0 ? 1.1 : 0.9
-      const maxZoom = maxUsefulZoom(imgRef.current?.naturalWidth || imgNatural.w, fitWidth)
-      setZoom(z => {
-        const newZ = Math.min(maxZoom, Math.max(0.1, z * factor))
-        if (newZ === z) return z
-        const canvasRect = el.getBoundingClientRect()
-        const imgEl      = imgRef.current
-        const imgRect    = imgEl ? imgEl.getBoundingClientRect() : canvasRect
-        const ratio      = newZ / z
-        // Cursor position relative to the image's own left/top edge, accounting
-        // for any centering margin (margin:auto) that offsets the image within
-        // the canvas container when the image is smaller than the viewport.
-        pendingScrollRef.current = {
-          left: (e.clientX - imgRect.left) * ratio - (e.clientX - canvasRect.left),
-          top:  (e.clientY - imgRect.top)  * ratio - (e.clientY - canvasRect.top),
+      const imageEl = imgRef.current
+      if (!imageEl) return
+      const imageRect = imageEl.getBoundingClientRect()
+      if (!(imageRect.width > 0) || !(imageRect.height > 0)) return
+
+      const factor = event.deltaY < 0 ? 1.1 : 0.9
+      const limit = maxUsefulZoom(imgNatural.w, fitWidth)
+      setZoom(current => {
+        const next = Math.min(limit, Math.max(0.1, current * factor))
+        if (next === current) return current
+
+        pendingAnchorRef.current = {
+          u: Math.max(0, Math.min(1, (event.clientX - imageRect.left) / imageRect.width)),
+          v: Math.max(0, Math.min(1, (event.clientY - imageRect.top) / imageRect.height)),
+          clientX: event.clientX,
+          clientY: event.clientY,
         }
-        return newZ
+        return next
       })
     }
 
-    const scrollSpy = () => {
-    }
-    el.addEventListener('scroll', scrollSpy, { passive: true })
     el.addEventListener('wheel', handler, { passive: false, capture: true })
-    return () => {
-      el.removeEventListener('wheel', handler, { capture: true })
-      el.removeEventListener('scroll', scrollSpy)
-    }
-  }, [mode, discActive, featherSize, fitWidth, imgNatural.w]) // eslint-disable-line react-hooks/exhaustive-deps
+    return () => el.removeEventListener('wheel', handler, { capture: true })
+  }, [mode, discActive, featherSize, fitWidth, imgNatural.w, setFeatherSize, setPreview])
 
-  // ── Space-key pan mode ────────────────────────────────────────────────────
   useEffect(() => {
-    const onKeyDown = (e) => {
-      if (e.code !== 'Space') return
+    const onKeyDown = event => {
+      if (event.code !== 'Space') return
       const active = document.activeElement
       if (active && (['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable)) return
-      e.preventDefault()  // must preventDefault for every event, including repeats, to suppress native scroll
-      if (e.repeat) return
+      event.preventDefault()
+      if (event.repeat) return
       spaceDownRef.current = true
       setSpacePanMode(true)
     }
-    const onKeyUp = (e) => {
-      if (e.code !== 'Space') return
+
+    const onKeyUp = event => {
+      if (event.code !== 'Space') return
       spaceDownRef.current = false
       setSpacePanMode(false)
       panDragRef.current = null
     }
+
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     return () => {
@@ -126,31 +152,38 @@ export function useZoomPan({ imgRef, mode, discActive, featherSize, setFeatherSi
     }
   }, [])
 
-  // Track window resizes so post-maximize stray clicks don't register as corners
   useEffect(() => {
-    const onResize = () => { lastResizeRef.current = Date.now() }
+    const onResize = () => {
+      lastResizeRef.current = Date.now()
+    }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
   useLayoutEffect(() => {
-    const el  = canvasRef.current
-    const log = (msg) => LogFrontend(msg).catch(() => {})
-    if (pendingScrollRef.current) {
-      if (el) {
-        el.scrollLeft = pendingScrollRef.current.left
-        el.scrollTop  = pendingScrollRef.current.top
-      }
-      pendingScrollRef.current = null
-    }
+    const anchor = pendingAnchorRef.current
+    const container = canvasRef.current
+    const imageEl = imgRef.current
+    if (!anchor || !container || !imageEl) return
+
+    const rect = imageEl.getBoundingClientRect()
+    const anchorX = rect.left + anchor.u * rect.width
+    const anchorY = rect.top + anchor.v * rect.height
+    container.scrollLeft += anchorX - anchor.clientX
+    container.scrollTop += anchorY - anchor.clientY
+    pendingAnchorRef.current = null
   }, [zoom])
 
   return {
-    zoom, setZoom,
-    fitWidth, setFitWidth,
+    zoom,
+    setZoom,
+    fitWidth,
+    setFitWidth,
     spacePanMode,
     canvasRef,
-    mousePosRef, spaceDownRef, panDragRef,
+    mousePosRef,
+    spaceDownRef,
+    panDragRef,
     lastResizeRef,
     handleImgLoad,
     setImgNatural,

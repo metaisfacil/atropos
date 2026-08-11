@@ -1,0 +1,91 @@
+.preview-host {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #1e1e1e;
+}
+
+.preview-host > .canvas-area {
+  position: absolute;
+  inset: 0;
+
+  /* The Wails WebView2 scroller is promoted to its own compositor layer on
+     Windows. Keep it explicitly transparent; the host owns the dark
+     background. The pointer-transparent raster canvas is composited above this
+     layer so WebView2 cannot obscure rendered pixels. */
+  z-index: 2;
+  background: transparent;
+}
+
+.preview-viewport-canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  /* Keep the rendered pixels above the scroll/compositor surface. Canvas is
+     pointer-transparent, so all existing DOM hit targets remain interactive
+     underneath it while WebView2 cannot obscure the pixels with its scrolling
+     layer. */
+  z-index: 5;
+  pointer-events: none;
+  display: block;
+}
+
+.preview-scroll-surface {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 100%;
+  min-height: 100%;
+}
+
+.preview-logical-stage {
+  position: absolute;
+  overflow: visible;
+  line-height: 0;
+}
+
+.preview-hit-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: transparent;
+  user-select: none;
+  touch-action: none;
+}
+
+.preview-interaction-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.preview-hit-target {
+  position: absolute;
+  pointer-events: auto;
+  background: transparent;
+  box-sizing: border-box;
+}
+
+.preview-hit-edge--horizontal {
+  height: 16px;
+  transform: translateY(-8px);
+}
+
+.preview-hit-edge--vertical {
+  width: 16px !important;
+  transform: translateX(-8px);
+}
+
+.preview-hit-corner,
+.preview-hit-line-point {
+  width: 20px;
+  height: 20px;
+  transform: translate(-10px, -10px);
+  border-radius: 50%;
+}
+
+.preview-hit-line-point {
+  cursor: move;
+}

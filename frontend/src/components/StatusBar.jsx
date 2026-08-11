@@ -1,23 +1,26 @@
 import React from 'react'
 import DelayedHint from './DelayedHint'
 
-export default function StatusBar({ imageLoaded, imageMeta, inputImageDims, realImageDims, previewResolution, zoom, onResetZoom }) {
-  // Each item: { text, hint, onClick? }
+export default function StatusBar({
+  imageLoaded,
+  imageMeta,
+  inputImageDims,
+  realImageDims,
+  previewResolution,
+  zoom,
+  onResetZoom,
+}) {
   const items = []
 
   if (imageLoaded) {
-    if (imageMeta?.format) {
-      items.push({ text: imageMeta.format, hint: 'Image file format' })
-    }
+    if (imageMeta?.format) items.push({ text: imageMeta.format, hint: 'Image file format' })
 
     const inputChanged = inputImageDims &&
       (inputImageDims.w !== realImageDims.w || inputImageDims.h !== realImageDims.h)
-
     items.push({
       text: `${inputImageDims?.w ?? realImageDims.w} × ${inputImageDims?.h ?? realImageDims.h}`,
       hint: 'Input image dimensions in pixels (width × height)',
     })
-
     if (inputChanged) {
       items.push({
         text: `${realImageDims.w} × ${realImageDims.h}`,
@@ -27,26 +30,37 @@ export default function StatusBar({ imageLoaded, imageMeta, inputImageDims, real
 
     const { dpiX = 0, dpiY = 0 } = imageMeta || {}
     if (dpiX > 0 && dpiY > 0) {
-      const dpiText = Math.abs(dpiX - dpiY) < 0.5
-        ? `${Math.round(dpiX)} DPI`
-        : `${Math.round(dpiX)} × ${Math.round(dpiY)} DPI`
-      items.push({ text: dpiText, hint: 'Print resolution stored in the image file (dots per inch)' })
+      items.push({
+        text: Math.abs(dpiX - dpiY) < 0.5
+          ? `${Math.round(dpiX)} DPI`
+          : `${Math.round(dpiX)} × ${Math.round(dpiY)} DPI`,
+        hint: 'Print resolution stored in the image file (dots per inch)',
+      })
     }
 
-    if (previewResolution === 'low') {
+    if (previewResolution === 'viewport') {
+      items.push({
+        text: 'Viewport preview',
+        hint: 'Only the image region and pixel density required by the current viewport are being rendered',
+      })
+    } else if (previewResolution === 'low') {
       items.push({ text: 'Low-res preview', hint: 'The faster low-resolution preview is currently displayed' })
     } else if (previewResolution === 'high') {
       items.push({ text: 'High-res preview', hint: 'The full-resolution preview is currently displayed' })
     }
 
-    items.push({ text: `${Math.round(zoom * 100)}%`, hint: 'Current zoom level — click to reset to 100%', onClick: onResetZoom })
+    items.push({
+      text: `${Math.round(zoom * 100)}%`,
+      hint: 'Current zoom level — click to reset to 100%',
+      onClick: onResetZoom,
+    })
   }
 
   return (
     <div className="status-bar">
-      {items.map((item, i) => (
-        <React.Fragment key={i}>
-          {i > 0 && <span className="status-bar-sep" />}
+      {items.map((item, index) => (
+        <React.Fragment key={index}>
+          {index > 0 && <span className="status-bar-sep" />}
           <DelayedHint hint={item.hint}>
             <span
               className={`status-bar-item${item.onClick ? ' status-bar-item--clickable' : ''}`}

@@ -14,17 +14,18 @@ This document contains the detailed system model, data flow, and operation order
 | `hooks/useMouseHandlers.js` | All pointer interaction: `handleMouseDown/Move/Up/ImageMouseLeave` across all modes. Owns refs for corner click guards, disc drag state, line endpoint editing, and Normal-mode draw/move/resize (`normalDragPendingRef`, `normalMoveDragRef`, `normalHandleDragRef`). Uses shared `computeDiscShift` mapping from `utils/imageCoords` for consistent disc translation math across live preview and backend commit. Registers `window` `mouseup` and `mousemove` listeners to safely finish drags outside the canvas area. Returns `displayToImage` and `lineStartImgRef` for stable image-space coordinates during zoom changes mid-drag. |
 | `hooks/useKeyboardShortcuts.js` | Single `keydown` effect: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+Z` (undo), `Ctrl+S` (save), `Ctrl+O` (load), `Ctrl+W`/`Cmd+W` (quit), `Enter` (apply Normal crop), and `WASDQE` (crop/rotate). In corner mode, `Ctrl+Z` first calls `UndoLastCorner` for in-progress corner picks (1–3) before using backend image undo. WASDQE are guarded by `canSave`; if no crop result exists, `showStatus` is shown instead of forwarding to Go. |
 | `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, window mouseup effect, `EventsOn("touchup-done")` effect. |
-| `hooks/useZoomPan.js` | Canvas viewport: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, scroll `useLayoutEffect`. The wheel zoom formula uses `imgRef.current.getBoundingClientRect()` (not the canvas rect) to compute cursor position relative to the image's actual left edge, correctly accounting for the `margin: auto` centering offset when the image is smaller than the canvas. `pendingScrollRef` is set inside the `setZoom` updater and applied synchronously in `useLayoutEffect([zoom])` after the DOM commit. |
+| `hooks/useZoomPan.js` | Viewport camera state: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, and scroll anchoring. `imgRef` points at the transparent logical image surface, so cursor anchoring and the existing pointer state machine use the same geometry as the canvas renderer without making image pixels a DOM `<img>`. |
 | `hooks/usePersistentSettings.js` | File-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, `autoCornerParams`, `closeAfterSave`, `postSaveEnabled`, `postSaveCommand`, `touchupRemainsActive`, `straightEdgeRemainsActive`, `autoDetectOnModeSwitch`). Loads from Go (`GetAllSettings`) on mount and persists via `SaveAllSettings` on every change. Performs a one-time migration from `localStorage` on first launch of the file-backed version. |
 | `hooks/useStatusMessage.js` | `imageInfo` + fade timer logic (`showStatus`). |
-| `components/ImageOverlays.jsx` | Pure render: all SVG overlays (corner dots, touch-up circles, disc guide, straight-edge line, normal crop rect, line mode lines). |
+| `components/PreviewCanvas.jsx` | Visible viewport renderer. Requests only the visible/overscanned image-space region at the device density needed for the current zoom, receives that small JPEG through the Wails RPC bridge as a data URL, caches recent rasters, composites touch-up patches, and draws all visible image-space guides. |
+| `components/ImageOverlays.jsx` | Transparent DOM hit targets for editable Normal/Line handles. Visible guides are drawn by `PreviewCanvas`; this component exists so the mature pointer state machine can keep DOM hit testing. |
 | `components/StatusBar.jsx` | Bottom status bar. Shows file format, pixel dimensions, DPI when known, and zoom level. Zoom is clickable and resets to 100%. All fields use `DelayedHint`. |
 | `components/DelayedHint.jsx` | Portal-rendered tooltip that appears after a 1 s hover delay. Uses a two-pass `useLayoutEffect` to clamp the tooltip inside the viewport before making it visible, avoiding flicker and edge clipping. |
 | `components/*Panel.jsx` | Mode-specific sidebar controls. `AdjustmentsPanel` owns resize, trim borders, auto-contrast, levels, descreen, touch-up brush, and disc straight-edge controls. `ShortcutsPanel` accepts `canSave` and `imageLoaded` props and applies `.shortcut-item--disabled` to unavailable shortcuts. `ToolsPanel` is a collapsible sidebar panel between Adjustments and Shortcuts that houses the Image Compositor button. |
 | `components/ResizeModal.jsx` | Modal for width/height or percentage resize with optional aspect lock and warning confirmation for large upscales. |
 | `components/CompositorModal.jsx` | Modal for image stitching. Manages an ordered list of image paths and an orientation selector, calls `CompositorStitch`, shows a preview, and exposes a “Load output” button that calls `CompositorLoadResult` and triggers `handleCompositorLoad`. |
 
-`ctrlDragRef` and `shiftDragRef` are defined in `App.jsx` rather than moved to `useMouseHandlers` because they are read by `<ImageOverlays>` at render time for the disc guide condition, in addition to being written by the mouse handlers.
+`ctrlDragRef` and `shiftDragRef` are defined in `App.jsx` rather than moved to `useMouseHandlers` because `PreviewCanvas` reads their live values for disc-guide rendering while the mouse handlers write them during drag interactions.
 
 ---
 
@@ -167,7 +168,7 @@ LoadImage(req)
          discWorkingCropRect = zero
          postDiscBlack = 0
          postDiscWhite = 255
-    6. imagePreviewURL(currentImage)   register an immutable full-resolution preview asset
+    6. imagePreviewURL(currentImage)   register an immutable preview revision whose source can be rasterized on demand
     7. Update window title
     8. extractFileMeta(filePath)      read format name + DPI from file header
     9. Return ImageInfo{Width, Height, Preview, Format, DPIX, DPIY, SuggestedCornerParams{MinDistance, MaxCorners}}
@@ -211,7 +212,7 @@ DetectCorners(req)
     3. Deduplicate corners, map back to full-resolution coordinates
     4. Store in detectedCorners
     5. Return clean currentImage preview + Corners array
-         Dots are rendered by the frontend as an SVG overlay — never baked into the image
+         Dots are rendered by the frontend canvas overlay — never baked into the image
 ```
 
 ### Clicking Corners
@@ -807,53 +808,78 @@ applyWarpFill(img, oobMask)
 ```
 imagePreviewURL(img)
     register the immutable *image.NRGBA pointer as a numbered revision
-    return /__atropos/preview/{session}/{revision}.jpg through the normal Wails result
+    return /__atropos/preview/{session}/{revision}.jpg as the opaque revision identity
 
+RenderPreviewViewport({ preview, x, y, width, height, destWidth, destHeight, quality })
+    validate the opaque revision identity
+    validate and clamp the requested source rectangle
+    rasterize directly from that source rectangle to destWidth×destHeight
+    serialize JPEG encodes so work cannot pile up inside the encoder
+    cache immutable encoded rasters by revision + rectangle + output size + quality
+    return only that viewport JPEG through Wails RPC as data:image/jpeg;base64,...
+
+Compatibility URLs:
+GET /__atropos/preview/{session}/{revision}.jpg?x=X&y=Y&w=W&h=H&dw=DW&dh=DH&q=88
+    legacy/debug viewport HTTP transport
 GET /__atropos/preview/{session}/{revision}-low.jpg
-    resize to a 1600px maximum dimension and encode as JPEG quality 85
-    frontend keeps the prior revision visible until this placeholder is ready
-
+    legacy 1600px-max JPEG quality 85
 GET /__atropos/preview/{session}/{revision}.jpg
-    encode the full-resolution image once as JPEG quality 95
-    cache the encoded bytes in the bounded preview asset store
-    return immutable browser-cache headers
+    legacy full-frame JPEG quality 95
 ```
 
-Full-frame preview pixels never travel through the Wails JSON/base64 method
-bridge; only bounded touch-up replacement patches use an event data URI. The
-asset handler accepts only its random per-image-session token and numeric
-internal revision paths; it never exposes arbitrary filesystem paths. The
-session token rotates on full image-state resets, prevents a persistent WebView
-cache from confusing revisions across loads or application launches, and lets
-the frontend synchronously hide a prior image while a new image loads. Encodes are serialized so superseded browser
-requests can cancel while waiting instead of queueing every intermediate image
-from a rapid adjustment drag. `useProgressivePreview` promotes each revision
-from its low-resolution URL to its full-resolution URL after browser decode.
-Full-resolution promotion has a short settling delay. A newer revision cancels
-that timer and explicitly aborts superseded preload requests, so a rapid edit
-sequence remains at a consistent preview quality and sharpens only once after
-the sequence becomes idle. Backend processing and active canvas drags also
-pause and restart the promotion window, preventing a full encode from starting
-between a touch-up stroke and the arrival of its replacement patch.
-Touch-up commits are the exception to revision replacement: their transparent
-changed-pixel overlays apply equally to both variants of the existing revision,
-so they do not restart low/full loading or the settling timer.
-The frontend tracks the last revision whose visible `<img>` fired `onLoad`.
-User-facing busy state is `backend loading || preview presentation pending`, so
-spinners and core canvas/action guards remain active after a Go call returns until the
-new low-resolution revision is actually displayable. A full image-session
-change also keeps the opaque load overlay mounted through that first `onLoad`;
-later edits retain the prior visible revision underneath the header spinner.
-Canvas overlays, output dimensions, and the toolbar status are held at their
-last presented values during that interval. They advance with the preview in
-the `onLoad` render, preventing result metadata from describing an image that
-the user cannot see yet.
+The full-resolution preview never travels through the Wails JSON/base64 method
+bridge. `imagePreviewURL` sends only an opaque revision URL; the backend retains
+the immutable source pointer while that revision remains in the bounded preview
+store. The *viewport-sized encoded JPEG* does cross the Wails bridge. This is
+intentional: on Windows/WebView2, the dynamic AssetsHandler can complete a
+query-parameterized image request while a programmatically created image never
+fires either `load` or `error`. Sending the already-small viewport raster through
+the normal Wails promise lifecycle avoids that ambiguous resource path without
+returning to full-frame IPC. Because revisions retain source pixels, the live
+revision store is intentionally capped at four entries.
+
+`PreviewCanvas` converts the scroller viewport through the logical image surface
+into an image-space source rectangle, adds a modest overscan margin, quantizes
+source bounds to reduce cache churn, and asks for only the raster density needed
+for the current CSS zoom and device-pixel ratio. It never intentionally upsamples
+beyond source-pixel density. Backend requests are defensively capped at 4096
+pixels per dimension and 16 MiPixels. The server resizer samples directly from
+the requested source rectangle, so a fit-to-window request does not first
+allocate a full-resolution crop.
+
+Only one Wails viewport request is in flight from the frontend at a time. Pan and
+zoom activity that occurs during an encode is coalesced into one follow-up
+request for the latest camera state. Successful data-URL responses decode through
+`HTMLImageElement` and enter a small LRU-style raster cache. During pan/zoom,
+cached covering/neighboring rasters can be drawn immediately while a better
+raster is in flight. The visible canvas stays viewport-sized (scaled by DPR); it
+is never allocated at full source-image dimensions merely because the source is
+large.
+
+The prior presented revision stays visible until the replacement raster has
+decoded and is ready to draw. `App.jsx` therefore still distinguishes the
+authoritative backend `preview` URL from `presentedPreview`; user-facing busy
+state remains `backend loading || preview presentation pending`. Dimensions,
+status metadata, and guide state advance with canvas presentation rather than
+with a DOM image `onLoad`. A full image-session token change still prevents a
+persistent WebView cache from confusing revisions across loads or launches.
+
+Touch-up commits remain incremental. Their transparent changed-pixel patch is
+decoded and composited by `PreviewCanvas` over the active revision, avoiding a
+full-frame refresh. Disc live drag likewise uses the renderer to transform the
+unmasked preview locally while the backend remains authoritative for the final
+commit.
 
 ---
 
 ## Frontend Coordinate System
 
-All interaction coordinates go through `displayToImage(dispX, dispY)`:
+`imgRef` no longer points at a visible DOM `<img>`. It points at a transparent
+logical image surface whose CSS width/height are exactly the currently presented
+image dimensions after fit-width and zoom. The surface defines scroll extent,
+pointer hit testing, and the shared display geometry for the viewport renderer.
+
+Existing interaction code continues to use `displayToImage(dispX, dispY)`:
 
 ```javascript
 displayToImage(dispX, dispY) {
@@ -865,23 +891,23 @@ displayToImage(dispX, dispY) {
 }
 ```
 
-- `dispX/dispY` are pixel offsets relative to the `<img>` element's top-left corner (from `getRelPos`)
-- `realImageDims` is the full-resolution image size as reported by Go
-- The ratio `realImageDims.w / rect.width` is the display-to-image scale factor
+- `dispX/dispY` are CSS-pixel offsets relative to the logical image surface.
+- `realImageDims` is the authoritative source size reported by Go.
+- The ratio `realImageDims.w / rect.width` is the display-to-image scale factor.
+- `PreviewCanvas` uses the same logical surface rectangle to map image-space
+  pixels into viewport canvas coordinates, so pointer math and visible pixels
+  cannot drift because of independent DOM image sizing.
 
-All persistent SVG overlays use `viewBox="0 0 W H"` with `preserveAspectRatio="none"` inside a `position: relative` wrapper so they track the image at any zoom without DOM measurements:
+Visible persistent guides are drawn directly into the canvas from image-space
+state: detected/selected corners, touch-up strokes, line geometry, Normal crop,
+disc guide/cutout, and straight-edge state. `ImageOverlays.jsx` now supplies
+only transparent DOM hit targets for editable Normal/Line handles. Transient
+and persistent drawings therefore share one camera transform while preserving
+large DOM hit areas for the existing mouse state machine.
 
-| Overlay | State | Condition |
-|---------|-------|-----------|
-| Corner dots (detected) | `detectedCornerPts` — `{X,Y}[]` image-space | `mode === 'corner'` |
-| Corner dots (selected) | `selectedCornerPts` — `{X,Y}[]` image-space | `mode === 'corner'` |
-| Touch-up strokes | `touchupStrokes` — `{x,y}[]` image-space | `useTouchupTool && strokes.length > 0` |
-| Line preview | `lines` — `{x1,y1,x2,y2}[]` image-space | `mode === 'line'` |
-| Normal crop rect | `normalRect` — `{x1,y1,x2,y2}` image-space | `mode === 'normal'` (confirmed) |
-
-Transient drag overlays (disc drag circle, live line during drag, live normal rect during drag) use display-space coordinates — acceptable for transient previews.
-
-**`lineStartImgRef`:** In line mode, image-space coordinates are captured in `lineStartImgRef` at mousedown so the live drag overlay and the final committed line start remain stable if the user scrollwheels to zoom mid-drag (when `dragStart.x` would otherwise be a stale CSS-pixel value at the old zoom level).
+**`lineStartImgRef`:** In line mode, image-space coordinates are captured in
+`lineStartImgRef` at mousedown so the live drag overlay and final committed line
+start remain stable if the user scrollwheels to zoom mid-drag.
 
 ---
 
@@ -889,25 +915,43 @@ Transient drag overlays (disc drag circle, live line during drag, live normal re
 
 ```javascript
 fitWidth = min(container.clientWidth, container.clientHeight * aspectRatio)
+displayWidth = fitWidth * zoom
+displayHeight = displayWidth / aspectRatio
 ```
 
-The `<img>` style:
-- If `fitWidth > 0`: `width: fitWidth * zoom px, height: auto, maxWidth: none`
-- Else: `maxWidth: zoom*100%, maxHeight: zoom*100%`
+The transparent logical image surface is assigned that display size and owns
+scroll extent. The visible canvas remains fixed to the scroller viewport and is
+backed at approximately `clientWidth × devicePixelRatio` by
+`clientHeight × devicePixelRatio`; it does not grow to source-image dimensions.
+`PreviewCanvas` derives the visible source rectangle from the scroller and
+logical surface, then requests an appropriate LOD raster for that rectangle.
 
 `fitWidth` is recalculated by:
-1. `handleImgLoad` — fires when the browser decodes a new image
-2. `ResizeObserver` on `canvasRef` — fires when the container is resized
+1. `handleImgLoad(dims)` — now called when `PreviewCanvas` presents a decoded revision
+2. `ResizeObserver` on `canvasRef` — fires when the viewport container is resized
 
-**Critical:** In the mode switch handler, `fitWidth` is recomputed directly from the Go response dimensions and container size before calling `setPreview`. Do not zero it and rely on `handleImgLoad`: if the preview URL is unchanged (the same immutable image pointer reuses its revision), the browser skips `onLoad`, leaving `fitWidth` at 0. With `fitWidth = 0`, the image falls back to percentage-based sizing that resolves circularly against the `inline-block` wrapper and collapses; the absolutely-positioned SVG overlay then floods the entire canvas.
+Do not zero `fitWidth` while waiting for raster decode. Preserve the prior
+presented geometry until the replacement revision is ready, then update fit
+from the presented dimensions. This keeps interaction metadata and pixels
+atomic without depending on browser `<img>` load behavior.
 
-**Scroll-wheel zoom formula:** The wheel handler uses `imgRef.current.getBoundingClientRect()` to compute cursor position relative to the image's actual left/top edge. This correctly accounts for the `margin: auto` centering offset when the image is smaller than the canvas — using `canvasRect` instead would anchor zoom to the wrong point. `pendingScrollRef` is set inside the `setZoom` updater and applied synchronously in `useLayoutEffect([zoom])` after the DOM commit.
+**Scroll-wheel zoom formula:** The wheel handler uses
+`imgRef.current.getBoundingClientRect()` to compute cursor position relative to
+the logical image surface's actual left/top edge. This accounts for centering
+when the image is smaller than the viewport. `pendingScrollRef` is set inside
+the `setZoom` updater and applied synchronously in `useLayoutEffect([zoom])`
+after the DOM commit.
 
 The maximum zoom is image-aware: at least the historical 5× limit, or enough
-to render two CSS pixels per source pixel for a large full-resolution preview,
-with a defensive ceiling of 40×.
+to render two CSS pixels per source pixel for a large source image, with a
+defensive ceiling of 40×. The viewport raster request itself does not upsample
+past source-pixel density; extra zoom is performed by the canvas presentation
+transform.
 
-**`overflow: hidden` + flex item:** The image wrapper div has both `overflow: hidden` (to clip SVG overlays) and `flexShrink: 0`. Without `flex-shrink: 0`, CSS flexbox would zero out `min-width: auto` on any flex item with non-`visible` overflow, silently collapsing the wrapper to fit the canvas and eliminating horizontal scroll.
+**Scroll-surface invariant:** `.preview-scroll-surface` / the logical image
+stage, not the visible canvas, defines overflow dimensions. Do not let that
+surface flex-shrink to the viewport or hide its scroll extent, or horizontal and
+vertical pan will disappear.
 
 ### Space+Drag Pan
 

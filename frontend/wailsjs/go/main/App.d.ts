@@ -66,6 +66,8 @@ export function ProcessLines():Promise<main.ProcessResult>;
 
 export function RecropImage():Promise<main.ImageInfo>;
 
+export function RenderPreviewViewport(arg1:main.PreviewViewportRequest):Promise<main.PreviewViewportResponse>;
+
 export function ResetCorners():Promise<main.ProcessResult>;
 
 export function ResetDisc():Promise<main.ProcessResult>;

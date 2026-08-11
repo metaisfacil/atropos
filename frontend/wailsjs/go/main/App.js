@@ -130,6 +130,10 @@ export function RecropImage() {
   return window['go']['main']['App']['RecropImage']();
 }
 
+export function RenderPreviewViewport(arg1) {
+  return window['go']['main']['App']['RenderPreviewViewport'](arg1);
+}
+
 export function ResetCorners() {
   return window['go']['main']['App']['ResetCorners']();
 }

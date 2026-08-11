@@ -1,43 +1,42 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import './App.css'
-
-import NormalCropPanel  from './components/NormalCropPanel'
-import CornerPanel      from './components/CornerPanel'
-import DiscPanel        from './components/DiscPanel'
-import LinePanel        from './components/LinePanel'
+import NormalCropPanel from './components/NormalCropPanel'
+import CornerPanel from './components/CornerPanel'
+import DiscPanel from './components/DiscPanel'
+import LinePanel from './components/LinePanel'
 import AdjustmentsPanel from './components/AdjustmentsPanel'
-import ShortcutsPanel   from './components/ShortcutsPanel'
-import OptionsModal     from './components/OptionsModal'
-import ToolsPanel       from './components/ToolsPanel'
-import CompositorModal  from './components/CompositorModal'
-import AboutModal       from './components/AboutModal'
-import ErrorModal       from './components/ErrorModal'
+import ShortcutsPanel from './components/ShortcutsPanel'
+import OptionsModal from './components/OptionsModal'
+import ToolsPanel from './components/ToolsPanel'
+import CompositorModal from './components/CompositorModal'
+import AboutModal from './components/AboutModal'
+import ErrorModal from './components/ErrorModal'
 import ConfirmationModal from './components/ConfirmationModal'
-import DelayedHint      from './components/DelayedHint'
-import ImageOverlays    from './components/ImageOverlays'
-import StatusBar        from './components/StatusBar'
-
-import { useStatusMessage }      from './hooks/useStatusMessage'
+import DelayedHint from './components/DelayedHint'
+import PreviewCanvas from './components/PreviewCanvas'
+import StatusBar from './components/StatusBar'
+import { useStatusMessage } from './hooks/useStatusMessage'
 import { usePersistentSettings } from './hooks/usePersistentSettings'
-import { useZoomPan }            from './hooks/useZoomPan'
-import { useTouchup }            from './hooks/useTouchup'
-import { useImageActions }       from './hooks/useImageActions'
-import { useMouseHandlers }      from './hooks/useMouseHandlers'
-import { useKeyboardShortcuts }  from './hooks/useKeyboardShortcuts'
-import { isPreviewPresentationPending, isPreviewVariant, previewAssetSession, previewResolutionTier, usePresentedValue, useProgressivePreview } from './hooks/useProgressivePreview'
+import { useZoomPan } from './hooks/useZoomPan'
+import { useTouchup } from './hooks/useTouchup'
+import { useImageActions } from './hooks/useImageActions'
+import { useMouseHandlers } from './hooks/useMouseHandlers'
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
+import {
+  isPreviewPresentationPending,
+  previewAssetSession,
+  usePresentedValue,
+} from './hooks/useProgressivePreview'
 
 export default function App() {
-  // ── Sidebar resize ────────────────────────────────────────────────────────
   const [sidebarWidth, setSidebarWidth] = useState(320)
 
-  function onSidebarResizeStart(e) {
-    e.preventDefault()
-    const startX = e.clientX
+  function onSidebarResizeStart(event) {
+    event.preventDefault()
+    const startX = event.clientX
     const startWidth = sidebarWidth
-
-    function onMouseMove(e) {
-      const newWidth = Math.min(600, Math.max(200, startWidth + e.clientX - startX))
-      setSidebarWidth(newWidth)
+    function onMouseMove(moveEvent) {
+      setSidebarWidth(Math.min(600, Math.max(200, startWidth + moveEvent.clientX - startX)))
     }
     function onMouseUp() {
       window.removeEventListener('mousemove', onMouseMove)
@@ -51,106 +50,68 @@ export default function App() {
     setSidebarWidth(320)
   }
 
-  // ── Shared state ──────────────────────────────────────────────────────────
-  const [mode, setMode]             = useState('corner')
-  const [preview, setPreview]       = useState(null)
+  const [mode, setMode] = useState('corner')
+  const [preview, setPreview] = useState(null)
   const [presentedPreview, setPresentedPreview] = useState(null)
-  const [touchupPreviewPatches, setTouchupPreviewPatches] = useState([])
-  const touchupPatchIDRef = useRef(0)
   const [imageLoaded, setImageLoaded] = useState(false)
-  const [loading, setLoading]       = useState(false)
+  const [loading, setLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState(null)
-  const showError = (err) => setErrorMessage(err?.message || String(err))
+  const showError = error => setErrorMessage(error?.message || String(error))
   const [confirmDialog, setConfirmDialog] = useState(null)
-
-  // `realImageDims` is the current working/output image size (width, height)
-  // as reported by the Go backend. It reflects committed or previewed
-  // modifications (crops, warps, disc renders, trims) and is used for
-  // coordinate mapping and overlays.
   const [realImageDims, setRealImageDims] = useState({ w: 1, h: 1 })
-
-  // `inputImageDims` is the original source image dimensions as loaded
-  // from disk (the input file). It remains the file's native size even if
-  // `realImageDims` changes after edits. The UI shows both when they differ.
   const [inputImageDims, setInputImageDims] = useState({ w: 1, h: 1 })
   const [imageMeta, setImageMeta] = useState({ format: '', dpiX: 0, dpiY: 0 })
   const [unsavedChanges, setUnsavedChanges] = useState(false)
-  const imgRef     = useRef(null)
-  const ctrlDragRef  = useRef(null)
+
+  // imgRef no longer points at an <img>. PreviewCanvas exposes a transparent
+  // logical image surface with the same geometry so the mature pointer/gesture
+  // state machine can keep doing DOM hit-testing without DOM image rendering.
+  const imgRef = useRef(null)
+  const ctrlDragRef = useRef(null)
   const shiftDragRef = useRef(null)
   const touchupDraggingRef = useRef(false)
   const flushPendingSaveRef = useRef(null)
 
-  const presentTouchupPatch = (patch) => new Promise((resolve) => {
-    let resolver = resolve
-    const entry = {
-      ...patch,
-      basePreview: preview,
-      id: ++touchupPatchIDRef.current,
-      settle: () => {
-        const pending = resolver
-        resolver = null
-        pending?.()
-      },
-    }
-    setTouchupPreviewPatches(current => [...current, entry])
-  })
-
-  // A non-touch-up preview revision already contains every committed edit.
-  // Remove the temporary overlays only when that base revision changes; low
-  // to full promotion keeps the same revision and therefore keeps the patches.
-  useEffect(() => {
-    setTouchupPreviewPatches(current => {
-      current.forEach(patch => patch.settle())
-      return []
-    })
-  }, [preview])
-
-  // ── Drag / interaction state ───────────────────────────────────────────────
-  const [dragging, setDragging]       = useState(false)
-  const [dragStart, setDragStart]     = useState(null)
+  const [dragging, setDragging] = useState(false)
+  const [dragStart, setDragStart] = useState(null)
   const [dragCurrent, setDragCurrent] = useState(null)
-  const [lines, setLines]             = useState([])
+  const [lines, setLines] = useState([])
 
-  // ── Corner mode ───────────────────────────────────────────────────────────
   const [cornerState, setCornerState] = useState({
-    maxCorners: 500, qualityLevel: 1, minDistance: 100, accent: 20, cornerCount: 0,
+    maxCorners: 500,
+    qualityLevel: 1,
+    minDistance: 100,
+    accent: 20,
+    cornerCount: 0,
   })
-  const [dotRadius, setDotRadius]         = useState(5)
-  const [customCorner, setCustomCorner]   = useState(false)
+  const [dotRadius, setDotRadius] = useState(5)
+  const [customCorner, setCustomCorner] = useState(false)
   const [cornersDetected, setCornersDetected] = useState(false)
   const [detectedCornerPts, setDetectedCornerPts] = useState([])
   const [selectedCornerPts, setSelectedCornerPts] = useState([])
-  const [cropSkipped, setCropSkipped]     = useState(false)
+  const [cropSkipped, setCropSkipped] = useState(false)
 
-  // ── Disc mode ─────────────────────────────────────────────────────────────
   const [featherSize, setFeatherSize] = useState(15)
-  const [discActive, setDiscActive]   = useState(false)
+  const [discActive, setDiscActive] = useState(false)
   const [discNoMaskPreview, setDiscNoMaskPreview] = useState(null)
   const [discCenter, setDiscCenter] = useState(null)
   const [discRadius, setDiscRadius] = useState(0)
   const [discRotation, setDiscRotation] = useState(0)
   const [discBgColor, setDiscBgColor] = useState({ r: 255, g: 255, b: 255 })
-
-  // Live drag preview state for disc translation/rotation
   const [discLiveActive, setDiscLiveActive] = useState(false)
   const [discLiveTransform, setDiscLiveTransform] = useState({ dx: 0, dy: 0, angle: 0 })
 
-  // ── Line mode ─────────────────────────────────────────────────────────────
-  const [linesDone, setLinesDone]         = useState(0)
+  const [linesDone, setLinesDone] = useState(0)
   const [linesProcessed, setLinesProcessed] = useState(false)
   const [lineDragKind, setLineDragKind] = useState('none')
 
-  // ── Normal crop mode ───────────────────────────────────────────────────────
-  const [normalRect, setNormalRect]               = useState(null)
+  const [normalRect, setNormalRect] = useState(null)
   const [normalCropApplied, setNormalCropApplied] = useState(false)
   const [normalDragKind, setNormalDragKind] = useState('none')
 
-  // ── UI state ──────────────────────────────────────────────────────────────
   const compositorDropRef = useRef(null)
-
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
-  const [adjPanelOpen,  setAdjPanelOpen]  = useState(false)
+  const [adjPanelOpen, setAdjPanelOpen] = useState(false)
   const [autoContrastPending, setAutoContrastPending] = useState(false)
   const [blackPoint, setBlackPoint] = useState(0)
   const [whitePoint, setWhitePoint] = useState(255)
@@ -158,26 +119,20 @@ export default function App() {
   const [useTouchupTool, setUseTouchupTool] = useState(false)
   const [useDescreenTool, setUseDescreenTool] = useState(false)
   const [useStraightEdgeTool, setUseStraightEdgeTool] = useState(false)
-  const [optionsOpen, setOptionsOpen]         = useState(false)
-  const [aboutOpen,   setAboutOpen]           = useState(false)
-  const [compositorOpen, setCompositorOpen]   = useState(false)
-  const [toolsOpen, setToolsOpen]             = useState(false)
-
-  // ── Refs ───────────────────────────────────────────────────────────────────
+  const [optionsOpen, setOptionsOpen] = useState(false)
+  const [aboutOpen, setAboutOpen] = useState(false)
+  const [compositorOpen, setCompositorOpen] = useState(false)
+  const [toolsOpen, setToolsOpen] = useState(false)
   const sidebarRef = useRef(null)
 
-  // Synchronize CSS variable with open panel count so all panels shrink in sync
-  // when a new one opens (avoids CSS :has() timing delays)
   useEffect(() => {
     if (!sidebarRef.current) return
     const openCount = (shortcutsOpen ? 1 : 0) + (adjPanelOpen ? 1 : 0) + (toolsOpen ? 1 : 0)
-    const maxHeight = openCount === 0 ? '30vh' : openCount === 1 ? '30vh' : openCount === 2 ? '18vh' : '12vh'
+    const maxHeight = openCount <= 1 ? '30vh' : openCount === 2 ? '18vh' : '12vh'
     sidebarRef.current.style.setProperty('--keyboard-shortcuts-max-height', maxHeight)
   }, [shortcutsOpen, adjPanelOpen, toolsOpen])
 
-  // ── Hooks ─────────────────────────────────────────────────────────────────
   const { imageInfo, imageInfoVisible, showStatus } = useStatusMessage()
-
   const {
     touchupBackend, setTouchupBackend,
     iopaintURL, setIopaintURL,
@@ -194,8 +149,7 @@ export default function App() {
     autoDetectOnModeSwitch, setAutoDetectOnModeSwitch,
   } = usePersistentSettings({ setPreview })
 
-  const activePreview = discLiveActive && discNoMaskPreview ? discNoMaskPreview : preview
-  const displayPreview = useProgressivePreview(activePreview, loading || dragging)
+  const rendererSource = discLiveActive && discNoMaskPreview ? discNoMaskPreview : preview
   const previewPresentationPending = isPreviewPresentationPending(preview, presentedPreview)
   const previewSession = previewAssetSession(preview)
   const presentedSession = previewAssetSession(presentedPreview)
@@ -211,20 +165,8 @@ export default function App() {
     lastResizeRef,
     handleImgLoad,
     setImgNatural,
-  } = useZoomPan({ imgRef, mode, discActive, featherSize, setFeatherSize, setPreview })
+  } = useZoomPan({ imgRef, imageDims: realImageDims, mode, discActive, featherSize, setFeatherSize, setPreview })
 
-  const handleVisiblePreviewLoad = () => {
-    handleImgLoad()
-    if (isPreviewVariant(displayPreview, preview)) {
-      setPresentedPreview(preview)
-    }
-  }
-
-  // Give the preview and every overlay one authoritative CSS-pixel box. When
-  // the wrapper shrink-wraps a replaced <img>, WebView2 can round the image
-  // and wrapper widths differently at fractional Windows display scales. The
-  // discrepancy starts at a zoom-dependent threshold and then grows with the
-  // requested width, making overlays appear to drift horizontally.
   const displayWidth = fitWidth > 0 ? fitWidth * zoom : null
 
   const {
@@ -232,15 +174,25 @@ export default function App() {
     brushSize, setBrushSize,
     clearTouchup, commitTouchup,
   } = useTouchup({
-    imageLoaded, loading: busy, setLoading, showStatus,
-    realImageDims, touchupBackend,
-    setErrorMessage, setPreview,
-    onDragEnd: () => { setDragging(false); setDragStart(null); setDragCurrent(null) },
+    imageLoaded,
+    loading: busy,
+    setLoading,
+    showStatus,
+    realImageDims,
+    touchupBackend,
+    setErrorMessage,
+    setPreview,
+    onDragEnd: () => {
+      setDragging(false)
+      setDragStart(null)
+      setDragCurrent(null)
+    },
     flushPendingSaveRef,
-    touchupRemainsActive, setUseTouchupTool, setUseDescreenTool,
+    touchupRemainsActive,
+    setUseTouchupTool,
+    setUseDescreenTool,
     setUnsavedChanges,
     touchupDraggingRef,
-    presentTouchupPatch,
   })
 
   const {
@@ -262,10 +214,13 @@ export default function App() {
     handleCompositorLoad,
   } = useImageActions({
     mode, loading: busy, imageLoaded, discActive, linesProcessed, normalCropApplied,
-    cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect, closeAfterSave, setCloseAfterSave, postSaveEnabled, setPostSaveEnabled, postSaveCommand, setPostSaveCommand, autoDetectOnModeSwitch,
+    cornerState, dotRadius, useStretchPreprocess, autoCornerParams, normalRect,
+    closeAfterSave, setCloseAfterSave, postSaveEnabled, setPostSaveEnabled,
+    postSaveCommand, setPostSaveCommand, autoDetectOnModeSwitch,
     setMode, setPreview, setLoading, setImageLoaded, setRealImageDims, setInputImageDims, setImgNatural,
     setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
-    setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
+    setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor,
+    setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
     setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
     setUseTouchupTool, setUseStraightEdgeTool, setDragging, setDragStart, setDragCurrent,
     setConfirmDialog, setTouchupStrokes,
@@ -278,14 +233,29 @@ export default function App() {
   })
   flushPendingSaveRef.current = flushPendingSave
 
+  // The legacy mouse hook switched the authoritative preview to the unmasked
+  // disc bitmap at drag start. The renderer can select that source locally, so
+  // suppress that one transient publication while preserving all real backend
+  // preview updates produced by the hook.
+  const setPreviewFromPointer = value => {
+    if (typeof value === 'string' && discNoMaskPreview && value === discNoMaskPreview) return
+    setPreview(value)
+  }
+
   const {
-    handleMouseDown, handleMouseMove, handleMouseUp, handleImageMouseLeave, handleContextMenu, displayToImage, lineStartImgRef,
+    handleMouseDown,
+    handleMouseMove,
+    handleMouseUp,
+    handleImageMouseLeave,
+    handleContextMenu,
+    displayToImage,
+    lineStartImgRef,
   } = useMouseHandlers({
     imageLoaded, loading: busy, mode, dragging, dragStart, dragCurrent,
     useTouchupTool, useStraightEdgeTool, discActive, linesProcessed, touchupStrokes,
     cornerState, dotRadius, cornersDetected, customCorner, linesDone, normalRect, lines,
     realImageDims, discNoMaskPreview, discCenter, discRadius, discRotation,
-    setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setPreview,
+    setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setPreview: setPreviewFromPointer,
     setDiscRotation, setLoading, setZoom, setRealImageDims, setCornerState,
     setDetectedCornerPts, setSelectedCornerPts, setDiscActive, setDiscNoMaskPreview,
     setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setLines, setLinesDone,
@@ -310,9 +280,6 @@ export default function App() {
     cornerState, setCornerState, setSelectedCornerPts,
   })
 
-  // Image-result state is updated as soon as Go returns, but it must not be
-  // rendered against the previous bitmap. Freeze the last presented canvas
-  // metadata and status until the visible low-resolution image fires onLoad.
   const presentedVisual = usePresentedValue({
     imageInfo,
     imageInfoVisible,
@@ -340,20 +307,22 @@ export default function App() {
     lineDragKind,
   }, previewPresentationPending)
 
-  React.useEffect(() => {
-    const handleBeforeUnload = (e) => {
+  const handlePreviewPresented = (source, dims) => {
+    handleImgLoad(dims)
+    if (source === preview) setPresentedPreview(preview)
+  }
+
+  useEffect(() => {
+    const handleBeforeUnload = event => {
       if (!unsavedChanges) return
-      e.preventDefault()
-      e.returnValue = ''
+      event.preventDefault()
+      event.returnValue = ''
       return ''
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload)
-    }
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [unsavedChanges])
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="app">
       {(loadingFull || newImagePresentationPending) && (
@@ -369,15 +338,15 @@ export default function App() {
           onMouseDown={onSidebarResizeStart}
           onDoubleClick={onSidebarResizeReset}
         />
-        {/* Mode selector */}
+
         <div className="mode-selector">
-          {['corner', 'disc', 'line', 'normal'].map(m => (
-            <DelayedHint key={m} hint={`Switch to ${m.charAt(0).toUpperCase() + m.slice(1)} mode`}>
+          {['corner', 'disc', 'line', 'normal'].map(item => (
+            <DelayedHint key={item} hint={`Switch to ${item.charAt(0).toUpperCase() + item.slice(1)} mode`}>
               <button
-                className={`mode-btn ${mode === m ? 'active' : ''}`}
-                onClick={() => handleModeSwitch(m)}
+                className={`mode-btn ${mode === item ? 'active' : ''}`}
+                onClick={() => handleModeSwitch(item)}
               >
-                {m.charAt(0).toUpperCase() + m.slice(1)}
+                {item.charAt(0).toUpperCase() + item.slice(1)}
               </button>
             </DelayedHint>
           ))}
@@ -385,20 +354,22 @@ export default function App() {
 
         <div className="sidebar-scroll">
           <div className="sidebar-scroll-inner">
-            {/* Mode-specific panels: always rendered, toggled via `.active` for smooth fades */}
             <div className={`mode-panel ${mode === 'corner' ? 'active' : ''}`}>
               <CornerPanel
-                state={cornerState}        setState={setCornerState}
-                dotRadius={dotRadius}      setDotRadius={setDotRadius}
-                customCorner={customCorner} setCustomCorner={setCustomCorner}
+                state={cornerState}
+                setState={setCornerState}
+                dotRadius={dotRadius}
+                setDotRadius={setDotRadius}
+                customCorner={customCorner}
+                setCustomCorner={setCustomCorner}
                 disabled={cropSkipped}
               />
             </div>
-
             <div className={`mode-panel ${mode === 'disc' ? 'active' : ''}`}>
               <DiscPanel
                 discActive={discActive}
-                featherSize={featherSize}  setFeatherSize={setFeatherSize}
+                featherSize={featherSize}
+                setFeatherSize={setFeatherSize}
                 discCenterCutout={discCenterCutout}
                 discCutoutPercent={discCutoutPercent}
                 setDiscCutoutPercent={setDiscCutoutPercent}
@@ -406,18 +377,15 @@ export default function App() {
                 disabled={cropSkipped}
               />
             </div>
-
             <div className={`mode-panel ${mode === 'line' ? 'active' : ''}`}>
               <LinePanel linesDone={linesDone} />
             </div>
-
             <div className={`mode-panel ${mode === 'normal' ? 'active' : ''}`}>
               <NormalCropPanel normalRect={normalRect} />
             </div>
           </div>
         </div>
 
-        {/* Bottom section: actions, adjustments, shortcuts, file ops */}
         <div className="sidebar-bottom">
           <div className="sidebar-bottom-scroll">
             <div className="sidebar-actions">
@@ -436,8 +404,8 @@ export default function App() {
                 </DelayedHint>
               )}
               {((mode === 'corner' && cornerState.cornerCount < 4) ||
-                (mode === 'disc'   && !discActive) ||
-                (mode === 'line'   && !linesProcessed) ||
+                (mode === 'disc' && !discActive) ||
+                (mode === 'line' && !linesProcessed) ||
                 (mode === 'normal' && !normalCropApplied)) && (
                 <DelayedHint hint="Skip the cropping step and proceed to adjustments/touch-up. (You can re-crop later.)">
                   <button className="skip-crop-btn" onClick={handleSkipCrop} disabled={!imageLoaded || busy}>
@@ -446,13 +414,13 @@ export default function App() {
                 </DelayedHint>
               )}
               {((mode === 'corner' && cornerState.cornerCount > 0) ||
-                (mode === 'disc'   && discActive) ||
-                (mode === 'line'   && (linesDone > 0 || linesProcessed)) ||
+                (mode === 'disc' && discActive) ||
+                (mode === 'line' && (linesDone > 0 || linesProcessed)) ||
                 (mode === 'normal' && (normalRect !== null || normalCropApplied))) && (
                 <div style={{ display: 'flex', gap: '10px' }}>
                   {((mode === 'corner' && cornerState.cornerCount === 4) ||
-                    (mode === 'disc'   && discActive) ||
-                    (mode === 'line'   && linesProcessed) ||
+                    (mode === 'disc' && discActive) ||
+                    (mode === 'line' && linesProcessed) ||
                     (mode === 'normal' && normalCropApplied)) && (
                     <DelayedHint hint="Promote the current output to be the new source image and restart cropping.">
                       <button className="recrop-btn" onClick={handleRecrop} disabled={!imageLoaded || busy}>
@@ -466,9 +434,9 @@ export default function App() {
                       disabled={busy}
                       onClick={
                         mode === 'corner' ? handleResetCorners :
-                        mode === 'disc'   ? handleResetDisc    :
-                        mode === 'normal' ? handleResetNormal  :
-                                            handleClearLines
+                        mode === 'disc' ? handleResetDisc :
+                        mode === 'normal' ? handleResetNormal :
+                        handleClearLines
                       }
                     >
                       Reset{mode === 'corner' && !cropSkipped ? ` (${cornerState.cornerCount}/4)` : ''}
@@ -479,51 +447,55 @@ export default function App() {
             </div>
 
             <AdjustmentsPanel
-            adjPanelOpen={adjPanelOpen}           setAdjPanelOpen={setAdjPanelOpen}
-            autoContrastPending={autoContrastPending} setAutoContrastPending={setAutoContrastPending}
-            blackPoint={blackPoint}               setBlackPoint={setBlackPoint}
-            whitePoint={whitePoint}               setWhitePoint={setWhitePoint}
-            imageLoaded={imageLoaded}
-            setLoading={setLoading}
-            setPreview={setPreview}
-            realImageDims={realImageDims}
-            setRealImageDims={setRealImageDims}
-            useStretchPreprocess={useStretchPreprocess}
-            setUseStretchPreprocess={setUseStretchPreprocess}
-            postCropAvailable={
-              (mode === 'corner' && cornerState.cornerCount === 4) ||
-              (mode === 'line'   && linesProcessed) ||
-              (mode === 'disc'   && discActive) ||
-              (mode === 'normal' && normalCropApplied)
-            }
-            useTouchupTool={useTouchupTool}
-            setUseTouchupTool={setUseTouchupTool}
-            useDescreenTool={useDescreenTool}
-            setUseDescreenTool={setUseDescreenTool}
-            touchupStrokes={touchupStrokes}
-            commitTouchup={commitTouchup}
-            clearTouchup={clearTouchup}
-            brushSize={brushSize}
-            setBrushSize={setBrushSize}
-            mode={mode}
-            discActive={discActive}
-            useStraightEdgeTool={useStraightEdgeTool}
-            setUseStraightEdgeTool={setUseStraightEdgeTool}
-          />
-
-          <ToolsPanel
-            toolsOpen={toolsOpen} setToolsOpen={setToolsOpen}
-            onOpenCompositor={() => setCompositorOpen(true)}
-          />
-
-          <ShortcutsPanel
-            shortcutsOpen={shortcutsOpen} setShortcutsOpen={setShortcutsOpen}
-            mode={mode}
-            discActive={discActive}
-            canSave={imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive)}
-            imageLoaded={imageLoaded}
-          />
-          </div>  {/* end .sidebar-bottom-scroll */}
+              adjPanelOpen={adjPanelOpen}
+              setAdjPanelOpen={setAdjPanelOpen}
+              autoContrastPending={autoContrastPending}
+              setAutoContrastPending={setAutoContrastPending}
+              blackPoint={blackPoint}
+              setBlackPoint={setBlackPoint}
+              whitePoint={whitePoint}
+              setWhitePoint={setWhitePoint}
+              imageLoaded={imageLoaded}
+              setLoading={setLoading}
+              setPreview={setPreview}
+              realImageDims={realImageDims}
+              setRealImageDims={setRealImageDims}
+              useStretchPreprocess={useStretchPreprocess}
+              setUseStretchPreprocess={setUseStretchPreprocess}
+              postCropAvailable={
+                (mode === 'corner' && cornerState.cornerCount === 4) ||
+                (mode === 'line' && linesProcessed) ||
+                (mode === 'disc' && discActive) ||
+                (mode === 'normal' && normalCropApplied)
+              }
+              useTouchupTool={useTouchupTool}
+              setUseTouchupTool={setUseTouchupTool}
+              useDescreenTool={useDescreenTool}
+              setUseDescreenTool={setUseDescreenTool}
+              touchupStrokes={touchupStrokes}
+              commitTouchup={commitTouchup}
+              clearTouchup={clearTouchup}
+              brushSize={brushSize}
+              setBrushSize={setBrushSize}
+              mode={mode}
+              discActive={discActive}
+              useStraightEdgeTool={useStraightEdgeTool}
+              setUseStraightEdgeTool={setUseStraightEdgeTool}
+            />
+            <ToolsPanel
+              toolsOpen={toolsOpen}
+              setToolsOpen={setToolsOpen}
+              onOpenCompositor={() => setCompositorOpen(true)}
+            />
+            <ShortcutsPanel
+              shortcutsOpen={shortcutsOpen}
+              setShortcutsOpen={setShortcutsOpen}
+              mode={mode}
+              discActive={discActive}
+              canSave={imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive)}
+              imageLoaded={imageLoaded}
+            />
+          </div>
 
           <div className="file-ops">
             <DelayedHint hint="Open a file dialog to select and load an image into the app.">
@@ -532,7 +504,11 @@ export default function App() {
               </button>
             </DelayedHint>
             <DelayedHint hint="Save the currently cropped/adjusted image to disk.">
-              <button onClick={handleSaveImage} className="save-btn" disabled={busy || !(imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive))}>
+              <button
+                onClick={handleSaveImage}
+                className="save-btn"
+                disabled={busy || !(imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive))}
+              >
                 Save image
               </button>
             </DelayedHint>
@@ -548,7 +524,10 @@ export default function App() {
       <CompositorModal
         open={compositorOpen}
         onClose={() => setCompositorOpen(false)}
-        onLoad={async (info) => { setCompositorOpen(false); await handleCompositorLoad(info) }}
+        onLoad={async info => {
+          setCompositorOpen(false)
+          await handleCompositorLoad(info)
+        }}
         dropRef={compositorDropRef}
       />
       <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
@@ -563,7 +542,6 @@ export default function App() {
         noText={confirmDialog?.noText ?? 'No'}
         cancelText={confirmDialog?.cancelText ?? 'Cancel'}
       />
-
       <OptionsModal
         open={optionsOpen}
         onClose={() => setOptionsOpen(false)}
@@ -596,106 +574,42 @@ export default function App() {
       <main className="main-content">
         <header className="toolbar">
           {busy && <div className="header-spinner" />}
-          <span className={presentedVisual.imageInfoVisible ? 'toolbar-message' : 'toolbar-message toolbar-message--fading'}>{presentedVisual.imageInfo}</span>
+          <span className={presentedVisual.imageInfoVisible ? 'toolbar-message' : 'toolbar-message toolbar-message--fading'}>
+            {presentedVisual.imageInfo}
+          </span>
           <button className="about-btn" onClick={() => setAboutOpen(true)} aria-label="About">?</button>
         </header>
-        <div
-          ref={canvasRef}
-          className="canvas-area"
+
+        <PreviewCanvas
+          source={rendererSource}
+          imageDims={realImageDims}
+          displayWidth={displayWidth}
+          scrollRef={canvasRef}
+          imgRef={imgRef}
+          cursor={spacePanMode ? 'grab' : (normalDragKind === 'move' ? 'move' : 'crosshair')}
+          onImageMouseLeave={handleImageMouseLeave}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onContextMenu={handleContextMenu}
-          style={spacePanMode ? { cursor: 'grab' } : undefined}
-        >
-          {displayPreview ? (
-            <div
-              className="image-stage"
-              style={displayWidth !== null ? { width: `${displayWidth}px` } : undefined}
-            >
-              <img
-                ref={imgRef}
-                src={displayPreview}
-                alt="preview"
-                draggable={false}
-                onLoad={handleVisiblePreviewLoad}
-                onMouseLeave={handleImageMouseLeave}
-                style={{
-                  cursor: spacePanMode ? 'grab' : (normalDragKind === 'move' ? 'move' : 'crosshair'),
-                  display: 'block',
-                  transform: discLiveActive
-                    ? `translate(${discLiveTransform.dx}px, ${discLiveTransform.dy}px) rotate(${discLiveTransform.angle}deg)`
-                    : 'none',
-                  transformOrigin: 'center center',
-                  margin: 0,
-                  ...(displayWidth !== null
-                    ? { width: '100%', height: 'auto', maxWidth: 'none', maxHeight: 'none' }
-                    : { maxWidth: `${zoom * 100}%`, height: 'auto' }),
-                }}
-              />
-              {touchupPreviewPatches.filter(patch => patch.basePreview === preview).map(patch => (
-                <img
-                  key={patch.id}
-                  src={patch.source}
-                  alt=""
-                  draggable={false}
-                  onLoad={patch.settle}
-                  onError={patch.settle}
-                  style={{
-                    position: 'absolute',
-                    pointerEvents: 'none',
-                    zIndex: 1,
-                    margin: 0,
-                    left: `${patch.x * 100 / patch.imageWidth}%`,
-                    top: `${patch.y * 100 / patch.imageHeight}%`,
-                    width: `${patch.width * 100 / patch.imageWidth}%`,
-                    height: `${patch.height * 100 / patch.imageHeight}%`,
-                    maxWidth: 'none',
-                    maxHeight: 'none',
-                  }}
-                />
-              ))}
-              <ImageOverlays
-                realImageDims={presentedVisual.realImageDims}
-                fitWidth={fitWidth}
-                zoom={zoom}
-                mode={presentedVisual.mode}
-                dragging={presentedVisual.dragging}
-                dragStart={presentedVisual.dragStart}
-                dragCurrent={presentedVisual.dragCurrent}
-                useTouchupTool={presentedVisual.useTouchupTool}
-                touchupStrokes={presentedVisual.touchupStrokes}
-                brushSize={presentedVisual.brushSize}
-                useStraightEdgeTool={presentedVisual.useStraightEdgeTool}
-                discActive={presentedVisual.discActive}
-                discLiveActive={presentedVisual.discLiveActive}
-                discCenter={presentedVisual.discCenter}
-                discRadius={presentedVisual.discRadius}
-                discBgColor={presentedVisual.discBgColor}
-                discCenterCutout={presentedVisual.discCenterCutout}
-                discCutoutPercent={presentedVisual.discCutoutPercent}
-                ctrlDragRef={ctrlDragRef}
-                shiftDragRef={shiftDragRef}
-                detectedCornerPts={presentedVisual.detectedCornerPts}
-                selectedCornerPts={presentedVisual.selectedCornerPts}
-                dotRadius={presentedVisual.dotRadius}
-                normalRect={presentedVisual.normalRect}
-                lines={presentedVisual.lines}
-                displayToImage={displayToImage}
-                lineStartImgRef={lineStartImgRef}
-                lineDragKind={presentedVisual.lineDragKind}
-              />
-            </div>
-          ) : !preview && !busy ? (
-            <div className="placeholder">Load or drop an image to begin</div>
-          ) : null}
-        </div>
+          scrollerStyle={spacePanMode ? { cursor: 'grab' } : undefined}
+          showPlaceholder={!preview && !busy}
+          onPresented={handlePreviewPresented}
+          visual={presentedVisual}
+          discLiveActive={discLiveActive}
+          discLiveTransform={discLiveTransform}
+          ctrlDragRef={ctrlDragRef}
+          shiftDragRef={shiftDragRef}
+          displayToImage={displayToImage}
+          lineStartImgRef={lineStartImgRef}
+        />
+
         <StatusBar
           imageLoaded={imageLoaded}
           imageMeta={imageMeta}
           inputImageDims={inputImageDims}
           realImageDims={presentedVisual.realImageDims}
-          previewResolution={previewResolutionTier(displayPreview)}
+          previewResolution={rendererSource ? 'viewport' : null}
           zoom={zoom}
           onResetZoom={() => setZoom(1)}
         />

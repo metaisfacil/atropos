@@ -1,24 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 
-export function touchupPreviewPatch(data) {
-  const patch = data?.patch
-  if (!patch?.source || !Number.isFinite(patch.x) || !Number.isFinite(patch.y) ||
-      !Number.isFinite(patch.width) || !Number.isFinite(patch.height) ||
-      patch.width <= 0 || patch.height <= 0 || !data?.width || !data?.height) {
-    return null
-  }
-  return {
-    source: patch.source,
-    x: patch.x,
-    y: patch.y,
-    width: patch.width,
-    height: patch.height,
-    imageWidth: data.width,
-    imageHeight: data.height,
-  }
-}
-
 export function useTouchup({
   imageLoaded, loading, setLoading, showStatus,
   touchupBackend, setErrorMessage, setPreview, onDragEnd,
@@ -26,7 +8,6 @@ export function useTouchup({
   touchupRemainsActive, setUseTouchupTool, setUseDescreenTool,
   setUnsavedChanges,
   touchupDraggingRef,
-  presentTouchupPatch,
 }) {
   const [touchupStrokes, setTouchupStrokes] = useState([])
   const [brushSize, setBrushSize]           = useState(40)
@@ -110,22 +91,17 @@ export function useTouchup({
       return
     }
 
-    const patch = touchupPreviewPatch(data)
-    try {
-      if (patch && presentTouchupPatch) {
-        // The promise resolves from the overlay image's onLoad handler. Keep
-        // busy state until the changed pixels are actually displayable.
-        await presentTouchupPatch(patch)
-      } else if (data?.preview) {
-        // Compatibility fallback for older backends and non-brush callers.
-        setPreview(data.preview)
-      }
-    } finally {
-      setLoading(false)
+    if (data?.preview) {
+      // Touch-up now publishes a normal immutable preview revision. The canvas
+      // renderer keeps showing the previous raster until the new viewport is
+      // ready, then swaps atomically through the same presentation path used
+      // by every other image operation.
+      setPreview(data.preview)
     }
+    setLoading(false)
 
-    if (patch || data?.preview) {
-      if (data?.descreenReset || data?.preview || data?.patch) {
+    if (data?.preview) {
+      if (data?.descreenReset || data?.preview) {
         setUseDescreenTool?.(false)
       }
       if (setUnsavedChanges) setUnsavedChanges(true)

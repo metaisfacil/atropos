@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"image/png"
 	"math"
 	"time"
 
@@ -367,76 +366,17 @@ func (a *App) cancelTouchup() bool {
 }
 
 // touchUpDoneEvent is the payload sent on the "touchup-done" Wails event.
+// A successful touch-up publishes a new immutable preview revision. The canvas
+// renderer then requests only the viewport raster it needs from that revision;
+// there is no separate browser-side patch overlay.
 type touchUpDoneEvent struct {
-	Cancelled     bool                 `json:"cancelled,omitempty"`
-	Error         string               `json:"error,omitempty"`
-	Patch         *touchUpPreviewPatch `json:"patch,omitempty"`
-	Message       string               `json:"message,omitempty"`
-	Width         int                  `json:"width,omitempty"`
-	Height        int                  `json:"height,omitempty"`
-	DescreenReset bool                 `json:"descreenReset,omitempty"`
-}
-
-// touchUpPreviewPatch is an opaque replacement for only the pixels touched by
-// a brush commit. The transparent PNG can stay layered over either preview
-// resolution, so a touch-up never needs to publish or swap a full-frame asset.
-type touchUpPreviewPatch struct {
-	Source string `json:"source"`
-	X      int    `json:"x"`
-	Y      int    `json:"y"`
-	Width  int    `json:"width"`
-	Height int    `json:"height"`
-}
-
-func encodeTouchUpPreviewPatch(out *image.NRGBA, mask *image.Alpha) (*touchUpPreviewPatch, error) {
-	if out == nil || mask == nil {
-		return nil, fmt.Errorf("cannot encode an empty touch-up patch")
-	}
-	scan := mask.Bounds().Intersect(out.Bounds())
-	bounds := image.Rectangle{}
-	for y := scan.Min.Y; y < scan.Max.Y; y++ {
-		for x := scan.Min.X; x < scan.Max.X; x++ {
-			if mask.AlphaAt(x, y).A == 0 {
-				continue
-			}
-			pixel := image.Rect(x, y, x+1, y+1)
-			if bounds.Empty() {
-				bounds = pixel
-			} else {
-				bounds = bounds.Union(pixel)
-			}
-		}
-	}
-	if bounds.Empty() {
-		return nil, fmt.Errorf("touch-up mask contains no changed pixels")
-	}
-
-	patch := image.NewNRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			if mask.AlphaAt(x, y).A == 0 {
-				continue
-			}
-			pixel := out.NRGBAAt(x, y)
-			// PatchMatch/IOPaint already performed the soft-mask blend. Make
-			// the replacement opaque so the browser does not apply it twice.
-			pixel.A = 255
-			patch.SetNRGBA(x-bounds.Min.X, y-bounds.Min.Y, pixel)
-		}
-	}
-
-	var encoded bytes.Buffer
-	encoder := png.Encoder{CompressionLevel: png.BestSpeed}
-	if err := encoder.Encode(&encoded, patch); err != nil {
-		return nil, err
-	}
-	return &touchUpPreviewPatch{
-		Source: "data:image/png;base64," + base64.StdEncoding.EncodeToString(encoded.Bytes()),
-		X:      bounds.Min.X,
-		Y:      bounds.Min.Y,
-		Width:  bounds.Dx(),
-		Height: bounds.Dy(),
-	}, nil
+	Cancelled     bool   `json:"cancelled,omitempty"`
+	Error         string `json:"error,omitempty"`
+	Preview       string `json:"preview,omitempty"`
+	Message       string `json:"message,omitempty"`
+	Width         int    `json:"width,omitempty"`
+	Height        int    `json:"height,omitempty"`
+	DescreenReset bool   `json:"descreenReset,omitempty"`
 }
 
 // commitTouchupResult atomically verifies and records a completed touch-up.
@@ -551,17 +491,18 @@ func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, it
 			return
 		}
 
-		// Encode before committing. Besides keeping the state lock brief, this
-		// ensures a preview-encoding failure cannot leave an invisible committed
-		// edit and a stray undo entry behind.
-		patchStarted := time.Now()
-		patch, encErr := encodeTouchUpPreviewPatch(out, mask)
-		if encErr != nil {
-			emit(touchUpDoneEvent{Error: encErr.Error()})
+		// Register the completed image as a new immutable preview revision before
+		// committing it. Registration retains the NRGBA pointer but performs no
+		// full-frame encoding; viewport JPEGs are produced lazily by the renderer.
+		// Publishing first preserves the invariant that a preview-publication
+		// failure cannot leave behind an invisible committed edit. A cancelled
+		// operation may leave one unreachable cache entry, which is harmless and
+		// bounded by the preview revision LRU.
+		preview, previewErr := a.imagePreviewURL(out)
+		if previewErr != nil {
+			emit(touchUpDoneEvent{Error: previewErr.Error()})
 			return
 		}
-		a.logf("TouchUpApply goroutine: encoded preview patch (%d,%d %dx%d), payload=%d bytes in %s",
-			patch.X, patch.Y, patch.Width, patch.Height, len(patch.Source), time.Since(patchStarted))
 
 		// Serialize the small state commit with cancellation. The generation and
 		// source-pointer checks prevent a superseded worker from snapshotting a
@@ -573,7 +514,7 @@ func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, it
 		}
 
 		b := out.Bounds()
-		emit(touchUpDoneEvent{Patch: patch, Message: "Touch-up applied.", Width: b.Dx(), Height: b.Dy(), DescreenReset: descreenReset})
+		emit(touchUpDoneEvent{Preview: preview, Message: "Touch-up applied.", Width: b.Dx(), Height: b.Dy(), DescreenReset: descreenReset})
 	}()
 
 	return &ProcessResult{Message: "running"}, nil

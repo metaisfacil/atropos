@@ -419,6 +419,56 @@ export namespace main {
 	        this.y = source["y"];
 	    }
 	}
+	export class PreviewViewportRequest {
+	    preview: string;
+	    x: number;
+	    y: number;
+	    width: number;
+	    height: number;
+	    destWidth: number;
+	    destHeight: number;
+	    quality: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PreviewViewportRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.preview = source["preview"];
+	        this.x = source["x"];
+	        this.y = source["y"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.destWidth = source["destWidth"];
+	        this.destHeight = source["destHeight"];
+	        this.quality = source["quality"];
+	    }
+	}
+	export class PreviewViewportResponse {
+	    dataURL: string;
+	    x: number;
+	    y: number;
+	    width: number;
+	    height: number;
+	    rasterWidth: number;
+	    rasterHeight: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PreviewViewportResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.dataURL = source["dataURL"];
+	        this.x = source["x"];
+	        this.y = source["y"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.rasterWidth = source["rasterWidth"];
+	        this.rasterHeight = source["rasterHeight"];
+	    }
+	}
 	export class ProcessResult {
 	    preview: string;
 	    message: string;
