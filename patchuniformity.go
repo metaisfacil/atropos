@@ -32,7 +32,7 @@ func pmUpdateOccurrence(level *pmLevel, nnf []pmPoint) {
 			if !validPMPoint(level, q) {
 				continue
 			}
-			level.occurrenceRaw[int(q.y)*level.w+int(q.x)] += 1
+			level.occurrenceRaw[int(q.y)*level.w+int(q.x)]++
 		}
 	}
 
