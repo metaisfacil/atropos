@@ -37,41 +37,41 @@ InstallDir "$PROGRAMFILES64\${INFO_PRODUCTNAME}"
 ShowInstDetails show
 
 Function .onInit
-   !insertmacro wails.checkArchitecture
+    !insertmacro wails.checkArchitecture
 FunctionEnd
 
-Section
-    !insertmacro wails.setShellContext
+; Main application install. SectionIn RO makes this component mandatory.
+Section "Atropos (required)" SEC_MAIN
+    SectionIn RO
 
+    !insertmacro wails.setShellContext
     !insertmacro wails.webview2runtime
 
     SetOutPath $INSTDIR
-
     !insertmacro wails.files
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
 
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
-
     !insertmacro wails.writeUninstaller
 SectionEnd
 
-; Optional component: /o means UNCHECKED by default on the Components page.
+; Optional component. /o means it is UNCHECKED by default.
 Section /o "Create a desktop shortcut" SEC_DESKTOP_SHORTCUT
     !insertmacro wails.setShellContext
     CreateShortcut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
 SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
-    !insertmacro MUI_DESCRIPTION_TEXT ${SEC_DESKTOP_SHORTCUT} "Create a shortcut to Atropos on the desktop."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SEC_MAIN} "Install Atropos."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SEC_DESKTOP_SHORTCUT} "Create a shortcut to Atropos on the desktop. This option is off by default."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 Section "uninstall"
     !insertmacro wails.setShellContext
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}"
-
     RMDir /r $INSTDIR
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
@@ -79,6 +79,5 @@ Section "uninstall"
 
     !insertmacro wails.unassociateFiles
     !insertmacro wails.unassociateCustomProtocols
-
     !insertmacro wails.deleteUninstaller
 SectionEnd
