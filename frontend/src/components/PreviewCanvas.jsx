@@ -326,6 +326,38 @@ function drawVisualGuides(ctx, visual, layout, displayToImage, lineStartImgRef, 
     }
   }
 
+  if (visual.useTouchupTool && visual.touchupCursor) {
+    const p = toCanvas(visual.touchupCursor)
+    const radius = (visual.brushSize || 1) * imageScale / 2
+
+    // Photoshop-style brush cursor: a high-contrast double ring stays legible
+    // over both dark and light image content while the diameter updates live.
+    drawCircle(ctx, p.x, p.y, radius, null, 'rgba(0,0,0,0.78)', 3)
+    drawCircle(ctx, p.x, p.y, radius, null, 'rgba(255,255,255,0.95)', 1)
+
+    if (visual.touchupCursor.resizing) {
+      const label = `${Math.round(visual.brushSize || 1)} px`
+      ctx.save()
+      ctx.font = '12px sans-serif'
+      ctx.textBaseline = 'middle'
+      const padX = 6
+      const height = 22
+      const width = Math.ceil(ctx.measureText(label).width) + padX * 2
+      const gap = Math.max(12, radius + 8)
+      const stageRight = layout.stageX + layout.stageWidth
+      const stageBottom = layout.stageY + layout.stageHeight
+      const rightX = p.x + gap
+      const leftX = p.x - gap - width
+      const labelX = rightX + width <= stageRight ? rightX : Math.max(layout.stageX, leftX)
+      const labelY = clamp(p.y - height / 2, layout.stageY, Math.max(layout.stageY, stageBottom - height))
+      ctx.fillStyle = 'rgba(0,0,0,0.78)'
+      ctx.fillRect(labelX, labelY, width, height)
+      ctx.fillStyle = 'rgba(255,255,255,0.96)'
+      ctx.fillText(label, labelX + padX, labelY + height / 2)
+      ctx.restore()
+    }
+  }
+
   if (visual.useStraightEdgeTool && visual.dragging && visual.dragStart && visual.dragCurrent) {
     ctx.save()
     ctx.strokeStyle = '#ffff00'

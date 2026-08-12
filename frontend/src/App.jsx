@@ -117,6 +117,7 @@ export default function App() {
   const [whitePoint, setWhitePoint] = useState(255)
   const [useStretchPreprocess, setUseStretchPreprocess] = useState(true)
   const [useTouchupTool, setUseTouchupTool] = useState(false)
+  const [touchupCursor, setTouchupCursor] = useState(null)
   const [useDescreenTool, setUseDescreenTool] = useState(false)
   const [useStraightEdgeTool, setUseStraightEdgeTool] = useState(false)
   const [optionsOpen, setOptionsOpen] = useState(false)
@@ -124,6 +125,10 @@ export default function App() {
   const [compositorOpen, setCompositorOpen] = useState(false)
   const [toolsOpen, setToolsOpen] = useState(false)
   const sidebarRef = useRef(null)
+
+  useEffect(() => {
+    if (!useTouchupTool) setTouchupCursor(null)
+  }, [useTouchupTool])
 
   useEffect(() => {
     if (!sidebarRef.current) return
@@ -252,10 +257,10 @@ export default function App() {
     lineStartImgRef,
   } = useMouseHandlers({
     imageLoaded, loading: busy, mode, dragging, dragStart, dragCurrent,
-    useTouchupTool, useStraightEdgeTool, discActive, linesProcessed, touchupStrokes,
+    useTouchupTool, useStraightEdgeTool, discActive, linesProcessed, touchupStrokes, brushSize,
     cornerState, dotRadius, cornersDetected, customCorner, linesDone, normalRect, lines,
     realImageDims, discNoMaskPreview, discCenter, discRadius, discRotation,
-    setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setPreview: setPreviewFromPointer,
+    setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setBrushSize, setTouchupCursor, setPreview: setPreviewFromPointer,
     setDiscRotation, setLoading, setZoom, setRealImageDims, setCornerState,
     setDetectedCornerPts, setSelectedCornerPts, setDiscActive, setDiscNoMaskPreview,
     setDiscCenter, setDiscRadius, setDiscBgColor, setNormalRect, setLines, setLinesDone,
@@ -291,6 +296,7 @@ export default function App() {
     useTouchupTool,
     touchupStrokes,
     brushSize,
+    touchupCursor,
     useStraightEdgeTool,
     discActive,
     discLiveActive,

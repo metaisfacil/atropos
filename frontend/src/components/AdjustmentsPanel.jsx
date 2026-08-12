@@ -187,7 +187,7 @@ export default function AdjustmentsPanel({
               </button>
             </DelayedHint>
 
-            <DelayedHint hint="Toggles the touch-up brush which uses a PatchMatch-style content-aware fill. Draw strokes on the preview to build a mask, then commit to fill.">
+            <DelayedHint hint="Toggles the touch-up brush which uses a PatchMatch-style content-aware fill. Draw strokes on the preview to build a mask, then commit to fill. Hold Alt and right-drag horizontally on the preview to resize the brush; the brush outline and pixel-size readout update live.">
               <button
                 className={`adjustments-btn touchup-btn ${useTouchupTool ? 'active' : ''}`}
                 onClick={() => {
