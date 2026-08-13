@@ -65,11 +65,13 @@
   display: flex;
   flex-direction: column; /* stack mode panels vertically */
   flex: 1 1 auto;
-  overflow-y: scroll; /* keep scrollbar stable during mode transitions */
+  /* Keep the scrollbar slot and compensated insets constant so accordion
+     expansion cannot change the mode controls' width mid-animation. The 20px
+     left inset balances the 10px right inset plus the 10px scrollbar slot. */
+  overflow-y: scroll;
+  padding-left: 20px;
+  padding-right: 10px;
   min-height: 0;
-  padding-right: 12px; /* reserve space for scrollbar so content doesn't shift */
-  padding-left: 10px; /* small left gutter so content appears centered */
-  scrollbar-gutter: stable both-edges;
   align-items: stretch;
   margin-bottom: 20px;
   margin-top: 20px;
@@ -447,9 +449,17 @@ button.save-btn:hover {
   /* Fade/slide in — height is controlled by the outer grid wrapper */
   opacity: 0;
   transform: translateY(-6px);
-  overflow: hidden;
-  scrollbar-gutter: stable both-edges;
-  padding-right: 6px; /* avoid content under the scrollbar */
+  overflow-x: hidden;
+  /* Unlike the mode controls, accordion contents deliberately reserve their
+     scrollbar width throughout expansion. Their animated max-height crosses
+     the overflow threshold mid-transition, and `auto` makes WebKit pop the
+     right edge inward when the scrollbar appears. The outer wrapper still
+     clips the collapsed panel. */
+  overflow-y: scroll;
+  /* The reserved 10px scrollbar is part of the visible right gutter. Add the
+     same amount to the left inset so the usable content remains centred. */
+  padding-left: 20px;
+  padding-right: 10px;
   max-height: 0;
   transition: max-height 260ms cubic-bezier(.2,0,.1,1), opacity 200ms ease-in-out, transform 200ms ease-in-out;
 }
@@ -463,8 +473,6 @@ button.save-btn:hover {
   max-height: var(--keyboard-shortcuts-max-height, 30vh);
   opacity: 1;
   transform: translateY(0);
-  overflow: hidden;
-  overflow-y: auto;
 }
 
 /* When two bottom sections are expanded, reduce each section’s height. */
