@@ -197,8 +197,7 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	if scaleFactor < 1.0 {
 		workGray = resizeNRGBAToGray(a.currentImage, workW, workH, req.AccentValue)
 	} else {
-		adjusted := applyAccentAdjustment(a.currentImage, req.AccentValue)
-		workGray = toGrayscale(adjusted)
+		workGray = toGrayscaleAccent(a.currentImage, req.AccentValue)
 	}
 
 	// Optionally pre-stretch contrast using percentiles to handle non-white backgrounds,

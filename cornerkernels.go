@@ -43,6 +43,22 @@ type cornerEigenArgs struct {
 	max  float64
 }
 
+type cornerTensorEigenArgs struct {
+	xx  *int32
+	yy  *int32
+	xy  *int32
+	dst *float64
+	n   int
+	max float64
+}
+
+type cornerResizeGrayArgs struct {
+	src       *uint8
+	dst       *uint8
+	srcStride int
+	n         int
+}
+
 // cornerSobelRow computes the interior Sobel gradients for one row. Gradients
 // are exact signed 16-bit integers (the Sobel range is only [-1020, 1020]),
 // cutting their memory traffic to one quarter of the former float64 storage.
@@ -136,4 +152,85 @@ func cornerEigenRow(
 		}
 	}
 	return maxEig
+}
+
+// cornerHorizontalTensor computes exact horizontal block sums of the three
+// structure-tensor components. Sobel gradients and all 7x7 tensor sums fit in
+// int32, avoiding the large float64 summed-area tables formerly used here.
+func cornerHorizontalTensor(ix, iy []int16, blockSize int, xx, yy, xy []int32) {
+	half := blockSize / 2
+	if len(ix) < blockSize {
+		return
+	}
+	var sumXX, sumYY, sumXY int32
+	for x := 0; x < blockSize; x++ {
+		gx, gy := int32(ix[x]), int32(iy[x])
+		sumXX += gx * gx
+		sumYY += gy * gy
+		sumXY += gx * gy
+	}
+	xx[half], yy[half], xy[half] = sumXX, sumYY, sumXY
+	for x := half + 1; x < len(ix)-half; x++ {
+		remove := x - half - 1
+		add := x + half
+		gx0, gy0 := int32(ix[remove]), int32(iy[remove])
+		gx1, gy1 := int32(ix[add]), int32(iy[add])
+		sumXX += gx1*gx1 - gx0*gx0
+		sumYY += gy1*gy1 - gy0*gy0
+		sumXY += gx1*gy1 - gx0*gy0
+		xx[x], yy[x], xy[x] = sumXX, sumYY, sumXY
+	}
+}
+
+func cornerTensorEigenRow(xx, yy, xy []int32, dst []float64) float64 {
+	n := len(dst)
+	if n == 0 {
+		return 0
+	}
+	vectorN := cornerEigenVectorCount(n)
+	maxEig := 0.0
+	if vectorN > 0 {
+		args := cornerTensorEigenArgs{
+			xx: &xx[0], yy: &yy[0], xy: &xy[0], dst: &dst[0], n: vectorN,
+		}
+		cornerTensorEigenSIMD(&args)
+		maxEig = args.max
+	}
+	for x := vectorN; x < n; x++ {
+		sxx, syy, sxy := float64(xx[x]), float64(yy[x]), float64(xy[x])
+		trace := sxx + syy
+		det := sxx*syy - sxy*sxy
+		disc := trace*trace/4.0 - det
+		if disc < 0 {
+			disc = 0
+		}
+		minEig := trace/2.0 - math.Sqrt(disc)
+		dst[x] = minEig
+		if minEig > maxEig {
+			maxEig = minEig
+		}
+	}
+	return maxEig
+}
+
+func cornerResizeGrayRow(src []uint8, srcStride, factor int, dst []uint8) {
+	vectorN := cornerResizeGrayVectorCount(len(dst), factor)
+	if vectorN > 0 {
+		args := cornerResizeGrayArgs{src: &src[0], dst: &dst[0], srcStride: srcStride, n: vectorN}
+		if factor == 2 {
+			cornerResizeGray2SIMD(&args)
+		} else {
+			cornerResizeGray4SIMD(&args)
+		}
+	}
+	for x := vectorN; x < len(dst); x++ {
+		sum := 0
+		for sy := 0; sy < factor; sy++ {
+			row := sy * srcStride
+			for sx := 0; sx < factor; sx++ {
+				sum += int(src[row+x*factor+sx])
+			}
+		}
+		dst[x] = uint8(sum / (factor * factor))
+	}
 }

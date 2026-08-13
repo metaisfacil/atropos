@@ -7,7 +7,6 @@ import (
 	"image/draw"
 	"math"
 	goruntime "runtime"
-	"sort"
 	"sync"
 )
 
@@ -172,6 +171,10 @@ func subImage(src *image.NRGBA, r image.Rectangle) *image.NRGBA {
 
 // toGrayscale converts an NRGBA image to grayscale using luminance weights.
 func toGrayscale(src *image.NRGBA) *image.Gray {
+	return toGrayscaleAccent(src, 0)
+}
+
+func toGrayscaleAccent(src *image.NRGBA, accent int) *image.Gray {
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
 	dst := image.NewGray(image.Rect(0, 0, w, h))
@@ -181,13 +184,7 @@ func toGrayscale(src *image.NRGBA) *image.Gray {
 		for rowIdx := start; rowIdx < end; rowIdx++ {
 			srcBase := rowIdx * srcStride
 			dstBase := rowIdx * w
-			for colIdx := 0; colIdx < w; colIdx++ {
-				off := srcBase + colIdx*4
-				r := uint32(src.Pix[off])
-				g := uint32(src.Pix[off+1])
-				bl := uint32(src.Pix[off+2])
-				dst.Pix[dstBase+colIdx] = uint8((19595*r + 38470*g + 7471*bl + 32768) >> 16)
-			}
+			grayscaleAccentRow(src.Pix[srcBase:srcBase+w*4], dst.Pix[dstBase:dstBase+w], accent)
 		}
 	})
 	return dst
@@ -341,12 +338,7 @@ func applyLevels(src *image.NRGBA, blackPt, whitePt int) *image.NRGBA {
 	}
 	dst := cloneImage(src)
 	scale := 255.0 / float64(whitePt-blackPt)
-	for i := 0; i < len(dst.Pix); i += 4 {
-		dst.Pix[i+0] = clampByte(int(float64(int(dst.Pix[i+0])-blackPt) * scale))
-		dst.Pix[i+1] = clampByte(int(float64(int(dst.Pix[i+1])-blackPt) * scale))
-		dst.Pix[i+2] = clampByte(int(float64(int(dst.Pix[i+2])-blackPt) * scale))
-		// dst.Pix[i+3] â€” alpha untouched
-	}
+	applyLevelsPixels(dst.Pix, blackPt, scale)
 	return dst
 }
 
@@ -528,19 +520,36 @@ func goodFeaturesToTrack(ctx context.Context, gray *image.Gray, maxCorners int, 
 	pix := gray.Pix
 	stride := gray.Stride
 
-	// ---- Sobel gradients (parallel) --------------------------------
-	// Read directly from gray.Pix to avoid per-call bounds checks.
-	ix := make([]int16, w*h)
-	iy := make([]int16, w*h)
-
-	pFor(h-2, nCPU, func(start, end int) {
-		for row := start + 1; row <= end; row++ {
-			cornerSobelRow(
-				pix[(row-1)*stride:],
-				pix[row*stride:],
-				pix[(row+1)*stride:],
-				ix[row*w+1:row*w+w-1],
-				iy[row*w+1:row*w+w-1],
+	// ---- Sobel + horizontal tensor sums (parallel) -----------------
+	// Each worker reuses one gradient row. Only the three exact int32 horizontal
+	// tensor planes are retained, avoiding full-image gradient buffers and the
+	// former three float64 summed-area tables.
+	half := blockSize / 2
+	tensorXX := make([]int32, w*h)
+	tensorYY := make([]int32, w*h)
+	tensorXY := make([]int32, w*h)
+	pFor(h, nCPU, func(start, end int) {
+		ix := make([]int16, w)
+		iy := make([]int16, w)
+		for row := start; row < end; row++ {
+			if row == 0 || row == h-1 {
+				clear(ix)
+				clear(iy)
+			} else {
+				cornerSobelRow(
+					pix[(row-1)*stride:],
+					pix[row*stride:],
+					pix[(row+1)*stride:],
+					ix[1:w-1],
+					iy[1:w-1],
+				)
+			}
+			rowBase := row * w
+			cornerHorizontalTensor(
+				ix, iy, blockSize,
+				tensorXX[rowBase:rowBase+w],
+				tensorYY[rowBase:rowBase+w],
+				tensorXY[rowBase:rowBase+w],
 			)
 		}
 	})
@@ -549,34 +558,7 @@ func goodFeaturesToTrack(ctx context.Context, gray *image.Gray, maxCorners int, 
 		return nil, err
 	}
 
-	// ---- Summed-area tables for ix², iy², ix·iy -------------------
-	// SAT is (h+1)×(w+1), 1-indexed: sat[(y+1)*(w+1)+(x+1)] = Σf[0..y][0..x].
-	// Building it is O(w*h) sequential and very cache-friendly.
-	sw1 := w + 1
-	satN := (h + 1) * sw1
-	satXX := make([]float64, satN)
-	satYY := make([]float64, satN)
-	satXY := make([]float64, satN)
-
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			gx := float64(ix[y*w+x])
-			gy := float64(iy[y*w+x])
-			i := (y+1)*sw1 + (x + 1)
-			satXX[i] = gx*gx + satXX[i-1] + satXX[i-sw1] - satXX[i-sw1-1]
-			satYY[i] = gy*gy + satYY[i-1] + satYY[i-sw1] - satYY[i-sw1-1]
-			satXY[i] = gx*gy + satXY[i-1] + satXY[i-sw1] - satXY[i-sw1-1]
-		}
-	}
-
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	// ---- Structure tensor + min eigenvalue (parallel) --------------
-	// Each pixel's window sum is now 4 SAT lookups — O(1) per pixel
-	// regardless of blockSize, vs the previous O(blockSize²) inner loop.
-	half := blockSize / 2
+	// ---- Vertical rolling sums + min eigenvalue (parallel) ----------
 	cornerMap := make([]float64, w*h)
 
 	nWorkers := nCPU
@@ -600,6 +582,9 @@ func goodFeaturesToTrack(ctx context.Context, gray *image.Gray, maxCorners int, 
 		if rowEnd > h-half {
 			rowEnd = h - half
 		}
+		if rowStart >= rowEnd {
+			continue
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -607,27 +592,33 @@ func goodFeaturesToTrack(ctx context.Context, gray *image.Gray, maxCorners int, 
 				workerErrs[wid] = err
 				return
 			}
+			n := w - 2*half
+			accXX := make([]int32, n)
+			accYY := make([]int32, n)
+			accXY := make([]int32, n)
+			for sourceY := rowStart - half; sourceY <= rowStart+half; sourceY++ {
+				base := sourceY*w + half
+				for x := 0; x < n; x++ {
+					accXX[x] += tensorXX[base+x]
+					accYY[x] += tensorYY[base+x]
+					accXY[x] += tensorXY[base+x]
+				}
+			}
 			lmax := 0.0
 			for y := rowStart; y < rowEnd; y++ {
-				r1 := y - half       // SAT top boundary (0-indexed)
-				r2p1 := y + half + 1 // SAT bottom boundary + 1
-				n := w - 2*half
-				hiOffset := blockSize
-				lmax = cornerEigenRow(
-					satXX[r2p1*sw1+hiOffset:r2p1*sw1+hiOffset+n],
-					satXX[r1*sw1+hiOffset:r1*sw1+hiOffset+n],
-					satXX[r2p1*sw1:r2p1*sw1+n],
-					satXX[r1*sw1:r1*sw1+n],
-					satYY[r2p1*sw1+hiOffset:r2p1*sw1+hiOffset+n],
-					satYY[r1*sw1+hiOffset:r1*sw1+hiOffset+n],
-					satYY[r2p1*sw1:r2p1*sw1+n],
-					satYY[r1*sw1:r1*sw1+n],
-					satXY[r2p1*sw1+hiOffset:r2p1*sw1+hiOffset+n],
-					satXY[r1*sw1+hiOffset:r1*sw1+hiOffset+n],
-					satXY[r2p1*sw1:r2p1*sw1+n],
-					satXY[r1*sw1:r1*sw1+n],
-					cornerMap[y*w+half:y*w+half+n],
-				)
+				rowMax := cornerTensorEigenRow(accXX, accYY, accXY, cornerMap[y*w+half:y*w+half+n])
+				if rowMax > lmax {
+					lmax = rowMax
+				}
+				if y+1 < rowEnd {
+					removeBase := (y-half)*w + half
+					addBase := (y+half+1)*w + half
+					for x := 0; x < n; x++ {
+						accXX[x] += tensorXX[addBase+x] - tensorXX[removeBase+x]
+						accYY[x] += tensorYY[addBase+x] - tensorYY[removeBase+x]
+						accXY[x] += tensorXY[addBase+x] - tensorXY[removeBase+x]
+					}
+				}
 			}
 			localMax[wid] = lmax
 		}()
@@ -649,45 +640,17 @@ func goodFeaturesToTrack(ctx context.Context, gray *image.Gray, maxCorners int, 
 
 	threshold := maxEig * qualityLevel
 
-	type candidate struct {
-		pt  image.Point
-		val float64
-	}
-	var candidates []candidate
+	var candidates []cornerCandidate
 	for y := half; y < h-half; y++ {
 		for x := half; x < w-half; x++ {
 			v := cornerMap[y*w+x]
 			if v > threshold {
-				candidates = append(candidates, candidate{image.Pt(x, y), v})
+				candidates = append(candidates, cornerCandidate{image.Pt(x, y), v})
 			}
 		}
 	}
 
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].val > candidates[j].val
-	})
-
-	minDistSq := float64(minDistance * minDistance)
-	var result []image.Point
-	for _, c := range candidates {
-		if len(result) >= maxCorners {
-			break
-		}
-		tooClose := false
-		for _, r := range result {
-			dx := float64(c.pt.X - r.X)
-			dy := float64(c.pt.Y - r.Y)
-			if dx*dx+dy*dy < minDistSq {
-				tooClose = true
-				break
-			}
-		}
-		if !tooClose {
-			result = append(result, c.pt)
-		}
-	}
-
-	return result, nil
+	return selectSpacedCorners(candidates, maxCorners, minDistance), nil
 }
 
 // ---- Perspective transform ----
@@ -714,42 +677,40 @@ func perspectiveTransform(src *image.NRGBA, srcPts, dstPts [4]image.Point, outW,
 	dst := image.NewNRGBA(image.Rect(0, 0, outW, outH))
 	sb := src.Bounds()
 
-	for y := 0; y < outH; y++ {
-		for x := 0; x < outW; x++ {
-			dx, dy := float64(x)+0.5, float64(y)+0.5
-			w := Hinv[6]*dx + Hinv[7]*dy + Hinv[8]
-			if math.Abs(w) < 1e-12 {
-				continue
+	nCPU := goruntime.NumCPU()
+	pFor(outH, nCPU, func(start, end int) {
+		for y := start; y < end; y++ {
+			dstRow := y * dst.Stride
+			for x := 0; x < outW; x++ {
+				dx, dy := float64(x)+0.5, float64(y)+0.5
+				w := Hinv[6]*dx + Hinv[7]*dy + Hinv[8]
+				if math.Abs(w) < 1e-12 {
+					continue
+				}
+				sx := (Hinv[0]*dx + Hinv[1]*dy + Hinv[2]) / w
+				sy := (Hinv[3]*dx + Hinv[4]*dy + Hinv[5]) / w
+
+				ix0 := int(math.Floor(sx))
+				iy0 := int(math.Floor(sy))
+				ffx := sx - float64(ix0)
+				ffy := sy - float64(iy0)
+
+				// Clamp coordinates to valid range to avoid transparent pixels at edges
+				ix0c := clamp(ix0, sb.Min.X, sb.Max.X-2)
+				iy0c := clamp(iy0, sb.Min.Y, sb.Max.Y-2)
+				si := (iy0c-src.Rect.Min.Y)*src.Stride + (ix0c-src.Rect.Min.X)*4
+				siBottom := si + src.Stride
+				di := dstRow + x*4
+				for channel := 0; channel < 4; channel++ {
+					dst.Pix[di+channel] = clampByte(int(bilinear(
+						float64(src.Pix[si+channel]), float64(src.Pix[si+4+channel]),
+						float64(src.Pix[siBottom+channel]), float64(src.Pix[siBottom+4+channel]),
+						ffx, ffy,
+					)))
+				}
 			}
-			sx := (Hinv[0]*dx + Hinv[1]*dy + Hinv[2]) / w
-			sy := (Hinv[3]*dx + Hinv[4]*dy + Hinv[5]) / w
-
-			ix0 := int(math.Floor(sx))
-			iy0 := int(math.Floor(sy))
-			ffx := sx - float64(ix0)
-			ffy := sy - float64(iy0)
-
-			// Clamp coordinates to valid range to avoid transparent pixels at edges
-			ix0c := clamp(ix0, sb.Min.X, sb.Max.X-2)
-			iy0c := clamp(iy0, sb.Min.Y, sb.Max.Y-2)
-			c00 := src.NRGBAAt(ix0c, iy0c)
-			c10 := src.NRGBAAt(ix0c+1, iy0c)
-			c01 := src.NRGBAAt(ix0c, iy0c+1)
-			c11 := src.NRGBAAt(ix0c+1, iy0c+1)
-
-			r := bilinear(float64(c00.R), float64(c10.R), float64(c01.R), float64(c11.R), ffx, ffy)
-			g := bilinear(float64(c00.G), float64(c10.G), float64(c01.G), float64(c11.G), ffx, ffy)
-			bl := bilinear(float64(c00.B), float64(c10.B), float64(c01.B), float64(c11.B), ffx, ffy)
-			al := bilinear(float64(c00.A), float64(c10.A), float64(c01.A), float64(c11.A), ffx, ffy)
-
-			dst.SetNRGBA(x, y, color.NRGBA{
-				R: clampByte(int(r)),
-				G: clampByte(int(g)),
-				B: clampByte(int(bl)),
-				A: clampByte(int(al)),
-			})
 		}
-	}
+	})
 
 	return dst
 }
@@ -780,47 +741,46 @@ func perspectiveTransformWithMask(src *image.NRGBA, srcPts, dstPts [4]image.Poin
 	oob := image.NewAlpha(image.Rect(0, 0, outW, outH))
 	sb := src.Bounds()
 
-	for y := 0; y < outH; y++ {
-		for x := 0; x < outW; x++ {
-			dx, dy := float64(x)+0.5, float64(y)+0.5
-			w := Hinv[6]*dx + Hinv[7]*dy + Hinv[8]
-			if math.Abs(w) < 1e-12 {
-				oob.Pix[y*oob.Stride+x] = 255
-				continue
+	nCPU := goruntime.NumCPU()
+	pFor(outH, nCPU, func(start, end int) {
+		for y := start; y < end; y++ {
+			dstRow := y * dst.Stride
+			maskRow := y * oob.Stride
+			for x := 0; x < outW; x++ {
+				dx, dy := float64(x)+0.5, float64(y)+0.5
+				w := Hinv[6]*dx + Hinv[7]*dy + Hinv[8]
+				if math.Abs(w) < 1e-12 {
+					oob.Pix[maskRow+x] = 255
+					continue
+				}
+				sx := (Hinv[0]*dx + Hinv[1]*dy + Hinv[2]) / w
+				sy := (Hinv[3]*dx + Hinv[4]*dy + Hinv[5]) / w
+
+				ix0 := int(math.Floor(sx))
+				iy0 := int(math.Floor(sy))
+
+				// Mark pixel as out-of-bounds if bilinear neighbourhood is outside src.
+				if ix0 < sb.Min.X || ix0 > sb.Max.X-2 || iy0 < sb.Min.Y || iy0 > sb.Max.Y-2 {
+					oob.Pix[maskRow+x] = 255
+					continue
+				}
+
+				ffx := sx - float64(ix0)
+				ffy := sy - float64(iy0)
+
+				si := (iy0-src.Rect.Min.Y)*src.Stride + (ix0-src.Rect.Min.X)*4
+				siBottom := si + src.Stride
+				di := dstRow + x*4
+				for channel := 0; channel < 4; channel++ {
+					dst.Pix[di+channel] = clampByte(int(bilinear(
+						float64(src.Pix[si+channel]), float64(src.Pix[si+4+channel]),
+						float64(src.Pix[siBottom+channel]), float64(src.Pix[siBottom+4+channel]),
+						ffx, ffy,
+					)))
+				}
 			}
-			sx := (Hinv[0]*dx + Hinv[1]*dy + Hinv[2]) / w
-			sy := (Hinv[3]*dx + Hinv[4]*dy + Hinv[5]) / w
-
-			ix0 := int(math.Floor(sx))
-			iy0 := int(math.Floor(sy))
-
-			// Mark pixel as out-of-bounds if bilinear neighbourhood is outside src.
-			if ix0 < sb.Min.X || ix0 > sb.Max.X-2 || iy0 < sb.Min.Y || iy0 > sb.Max.Y-2 {
-				oob.Pix[y*oob.Stride+x] = 255
-				continue
-			}
-
-			ffx := sx - float64(ix0)
-			ffy := sy - float64(iy0)
-
-			c00 := src.NRGBAAt(ix0, iy0)
-			c10 := src.NRGBAAt(ix0+1, iy0)
-			c01 := src.NRGBAAt(ix0, iy0+1)
-			c11 := src.NRGBAAt(ix0+1, iy0+1)
-
-			r := bilinear(float64(c00.R), float64(c10.R), float64(c01.R), float64(c11.R), ffx, ffy)
-			g := bilinear(float64(c00.G), float64(c10.G), float64(c01.G), float64(c11.G), ffx, ffy)
-			bl := bilinear(float64(c00.B), float64(c10.B), float64(c01.B), float64(c11.B), ffx, ffy)
-			al := bilinear(float64(c00.A), float64(c10.A), float64(c01.A), float64(c11.A), ffx, ffy)
-
-			dst.SetNRGBA(x, y, color.NRGBA{
-				R: clampByte(int(r)),
-				G: clampByte(int(g)),
-				B: clampByte(int(bl)),
-				A: clampByte(int(al)),
-			})
 		}
-	}
+	})
 
 	return dst, oob
 }
@@ -884,41 +844,45 @@ func rotateArbitrary(src *image.NRGBA, angleDeg float64, bg color.NRGBA) *image.
 	sinA := math.Sin(rad)
 
 	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
-	for i := 0; i < len(dst.Pix); i += 4 {
-		dst.Pix[i+0] = bg.R
-		dst.Pix[i+1] = bg.G
-		dst.Pix[i+2] = bg.B
-		dst.Pix[i+3] = bg.A
-	}
-
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			ddx := float64(x) - cx
-			ddy := float64(y) - cy
-			sx := cosA*ddx + sinA*ddy + cx
-			sy := -sinA*ddx + cosA*ddy + cy
-
-			ix0 := int(math.Floor(sx))
-			iy0 := int(math.Floor(sy))
-			if ix0 < 0 || ix0+1 >= w || iy0 < 0 || iy0+1 >= h {
-				continue
-			}
-			fx := sx - float64(ix0)
-			fy := sy - float64(iy0)
-
-			c00 := src.NRGBAAt(b.Min.X+ix0, b.Min.Y+iy0)
-			c10 := src.NRGBAAt(b.Min.X+ix0+1, b.Min.Y+iy0)
-			c01 := src.NRGBAAt(b.Min.X+ix0, b.Min.Y+iy0+1)
-			c11 := src.NRGBAAt(b.Min.X+ix0+1, b.Min.Y+iy0+1)
-
-			dst.SetNRGBA(x, y, color.NRGBA{
-				R: clampByte(int(bilinear(float64(c00.R), float64(c10.R), float64(c01.R), float64(c11.R), fx, fy))),
-				G: clampByte(int(bilinear(float64(c00.G), float64(c10.G), float64(c01.G), float64(c11.G), fx, fy))),
-				B: clampByte(int(bilinear(float64(c00.B), float64(c10.B), float64(c01.B), float64(c11.B), fx, fy))),
-				A: clampByte(int(bilinear(float64(c00.A), float64(c10.A), float64(c01.A), float64(c11.A), fx, fy))),
-			})
+	if len(dst.Pix) >= 4 {
+		dst.Pix[0], dst.Pix[1], dst.Pix[2], dst.Pix[3] = bg.R, bg.G, bg.B, bg.A
+		for filled := 4; filled < len(dst.Pix); {
+			copied := copy(dst.Pix[filled:], dst.Pix[:filled])
+			filled += copied
 		}
 	}
+
+	nCPU := goruntime.NumCPU()
+	pFor(h, nCPU, func(start, end int) {
+		for y := start; y < end; y++ {
+			dstRow := y * dst.Stride
+			for x := 0; x < w; x++ {
+				ddx := float64(x) - cx
+				ddy := float64(y) - cy
+				sx := cosA*ddx + sinA*ddy + cx
+				sy := -sinA*ddx + cosA*ddy + cy
+
+				ix0 := int(math.Floor(sx))
+				iy0 := int(math.Floor(sy))
+				if ix0 < 0 || ix0+1 >= w || iy0 < 0 || iy0+1 >= h {
+					continue
+				}
+				fx := sx - float64(ix0)
+				fy := sy - float64(iy0)
+
+				si := iy0*src.Stride + ix0*4
+				siBottom := si + src.Stride
+				di := dstRow + x*4
+				for channel := 0; channel < 4; channel++ {
+					dst.Pix[di+channel] = clampByte(int(bilinear(
+						float64(src.Pix[si+channel]), float64(src.Pix[si+4+channel]),
+						float64(src.Pix[siBottom+channel]), float64(src.Pix[siBottom+4+channel]),
+						fx, fy,
+					)))
+				}
+			}
+		}
+	})
 	return dst
 }
 
@@ -938,42 +902,51 @@ func applyCircularMaskWithFeather(src *image.NRGBA, center image.Point, radius, 
 	innerR := float64(radius)
 	cutoutR := float64(centerCutoutRadius)
 	cutoutFeatherR := cutoutR + float64(featherSize)
+	outerR2 := outerR * outerR
+	innerR2 := innerR * innerR
+	cutoutR2 := cutoutR * cutoutR
+	cutoutFeatherR2 := cutoutFeatherR * cutoutFeatherR
 
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			ddx := float64(x) - float64(center.X)
-			ddy := float64(y) - float64(center.Y)
-			d := math.Sqrt(ddx*ddx + ddy*ddy)
+	nCPU := goruntime.NumCPU()
+	pFor(h, nCPU, func(start, end int) {
+		alphaRow := make([]float64, w)
+		for y := start; y < end; y++ {
+			for x := 0; x < w; x++ {
+				ddx := float64(x) - float64(center.X)
+				ddy := float64(y) - float64(center.Y)
+				d2 := ddx*ddx + ddy*ddy
 
-			var alpha float64
-			if d >= outerR {
-				alpha = 0.0
-			} else if d > innerR {
-				// Outer feather: 1 → 0
-				t := (d - innerR) / float64(featherSize)
-				alpha = 0.5 * (1 + math.Cos(t*math.Pi))
-			} else if cutoutR <= 0 {
-				alpha = 1.0
-			} else if d <= cutoutR {
-				// Inside cutout hard core — bg.
-				alpha = 0.0
-			} else if d < cutoutFeatherR {
-				// Cutout feather: 0 → 1 as d goes from cutoutR to cutoutFeatherR.
-				t := (d - cutoutR) / float64(featherSize)
-				alpha = 0.5 * (1 - math.Cos(t*math.Pi))
-			} else {
-				alpha = 1.0
+				var alpha float64
+				if d2 >= outerR2 {
+					alpha = 0.0
+				} else if d2 > innerR2 {
+					// Outer feather: 1 → 0
+					d := math.Sqrt(d2)
+					t := (d - innerR) / float64(featherSize)
+					alpha = 0.5 * (1 + math.Cos(t*math.Pi))
+				} else if cutoutR <= 0 {
+					alpha = 1.0
+				} else if d2 <= cutoutR2 {
+					// Inside cutout hard core — bg.
+					alpha = 0.0
+				} else if d2 < cutoutFeatherR2 {
+					// Cutout feather: 0 → 1 as d goes from cutoutR to cutoutFeatherR.
+					d := math.Sqrt(d2)
+					t := (d - cutoutR) / float64(featherSize)
+					alpha = 0.5 * (1 - math.Cos(t*math.Pi))
+				} else {
+					alpha = 1.0
+				}
+				alphaRow[x] = alpha
 			}
-
-			sc := src.NRGBAAt(b.Min.X+x, b.Min.Y+y)
-			dst.SetNRGBA(x, y, color.NRGBA{
-				R: clampByte(int(float64(sc.R)*alpha + float64(bg.R)*(1-alpha))),
-				G: clampByte(int(float64(sc.G)*alpha + float64(bg.G)*(1-alpha))),
-				B: clampByte(int(float64(sc.B)*alpha + float64(bg.B)*(1-alpha))),
-				A: 255,
-			})
+			srcOffset := (b.Min.Y+y-src.Rect.Min.Y)*src.Stride + (b.Min.X-src.Rect.Min.X)*4
+			dstOffset := y * dst.Stride
+			maskBlendRow(
+				src.Pix[srcOffset:srcOffset+w*4], dst.Pix[dstOffset:dstOffset+w*4],
+				alphaRow, bg.R, bg.G, bg.B,
+			)
 		}
-	}
+	})
 	return dst
 }
 
@@ -1007,6 +980,19 @@ func resizeGray(src *image.Gray, newW, newH int) *image.Gray {
 	dst := image.NewGray(image.Rect(0, 0, newW, newH))
 
 	if newW < origW || newH < origH {
+		if factor := origW / newW; (factor == 2 || factor == 4) &&
+			origW == newW*factor && origH == newH*factor {
+			nCPU := goruntime.NumCPU()
+			pFor(newH, nCPU, func(start, end int) {
+				for y := start; y < end; y++ {
+					cornerResizeGrayRow(
+						src.Pix[y*factor*src.Stride:], src.Stride, factor,
+						dst.Pix[y*dst.Stride:y*dst.Stride+newW],
+					)
+				}
+			})
+			return dst
+		}
 		// Area averaging: each output pixel averages the block of source pixels
 		// that map onto it. This prevents aliasing from destroying edge gradients
 		// at the downsampled scales used by multi-scale corner detection.
@@ -1070,6 +1056,9 @@ func resizeNRGBAToGray(src *image.NRGBA, newW, newH, accentValue int) *image.Gra
 	dst := image.NewGray(image.Rect(0, 0, newW, newH))
 	if newW <= 0 || newH <= 0 {
 		return dst
+	}
+	if newW == origW && newH == origH {
+		return toGrayscaleAccent(src, accentValue)
 	}
 	srcStride := src.Stride
 	dstStride := dst.Stride

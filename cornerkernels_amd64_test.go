@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"math"
 	"reflect"
@@ -51,6 +52,34 @@ func TestCornerBlurAVX2MatchesScalar(t *testing.T) {
 	cornerBlurRow(a, middle, c, got)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatal("AVX2 Gaussian blur output differs from scalar output")
+	}
+}
+
+func TestCornerResizeGrayAVX2MatchesScalar(t *testing.T) {
+	if !cornerUseAVX2 {
+		t.Skip("AVX2 is unavailable on this CPU")
+	}
+	for _, factor := range []int{2, 4} {
+		const dstWidth = 67
+		srcStride := dstWidth*factor + 11
+		src := make([]uint8, srcStride*factor)
+		for i := range src {
+			src[i] = uint8(i*37 + i*i*3 + factor*19)
+		}
+		want, got := make([]uint8, dstWidth), make([]uint8, dstWidth)
+		original := cornerUseAVX2
+		cornerUseAVX2 = false
+		cornerResizeGrayRow(src, srcStride, factor, want)
+		cornerUseAVX2 = original
+		cornerResizeGrayRow(src, srcStride, factor, got)
+		if !reflect.DeepEqual(got, want) {
+			t.Logf("factor %d got=%v want=%v", factor, got[:min(20, len(got))], want[:min(20, len(want))])
+			for i := range got {
+				if got[i] != want[i] {
+					t.Fatalf("factor %d lane %d: AVX2=%d scalar=%d", factor, i, got[i], want[i])
+				}
+			}
+		}
 	}
 }
 
@@ -138,6 +167,34 @@ func BenchmarkCornerEigenAMD64(b *testing.B) {
 	benchmarkCornerModes(b, func() { cornerEigenBenchmarkSink = runCornerEigenTestStreams(streams, dst) })
 }
 
+func BenchmarkResizeGrayFixedFactorsAMD64(b *testing.B) {
+	if !cornerUseAVX2 {
+		b.Skip("AVX2 is unavailable on this CPU")
+	}
+	for _, factor := range []int{2, 4} {
+		src := image.NewGray(image.Rect(0, 0, 1504, 1000))
+		for i := range src.Pix {
+			src.Pix[i] = uint8(i*37 + i/17)
+		}
+		b.Run(fmt.Sprintf("%dx/scalar", factor), func(b *testing.B) {
+			original := cornerUseAVX2
+			defer func() { cornerUseAVX2 = original }()
+			cornerUseAVX2 = false
+			for i := 0; i < b.N; i++ {
+				cornerResizeBenchmarkSink = resizeGray(src, 1504/factor, 1000/factor)
+			}
+		})
+		b.Run(fmt.Sprintf("%dx/avx2", factor), func(b *testing.B) {
+			original := cornerUseAVX2
+			defer func() { cornerUseAVX2 = original }()
+			cornerUseAVX2 = true
+			for i := 0; i < b.N; i++ {
+				cornerResizeBenchmarkSink = resizeGray(src, 1504/factor, 1000/factor)
+			}
+		})
+	}
+}
+
 func BenchmarkGoodFeaturesToTrackAMD64(b *testing.B) {
 	if !cornerUseAVX2 {
 		b.Skip("AVX2 is unavailable on this CPU")
@@ -219,3 +276,4 @@ func runCornerEigenTestStreams(s cornerEigenTestStreams, dst []float64) float64 
 
 var cornerEigenBenchmarkSink float64
 var cornerPointBenchmarkSink int
+var cornerResizeBenchmarkSink *image.Gray
