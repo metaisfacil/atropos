@@ -215,9 +215,12 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	resultBounds := a.warpedImage.Bounds()
 
 	return &ProcessResult{
 		Preview:         preview,
+		Width:           resultBounds.Dx(),
+		Height:          resultBounds.Dy(),
 		UnmaskedPreview: a.discNoMaskPreview,
 		DiscCenterX:     a.discCenter.X,
 		DiscCenterY:     a.discCenter.Y,

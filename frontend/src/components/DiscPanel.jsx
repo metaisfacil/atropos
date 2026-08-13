@@ -11,6 +11,7 @@ import { SetFeatherSize, SetDiscSettings } from '../../wailsjs/go/main/App'
 //   discCutoutPercent     — current cutout diameter percentage
 //   setDiscCutoutPercent  — setter
 //   setPreview            — update the canvas preview
+//   setRealImageDims      — update the logical canvas to the rendered crop
 export default function DiscPanel({
   discActive,
   featherSize,
@@ -19,6 +20,7 @@ export default function DiscPanel({
   discCutoutPercent,
   setDiscCutoutPercent,
   setPreview,
+  setRealImageDims,
   disabled,
 }) {
   return (
@@ -43,6 +45,9 @@ export default function DiscPanel({
                     try {
                       const result = await SetFeatherSize({ size: parseInt(e.target.value) })
                       if (result?.preview) setPreview(result.preview)
+                      if (result?.width && result?.height) {
+                        setRealImageDims({ w: result.width, h: result.height })
+                      }
                     } catch (err) {
                       console.error(err)
                     }

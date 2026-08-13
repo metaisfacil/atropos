@@ -2,6 +2,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useMouseHandlers } from './useMouseHandlers'
+import { DrawDisc } from '../../wailsjs/go/main/App'
 
 vi.mock('../../wailsjs/go/main/App', () => ({
   ClickCorner: vi.fn(),
@@ -214,5 +215,36 @@ describe('touch-up brush resize gesture', () => {
     expect(args.touchupDraggingRef.current).toBe(true)
     expect(args.setTouchupStrokes).toHaveBeenCalledWith([{ x: 200, y: 200 }])
     expect(args.setBrushSize).not.toHaveBeenCalled()
+  })
+})
+
+describe('disc crop presentation', () => {
+  it('publishes the cropped dimensions returned by DrawDisc', async () => {
+    DrawDisc.mockResolvedValue({
+      preview: '/preview/2',
+      width: 130,
+      height: 130,
+      discRotation: 0,
+    })
+    const args = makeArgs({
+      mode: 'disc',
+      useTouchupTool: false,
+      dragging: true,
+      dragStart: { x: 100, y: 100 },
+      dragCurrent: { x: 200, y: 150 },
+    })
+    const { result, unmount } = renderHook(() => useMouseHandlers(args))
+    unmounts.push(unmount)
+
+    await act(async () => {
+      await result.current.handleMouseUp({
+        target: args.imgRef.current,
+        clientX: 210,
+        clientY: 170,
+      })
+    })
+
+    expect(args.setPreview).toHaveBeenCalledWith('/preview/2')
+    expect(args.setRealImageDims).toHaveBeenCalledWith({ w: 130, h: 130 })
   })
 })

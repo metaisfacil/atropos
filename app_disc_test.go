@@ -117,6 +117,19 @@ func TestDrawDisc_PreviewIsDataURI(t *testing.T) {
 	}
 }
 
+func TestDrawDisc_ReturnsCroppedDimensions(t *testing.T) {
+	a := newTestApp(200, 200)
+	res, err := a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 50})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantWidth := a.warpedImage.Bounds().Dx()
+	wantHeight := a.warpedImage.Bounds().Dy()
+	if res.Width != wantWidth || res.Height != wantHeight {
+		t.Fatalf("result dimensions = %dx%d, want %dx%d", res.Width, res.Height, wantWidth, wantHeight)
+	}
+}
+
 func TestDrawDisc_SavesUndo(t *testing.T) {
 	a := newTestApp(200, 200)
 	before := len(a.undoStack)

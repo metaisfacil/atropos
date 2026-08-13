@@ -25,6 +25,7 @@ export function useZoomPan({
   featherSize,
   setFeatherSize,
   setPreview,
+  setRealImageDims,
 }) {
   const [zoom, setZoom] = useState(1)
   const [fitWidth, setFitWidth] = useState(0)
@@ -95,6 +96,9 @@ export function useZoomPan({
         try {
           const result = await SetFeatherSize({ size: nextFeather })
           if (result?.preview) setPreview(result.preview)
+          if (result?.width && result?.height) {
+            setRealImageDims?.({ w: result.width, h: result.height })
+          }
         } catch (error) {
           log(`SetFeatherSize failed: ${error?.message || error}`)
         }
@@ -124,7 +128,7 @@ export function useZoomPan({
 
     el.addEventListener('wheel', handler, { passive: false, capture: true })
     return () => el.removeEventListener('wheel', handler, { capture: true })
-  }, [mode, discActive, featherSize, fitWidth, imgNatural.w, setFeatherSize, setPreview])
+  }, [mode, discActive, featherSize, fitWidth, imgNatural.w, setFeatherSize, setPreview, setRealImageDims])
 
   useEffect(() => {
     const onKeyDown = event => {

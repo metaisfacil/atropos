@@ -170,7 +170,16 @@ export default function App() {
     lastResizeRef,
     handleImgLoad,
     setImgNatural,
-  } = useZoomPan({ imgRef, imageDims: realImageDims, mode, discActive, featherSize, setFeatherSize, setPreview })
+  } = useZoomPan({
+    imgRef,
+    imageDims: realImageDims,
+    mode,
+    discActive,
+    featherSize,
+    setFeatherSize,
+    setPreview,
+    setRealImageDims,
+  })
 
   const displayWidth = fitWidth > 0 ? fitWidth * zoom : null
 
@@ -380,6 +389,7 @@ export default function App() {
                 discCutoutPercent={discCutoutPercent}
                 setDiscCutoutPercent={setDiscCutoutPercent}
                 setPreview={setPreview}
+                setRealImageDims={setRealImageDims}
                 disabled={cropSkipped}
               />
             </div>

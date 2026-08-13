@@ -24,6 +24,7 @@ function makeProps(overrides = {}) {
     featherSize:     10,
     setFeatherSize:  vi.fn(),
     setPreview:      vi.fn(),
+    setRealImageDims: vi.fn(),
     ...overrides,
   }
 }

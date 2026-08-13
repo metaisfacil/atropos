@@ -65,6 +65,7 @@ export function useKeyboardShortcuts({
             const dy = Math.round(-sin * visualDx + cos * visualDy)
             const r = await ShiftDisc({ dx, dy })
             if (r?.preview) setPreview(r.preview)
+            if (r?.width && r?.height) setRealImageDims({ w: r.width, h: r.height })
             if (r?.unmaskedPreview) setDiscNoMaskPreview(r.unmaskedPreview)
             if (r?.discCenterX !== undefined && r?.discCenterY !== undefined) setDiscCenter({ x: r.discCenterX, y: r.discCenterY })
             if (r?.discRadius !== undefined) setDiscRadius(r.discRadius)
@@ -78,17 +79,24 @@ export function useKeyboardShortcuts({
             case 'ArrowRight': e.preventDefault(); await applyShift( shiftStep, 0); return
             case '+': case '=': {
               const newF = Math.min(100, featherSize + 1); setFeatherSize(newF)
-              result = await SetFeatherSize({ size: newF }); if (result?.preview) setPreview(result.preview); return
+              result = await SetFeatherSize({ size: newF })
+              if (result?.preview) setPreview(result.preview)
+              if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+              return
             }
             case '-': {
               const newF = Math.max(0, featherSize - 1); setFeatherSize(newF)
-              result = await SetFeatherSize({ size: newF }); if (result?.preview) setPreview(result.preview); return
+              result = await SetFeatherSize({ size: newF })
+              if (result?.preview) setPreview(result.preview)
+              if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+              return
             }
             case 'y': case 'Y': {
               const mp = mousePosRef.current
               const imgPt = displayToImage(mp.x, mp.y)
               result = await GetPixelColor({ x: imgPt.x, y: imgPt.y })
               if (result?.preview) setPreview(result.preview)
+              if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
               return
             }
           }
