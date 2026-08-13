@@ -481,24 +481,34 @@ func gaussianBlurGray(src *image.Gray) *image.Gray {
 
 	tmp := image.NewGray(image.Rect(0, 0, w, h))
 	// Horizontal pass: [1 2 1] / 4
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			x0 := clamp(x-1, 0, w-1)
-			x1 := clamp(x+1, 0, w-1)
-			v := int(src.GrayAt(x0, y).Y) + 2*int(src.GrayAt(x, y).Y) + int(src.GrayAt(x1, y).Y)
-			tmp.SetGray(x, y, color.Gray{Y: uint8(v / 4)})
-		}
+	nCPU := goruntime.NumCPU()
+	blurWorkers := nCPU
+	if w*h < 65536 {
+		blurWorkers = 1
 	}
+	pFor(h, blurWorkers, func(start, end int) {
+		for y := start; y < end; y++ {
+			srcRow := src.Pix[y*src.Stride : y*src.Stride+w]
+			dstRow := tmp.Pix[y*tmp.Stride : y*tmp.Stride+w]
+			dstRow[0] = uint8((3*int(srcRow[0]) + int(srcRow[1])) / 4)
+			cornerBlurRow(srcRow[:w-2], srcRow[1:w-1], srcRow[2:], dstRow[1:w-1])
+			dstRow[w-1] = uint8((int(srcRow[w-2]) + 3*int(srcRow[w-1])) / 4)
+		}
+	})
 	dst := image.NewGray(image.Rect(0, 0, w, h))
 	// Vertical pass: [1 2 1] / 4
-	for y := 0; y < h; y++ {
-		y0 := clamp(y-1, 0, h-1)
-		y1 := clamp(y+1, 0, h-1)
-		for x := 0; x < w; x++ {
-			v := int(tmp.GrayAt(x, y0).Y) + 2*int(tmp.GrayAt(x, y).Y) + int(tmp.GrayAt(x, y1).Y)
-			dst.SetGray(x, y, color.Gray{Y: uint8(v / 4)})
+	pFor(h, blurWorkers, func(start, end int) {
+		for y := start; y < end; y++ {
+			y0 := clamp(y-1, 0, h-1)
+			y1 := clamp(y+1, 0, h-1)
+			cornerBlurRow(
+				tmp.Pix[y0*tmp.Stride:y0*tmp.Stride+w],
+				tmp.Pix[y*tmp.Stride:y*tmp.Stride+w],
+				tmp.Pix[y1*tmp.Stride:y1*tmp.Stride+w],
+				dst.Pix[y*dst.Stride:y*dst.Stride+w],
+			)
 		}
-	}
+	})
 	return dst
 }
 
@@ -506,6 +516,9 @@ func gaussianBlurGray(src *image.Gray) *image.Gray {
 func goodFeaturesToTrack(ctx context.Context, gray *image.Gray, maxCorners int, qualityLevel float64, minDistance int, blockSize int) ([]image.Point, error) {
 	b := gray.Bounds()
 	w, h := b.Dx(), b.Dy()
+	if w < blockSize || h < blockSize {
+		return nil, nil
+	}
 
 	// Pre-smooth to suppress noise-driven gradient responses before computing
 	// the structure tensor. This mirrors the standard OpenCV implementation.
@@ -517,23 +530,18 @@ func goodFeaturesToTrack(ctx context.Context, gray *image.Gray, maxCorners int, 
 
 	// ---- Sobel gradients (parallel) --------------------------------
 	// Read directly from gray.Pix to avoid per-call bounds checks.
-	ix := make([]float64, w*h)
-	iy := make([]float64, w*h)
+	ix := make([]int16, w*h)
+	iy := make([]int16, w*h)
 
 	pFor(h-2, nCPU, func(start, end int) {
 		for row := start + 1; row <= end; row++ {
-			for col := 1; col < w-1; col++ {
-				p00 := float64(pix[(row-1)*stride+(col-1)])
-				p01 := float64(pix[(row-1)*stride+col])
-				p02 := float64(pix[(row-1)*stride+(col+1)])
-				p10 := float64(pix[row*stride+(col-1)])
-				p12 := float64(pix[row*stride+(col+1)])
-				p20 := float64(pix[(row+1)*stride+(col-1)])
-				p21 := float64(pix[(row+1)*stride+col])
-				p22 := float64(pix[(row+1)*stride+(col+1)])
-				ix[row*w+col] = -p00 - 2*p10 - p20 + p02 + 2*p12 + p22
-				iy[row*w+col] = -p00 - 2*p01 - p02 + p20 + 2*p21 + p22
-			}
+			cornerSobelRow(
+				pix[(row-1)*stride:],
+				pix[row*stride:],
+				pix[(row+1)*stride:],
+				ix[row*w+1:row*w+w-1],
+				iy[row*w+1:row*w+w-1],
+			)
 		}
 	})
 
@@ -552,8 +560,8 @@ func goodFeaturesToTrack(ctx context.Context, gray *image.Gray, maxCorners int, 
 
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			gx := ix[y*w+x]
-			gy := iy[y*w+x]
+			gx := float64(ix[y*w+x])
+			gy := float64(iy[y*w+x])
 			i := (y+1)*sw1 + (x + 1)
 			satXX[i] = gx*gx + satXX[i-1] + satXX[i-sw1] - satXX[i-sw1-1]
 			satYY[i] = gy*gy + satYY[i-1] + satYY[i-sw1] - satYY[i-sw1-1]
@@ -601,31 +609,25 @@ func goodFeaturesToTrack(ctx context.Context, gray *image.Gray, maxCorners int, 
 			}
 			lmax := 0.0
 			for y := rowStart; y < rowEnd; y++ {
-				r1 := y - half     // SAT top boundary (0-indexed)
+				r1 := y - half       // SAT top boundary (0-indexed)
 				r2p1 := y + half + 1 // SAT bottom boundary + 1
-				for x := half; x < w-half; x++ {
-					c1 := x - half
-					c2p1 := x + half + 1
-					i11 := r2p1*sw1 + c2p1
-					i01 := r1*sw1 + c2p1
-					i10 := r2p1*sw1 + c1
-					i00 := r1*sw1 + c1
-					sxx := satXX[i11] - satXX[i01] - satXX[i10] + satXX[i00]
-					syy := satYY[i11] - satYY[i01] - satYY[i10] + satYY[i00]
-					sxy := satXY[i11] - satXY[i01] - satXY[i10] + satXY[i00]
-
-					trace := sxx + syy
-					det := sxx*syy - sxy*sxy
-					disc := trace*trace/4.0 - det
-					if disc < 0 {
-						disc = 0
-					}
-					minEig := trace/2.0 - math.Sqrt(disc)
-					cornerMap[y*w+x] = minEig
-					if minEig > lmax {
-						lmax = minEig
-					}
-				}
+				n := w - 2*half
+				hiOffset := blockSize
+				lmax = cornerEigenRow(
+					satXX[r2p1*sw1+hiOffset:r2p1*sw1+hiOffset+n],
+					satXX[r1*sw1+hiOffset:r1*sw1+hiOffset+n],
+					satXX[r2p1*sw1:r2p1*sw1+n],
+					satXX[r1*sw1:r1*sw1+n],
+					satYY[r2p1*sw1+hiOffset:r2p1*sw1+hiOffset+n],
+					satYY[r1*sw1+hiOffset:r1*sw1+hiOffset+n],
+					satYY[r2p1*sw1:r2p1*sw1+n],
+					satYY[r1*sw1:r1*sw1+n],
+					satXY[r2p1*sw1+hiOffset:r2p1*sw1+hiOffset+n],
+					satXY[r1*sw1+hiOffset:r1*sw1+hiOffset+n],
+					satXY[r2p1*sw1:r2p1*sw1+n],
+					satXY[r1*sw1:r1*sw1+n],
+					cornerMap[y*w+half:y*w+half+n],
+				)
 			}
 			localMax[wid] = lmax
 		}()
