@@ -856,6 +856,13 @@ raster is in flight. The visible canvas stays viewport-sized (scaled by DPR); it
 is never allocated at full source-image dimensions merely because the source is
 large.
 
+Before drawing, the frontend clips each cached raster and the checkerboard
+skeleton to the visible canvas and maps that intersection back to bitmap
+coordinates. This keeps `drawImage`/`fillRect` destination rectangles bounded
+to the viewport. In particular, it avoids a macOS WebKit rendering failure when
+a cached full-frame raster would otherwise be drawn through an offscreen
+destination wider than the GPU texture limit at high zoom.
+
 The prior presented revision stays visible until the replacement raster has
 decoded and is ready to draw. `App.jsx` therefore still distinguishes the
 authoritative backend `preview` URL from `presentedPreview`; user-facing busy

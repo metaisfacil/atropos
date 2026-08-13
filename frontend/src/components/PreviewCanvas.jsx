@@ -220,6 +220,36 @@ function canvasRectFromImage(rect, layout, dims) {
   return { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y }
 }
 
+// WebKit can distort a canvas draw when its destination rectangle grows past
+// the GPU texture limit, even when almost all of that rectangle is clipped by
+// the canvas. This happens at high zoom while the full-frame fit raster remains
+// in the cache behind a small viewport raster. Convert the canvas intersection
+// back into bitmap coordinates so drawImage only receives viewport-sized
+// source and destination rectangles.
+export function clippedRasterDrawRect(raster, layout, viewport) {
+  if (!raster || !validDims(raster.dims) || !(viewport?.w > 0) || !(viewport?.h > 0)) return null
+
+  const destination = canvasRectFromImage(raster.rect, layout, raster.dims)
+  if (!(destination.w > 0) || !(destination.h > 0)) return null
+
+  const visible = intersectRect(destination, { x: 0, y: 0, w: viewport.w, h: viewport.h })
+  if (!visible) return null
+
+  const bitmapWidth = raster.bitmap?.naturalWidth || raster.bitmap?.width || raster.width
+  const bitmapHeight = raster.bitmap?.naturalHeight || raster.bitmap?.height || raster.height
+  if (!(bitmapWidth > 0) || !(bitmapHeight > 0)) return null
+
+  return {
+    source: {
+      x: (visible.x - destination.x) * bitmapWidth / destination.w,
+      y: (visible.y - destination.y) * bitmapHeight / destination.h,
+      w: visible.w * bitmapWidth / destination.w,
+      h: visible.h * bitmapHeight / destination.h,
+    },
+    destination: visible,
+  }
+}
+
 function visibleImageRect(layout, dims, scrollLeft, scrollTop, viewport) {
   if (!validDims(dims) || !(layout.stageWidth > 0) || !(layout.stageHeight > 0)) {
     return { x: 0, y: 0, w: dims?.w || 1, h: dims?.h || 1 }
@@ -270,20 +300,36 @@ export function shouldDrawCheckerboard(source, dims) {
   return Boolean(source) && validDims(dims)
 }
 
-export function drawCheckerboardSkeleton(ctx, layout) {
+export function drawCheckerboardSkeleton(ctx, layout, viewport = null) {
   if (!ctx || !layout || !(layout.stageWidth > 0) || !(layout.stageHeight > 0)) return
 
   const pattern = checkerboardPattern(ctx)
   if (!pattern) return
 
+  const stageRect = {
+    x: layout.stageX,
+    y: layout.stageY,
+    w: layout.stageWidth,
+    h: layout.stageHeight,
+  }
+  const fill = viewport?.w > 0 && viewport?.h > 0
+    ? intersectRect(stageRect, { x: 0, y: 0, w: viewport.w, h: viewport.h })
+    : stageRect
+  if (!fill) return
+
   // Anchor the checkerboard to image space rather than viewport space. Panning
   // therefore moves the skeleton with the logical image instead of making the
-  // pattern appear to swim underneath it. The canvas itself clips anything
-  // outside the visible viewport.
+  // pattern appear to swim underneath it. Explicitly limit the fill to the
+  // viewport because WebKit can mishandle oversized offscreen canvas draws.
   ctx.save()
   ctx.translate(layout.stageX, layout.stageY)
   ctx.fillStyle = pattern
-  ctx.fillRect(0, 0, layout.stageWidth, layout.stageHeight)
+  ctx.fillRect(
+    fill.x - layout.stageX,
+    fill.y - layout.stageY,
+    fill.w,
+    fill.h,
+  )
   ctx.restore()
 }
 
@@ -579,14 +625,34 @@ export default function PreviewCanvas({
       // especially useful when zooming out exposes more of a large image than
       // the currently cached viewport raster covers.
       if (shouldDrawCheckerboard(props.source, props.imageDims)) {
-        drawCheckerboardSkeleton(ctx, drawLayout)
+        drawCheckerboardSkeleton(ctx, drawLayout, { w: width, h: height })
       }
 
       const raster = activeRasterRef.current
       if (raster && validDims(raster.dims)) {
         const drawRaster = candidate => {
           const destination = canvasRectFromImage(candidate.rect, drawLayout, candidate.dims)
-          ctx.drawImage(candidate.bitmap, destination.x, destination.y, destination.w, destination.h)
+          if (props.discLiveActive) {
+            // The disc preview applies an additional canvas transform. Its
+            // inverse-transformed viewport is not axis-aligned, so retain the
+            // full draw during the brief live gesture.
+            ctx.drawImage(candidate.bitmap, destination.x, destination.y, destination.w, destination.h)
+            return destination
+          }
+
+          const clipped = clippedRasterDrawRect(candidate, drawLayout, { w: width, h: height })
+          if (!clipped) return destination
+          ctx.drawImage(
+            candidate.bitmap,
+            clipped.source.x,
+            clipped.source.y,
+            clipped.source.w,
+            clipped.source.h,
+            clipped.destination.x,
+            clipped.destination.y,
+            clipped.destination.w,
+            clipped.destination.h,
+          )
           return destination
         }
 
