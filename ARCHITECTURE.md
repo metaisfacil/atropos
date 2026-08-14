@@ -292,7 +292,7 @@ RecropImage()
     return ImageInfo{Width, Height, Preview}
 ```
 
-Promotes the current output image to a new source for a second crop pass. The frontend shows a `ConfirmationModal` before calling this because it is irreversible within the session.
+Promotes the current output image to a new source for a second crop pass. The frontend shows a `ConfirmationModal` before calling this because it is irreversible within the session. On confirmation it resets zoom to fit view before the backend call, while preserving `fitWidth` until the replacement preview is presented.
 
 ---
 

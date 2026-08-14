@@ -418,10 +418,13 @@ export function useImageActions({
         CancelTouchup()
         setConfirmDialog(null)
         setLoading(true)
+        // Re-crop promotes the current output to a fresh source image. Reset
+        // the camera just like a normal load, and preserve the current fit
+        // geometry until the replacement preview is presented.
+        setZoom(1)
         showStatus('Re-cropping…')
         try {
           const result = await RecropImage()
-          setFitWidth(0)
           setPreview(result.preview)
           setRealImageDims({ w: result.width, h: result.height })
           if (setInputImageDims) setInputImageDims({ w: result.width, h: result.height })
