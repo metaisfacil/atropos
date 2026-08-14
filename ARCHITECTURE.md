@@ -482,6 +482,27 @@ Descreen(req)
 
 Descreen is session-based: parameter changes in the same session re-apply to `descreenBaseImage` (non-stacking). If another operation changes the working image, pointer mismatch (`workingImage() != descreenResultImage`) starts a fresh session automatically.
 
+`applyDescreen` uses a pure-Go, single-precision real FFT specialized for this
+filter. Dimensions are padded to the next 2/3/5-smooth lengths (and an even
+width), not independently to powers of two. For example, 5100×7020 becomes
+5120×7200 rather than 8192×8192. `fftPlan32` caches the mixed-radix schedule,
+digit-reversal permutation, and twiddles; the row real transform stores only
+`width/2+1` canonical bins, followed by cache-blocked complex column
+transforms. Channels run sequentially with all available workers so their large
+frequency planes never compete for memory bandwidth.
+
+The spectrum remains in natural FFT order. Threshold-mask construction maps
+frequency coordinates into the legacy centered layout without physically
+shifting the complex plane, and replaces per-bin `sqrt`/`log` evaluation with
+an equivalent squared-magnitude comparison. The full centered binary mask is
+retained so radius semantics stay compatible; square dilation uses running
+binary counts in O(width×height), then the existing separable Gaussian is
+applied. Inverse rows write each channel directly into the destination image,
+avoiding three full-size float result planes. The test-only
+`imgproc_fft_legacy_test.go` keeps `applyDescreenLegacy` as
+a test oracle for same-padding numerical comparisons and is not called by the
+application.
+
 ### SetLevels (non-committing)
 
 ```

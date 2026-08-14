@@ -50,7 +50,7 @@ Detects and removes near-solid white or black edge strips from the current outpu
 
 ### Descreen
 
-An FFT-based filter for reducing halftone screen patterns in scanned print media. Use the Descreen controls (thresh/radius/middle/highlights restoration), then apply.
+A pure-Go, real-FFT-based filter for reducing halftone screen patterns in scanned print media. Use the Descreen controls (thresh/radius/middle/highlights restoration), then apply.
 
 ### Touch-up brush
 

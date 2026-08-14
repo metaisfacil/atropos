@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"os"
 	"sync"
 	"testing"
 )
@@ -205,5 +206,164 @@ func TestApplyDescreen_UniformImagePreserved(t *testing.T) {
 				t.Fatalf("pixel (%d,%d) = %v, expected ≈(180,120,60)", x, y, c)
 			}
 		}
+	}
+}
+
+func TestDescreenFFT32TwoDimensionalRoundTrip(t *testing.T) {
+	const width, height = 30, 18
+	src := image.NewNRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			src.SetNRGBA(x, y, color.NRGBA{
+				R: uint8((x*17 + y*11 + 31) & 255),
+				G: uint8((x*7 + y*23 + 19) & 255),
+				B: uint8((x*29 + y*3 + 5) & 255),
+				A: 255,
+			})
+		}
+	}
+	plan, err := newDescreenFFTPlan32(nextSmoothFFT(height), nextSmoothEvenFFT(width))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst := image.NewNRGBA(src.Bounds())
+	for channel := 0; channel < 3; channel++ {
+		spectrum := plan.forwardChannel(src, channel, 4)
+		plan.inverseChannel(spectrum, dst, channel, 4)
+	}
+	for i := 0; i < len(src.Pix); i += 4 {
+		for channel := 0; channel < 3; channel++ {
+			delta := int(dst.Pix[i+channel]) - int(src.Pix[i+channel])
+			if delta < -1 || delta > 1 {
+				t.Fatalf("pixel byte %d channel %d: got %d want %d", i, channel, dst.Pix[i+channel], src.Pix[i+channel])
+			}
+		}
+	}
+}
+
+func TestApplyDescreen32CloseToLegacyAtSamePadding(t *testing.T) {
+	const size = 32
+	src := image.NewNRGBA(image.Rect(0, 0, size, size))
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			dot := uint8(35)
+			if (x/2+y/2)%2 == 0 {
+				dot = 220
+			}
+			src.SetNRGBA(x, y, color.NRGBA{R: dot, G: uint8((int(dot) + x*3) & 255), B: uint8((int(dot) + y*5) & 255), A: 255})
+		}
+	}
+	plan, err := newDescreenFFTPlan32(size, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spectrum := plan.forwardChannel(src, 0, 4)
+	_, peaks := plan.buildDescreenThresholdMask(spectrum, 92, 4, 4)
+	if peaks == 0 {
+		t.Fatal("test pattern produced no peaks, so it does not exercise frequency-mask mapping")
+	}
+	got := applyDescreen(src, 92, 2, 4, 68, nil)
+	want := applyDescreenLegacy(src, 92, 2, 4, 68, nil)
+	maxDelta := 0
+	for i := 0; i < len(got.Pix); i += 4 {
+		for channel := 0; channel < 3; channel++ {
+			delta := int(got.Pix[i+channel]) - int(want.Pix[i+channel])
+			if delta < 0 {
+				delta = -delta
+			}
+			if delta > maxDelta {
+				maxDelta = delta
+			}
+		}
+	}
+	if maxDelta > 2 {
+		t.Fatalf("pure-Go real FFT differs from legacy output by up to %d levels", maxDelta)
+	}
+}
+
+func TestDilate2dFFTSlidingWindowMatchesNaive(t *testing.T) {
+	const rows, cols = 17, 23
+	src := make([]float32, rows*cols)
+	for i := range src {
+		src[i] = float32((i*37 + i/7) % 256)
+	}
+	for _, radius := range []int{0, 1, 2, 6, 30} {
+		got := dilate2dFFT(src, rows, cols, radius, radius, 4)
+		want := naiveDilate2dFFT(src, rows, cols, radius, radius)
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("radius %d index %d: got %g want %g", radius, i, got[i], want[i])
+			}
+		}
+	}
+}
+
+func TestDilateBinaryMaskFFTMatchesNaive(t *testing.T) {
+	const rows, cols = 17, 23
+	src := make([]float32, rows*cols)
+	for i := range src {
+		if (i*37+i/7)%19 == 0 {
+			src[i] = 255
+		}
+	}
+	for _, radius := range []int{0, 1, 2, 6, 30} {
+		got := append([]float32(nil), src...)
+		scratch := make([]float32, len(got))
+		dilateBinaryMaskFFTInPlace(got, scratch, rows, cols, radius, radius, 4)
+		want := naiveDilate2dFFT(src, rows, cols, radius, radius)
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("radius %d index %d: got %g want %g", radius, i, got[i], want[i])
+			}
+		}
+	}
+}
+
+func naiveDilate2dFFT(src []float32, rows, cols, kw, kh int) []float32 {
+	out := make([]float32, rows*cols)
+	for y := 0; y < rows; y++ {
+		for x := 0; x < cols; x++ {
+			var maximum float32
+			for dy := -kh; dy <= kh; dy++ {
+				ny := y + dy
+				if ny < 0 {
+					ny = 0
+				} else if ny >= rows {
+					ny = rows - 1
+				}
+				for dx := -kw; dx <= kw; dx++ {
+					nx := x + dx
+					if nx < 0 {
+						nx = 0
+					} else if nx >= cols {
+						nx = cols - 1
+					}
+					if value := src[ny*cols+nx]; value > maximum {
+						maximum = value
+					}
+				}
+			}
+			out[y*cols+x] = maximum
+		}
+	}
+	return out
+}
+
+func BenchmarkApplyDescreen5100x7020(b *testing.B) {
+	if os.Getenv("ATROPOS_BENCH_FULL") == "" {
+		b.Skip("set ATROPOS_BENCH_FULL=1 to run the full-scan benchmark")
+	}
+	const width, height = 5100, 7020
+	src := image.NewNRGBA(image.Rect(0, 0, width, height))
+	for i := 0; i < len(src.Pix); i += 4 {
+		pixel := i / 4
+		src.Pix[i] = uint8((pixel*17 + pixel/width*13) & 255)
+		src.Pix[i+1] = uint8((pixel*7 + pixel/width*29) & 255)
+		src.Pix[i+2] = uint8((pixel*23 + pixel/width*5) & 255)
+		src.Pix[i+3] = 255
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = applyDescreen(src, 92, 6, 4, 68, b.Logf)
 	}
 }

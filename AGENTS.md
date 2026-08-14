@@ -121,7 +121,8 @@ Key files:
 - `app_touchup.go`, `app_iopaint.go`, `patchmatch.go` — touch-up pipeline
 - `app_compositor.go`, `compositor.go` — stitching feature
 - `imgproc.go` — miscellaneous image processing routines
-- `imgproc_fft.go` — FFT descreen kernel used by `Descreen`
+- `imgproc_fft.go` — pure-Go mixed-radix complex/real FFT core
+- `imgproc_descreen.go`, `imgproc_descreen_mask.go` — production descreen pipeline and mask kernels
 - `patchmatch.go` — PatchMatch touch-up backend implementation
 - `preview_assets.go` — immutable preview revisions plus bounded viewport raster encoding; viewport JPEGs are returned by `RenderPreviewViewport`, while the HTTP asset handler remains for compatibility
 - `frontend/src/hooks/*` — all frontend interaction logic
