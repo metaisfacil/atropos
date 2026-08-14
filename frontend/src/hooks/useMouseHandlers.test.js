@@ -62,6 +62,8 @@ function makeArgs(overrides = {}) {
     customCorner: false,
     linesDone: 0,
     normalRect: null,
+    adjustmentSelectionActive: false,
+    adjustmentRect: null,
     lines: [],
     realImageDims: { w: 800, h: 600 },
     discNoMaskPreview: null,
@@ -97,6 +99,8 @@ function makeArgs(overrides = {}) {
     setUseStraightEdgeTool: vi.fn(),
     setLineDragKind: vi.fn(),
     setNormalDragKind: vi.fn(),
+    setAdjustmentRect: vi.fn(),
+    setAdjustmentDragKind: vi.fn(),
     straightEdgeRemainsActive: false,
     spaceDownRef: { current: false },
     panDragRef: { current: null },
@@ -246,5 +250,56 @@ describe('disc crop presentation', () => {
 
     expect(args.setPreview).toHaveBeenCalledWith('/preview/2')
     expect(args.setRealImageDims).toHaveBeenCalledWith({ w: 130, h: 130 })
+  })
+})
+
+describe('adjustment selection', () => {
+  it('moves an existing selection in image space without invoking the crop tool', async () => {
+    const args = makeArgs({
+      useTouchupTool: false,
+      adjustmentSelectionActive: true,
+      adjustmentRect: { x1: 100, y1: 100, x2: 300, y2: 300 },
+    })
+    const { result, unmount } = renderHook(() => useMouseHandlers(args))
+    unmounts.push(unmount)
+
+    act(() => {
+      result.current.handleMouseDown({
+        target: args.imgRef.current,
+        button: 0,
+        clientX: 110,
+        clientY: 120,
+        preventDefault: vi.fn(),
+      })
+    })
+    await act(async () => {
+      await result.current.handleMouseMove({ clientX: 160, clientY: 145, preventDefault: vi.fn() })
+    })
+
+    expect(args.setAdjustmentDragKind).toHaveBeenCalledWith('move')
+    expect(args.setAdjustmentRect).toHaveBeenLastCalledWith({ x1: 200, y1: 150, x2: 400, y2: 350 })
+    expect(args.setNormalRect).not.toHaveBeenCalled()
+  })
+
+  it('does not start a touch-up stroke outside the active selection', () => {
+    const args = makeArgs({
+      adjustmentSelectionActive: true,
+      adjustmentRect: { x1: 300, y1: 250, x2: 500, y2: 450 },
+    })
+    const { result, unmount } = renderHook(() => useMouseHandlers(args))
+    unmounts.push(unmount)
+
+    act(() => {
+      result.current.handleMouseDown({
+        target: args.imgRef.current,
+        button: 0,
+        clientX: 110,
+        clientY: 120,
+        preventDefault: vi.fn(),
+      })
+    })
+
+    expect(args.touchupDraggingRef.current).toBe(false)
+    expect(args.setTouchupStrokes).not.toHaveBeenCalled()
   })
 })

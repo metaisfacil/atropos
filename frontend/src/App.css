@@ -520,6 +520,51 @@ button.save-btn:hover {
   max-height: 200px; /* enough for 3 sliders + apply button */
 }
 
+.adj-panel-header {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.adj-panel-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.adjustment-selection-btn {
+  width: 24px;
+  height: 22px;
+  min-width: 24px;
+  margin: -4px 0;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.adjustment-selection-btn:hover:not(:disabled),
+.adjustment-selection-btn.active {
+  background: #414146;
+  border-color: #66666d;
+}
+
+.adjustment-selection-btn.active .adjustment-selection-icon {
+  border-color: #d0d0d0;
+}
+
+.adjustment-selection-icon {
+  display: block;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 1px dashed #999;
+}
+
 .touchup-slider.dust-removal-controls.open {
   max-height: 90px;
 }

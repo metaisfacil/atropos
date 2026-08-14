@@ -24,10 +24,11 @@ type TouchUpPoint struct {
 // frontend. Keeping the stroke as points avoids constructing, PNG-encoding,
 // base64-encoding, transferring, decoding, and rescanning a full-size mask.
 type TouchUpStrokeRequest struct {
-	Points     []TouchUpPoint `json:"points"`
-	BrushSize  float64        `json:"brushSize"`
-	PatchSize  int            `json:"patchSize"`
-	Iterations int            `json:"iterations"`
+	Points     []TouchUpPoint       `json:"points"`
+	BrushSize  float64              `json:"brushSize"`
+	PatchSize  int                  `json:"patchSize"`
+	Iterations int                  `json:"iterations"`
+	Selection  *AdjustmentSelection `json:"selection,omitempty"`
 }
 
 // buildStrokeMask rasterizes round brush segments into an Alpha image whose
@@ -434,6 +435,14 @@ func (a *App) TouchUpApplyStrokes(request TouchUpStrokeRequest) (*ProcessResult,
 		return nil, fmt.Errorf("no image loaded")
 	}
 	mask, err := buildStrokeMask(srcImg.Bounds(), request.Points, request.BrushSize)
+	if err != nil {
+		return nil, err
+	}
+	_, selectionKey, err := resolveAdjustmentSelection(request.Selection, srcImg.Bounds())
+	if err != nil {
+		return nil, err
+	}
+	mask, err = clipAlphaToAdjustmentSelection(mask, selectionKey)
 	if err != nil {
 		return nil, err
 	}

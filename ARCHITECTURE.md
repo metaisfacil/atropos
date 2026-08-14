@@ -438,12 +438,24 @@ ResetNormal()
 |-------|---------|
 | `normalRect` | `{x1,y1,x2,y2}` image-space selection, or `null` |
 | `normalCropApplied` | `true` after first crop or Skip crop — unlocks touch-up |
+| `adjustmentRect` | Persistent image-space rectangle limiting adjustment effects, or `null` |
+| `adjustmentSelectionActive` | Whether the Adjustments marquee tool is active |
 
 `normalRect` is purely frontend; never sent to Go until the user clicks **Crop**.
 
 ---
 
 ## Adjustments (`app_adjust.go`)
+
+The Adjustments header exposes a rectangular marquee after the crop phase is
+complete. Its rectangle stays in frontend image coordinates and is included as
+an optional `selection` request field for Auto Contrast, Levels, Descreen, Dust
+Removal, and touch-up. Each backend path clamps the rectangle to the current
+working image and composites processed pixels only inside it. Resize Image and
+Trim Borders remain whole-image operations and clear the frontend rectangle
+because they change image geometry. The marquee remains after ordinary pixel
+adjustments; Ctrl+D clears it without leaving the tool, while toggling the
+header icon off clears it and deactivates the tool.
 
 ### Crop / Rotate / Resize / TrimBorders
 

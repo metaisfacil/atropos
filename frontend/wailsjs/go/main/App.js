@@ -6,8 +6,8 @@ export function AddLine(arg1) {
   return window['go']['main']['App']['AddLine'](arg1);
 }
 
-export function AutoContrast() {
-  return window['go']['main']['App']['AutoContrast']();
+export function AutoContrast(arg1) {
+  return window['go']['main']['App']['AutoContrast'](arg1);
 }
 
 export function CancelCornerDetect() {

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
+import { adjustmentSelectionPayload } from '../utils/adjustmentSelection'
 
 export function useTouchup({
   imageLoaded, loading, setLoading, showStatus,
@@ -8,6 +9,7 @@ export function useTouchup({
   touchupRemainsActive, setUseTouchupTool, setUseDescreenTool,
   setUnsavedChanges,
   touchupDraggingRef,
+  adjustmentRect,
 }) {
   const [touchupStrokes, setTouchupStrokes] = useState([])
   const [brushSize, setBrushSize]           = useState(40)
@@ -40,6 +42,7 @@ export function useTouchup({
         brushSize,
         patchSize,
         iterations,
+        selection: adjustmentSelectionPayload(adjustmentRect),
       })
       setTouchupStrokes([])
     } catch (err) {

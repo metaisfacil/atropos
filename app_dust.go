@@ -9,8 +9,9 @@ import (
 // DPI controls the detector's morphology and area scaling; a non-positive
 // value falls back to 300 DPI.
 type DustRemovalRequest struct {
-	Level string  `json:"level"`
-	DPI   float64 `json:"dpi"`
+	Level     string               `json:"level"`
+	DPI       float64              `json:"dpi"`
+	Selection *AdjustmentSelection `json:"selection,omitempty"`
 }
 
 // DustRemoval applies the dust-removal process to the current working image
@@ -23,9 +24,21 @@ func (a *App) DustRemoval(req DustRemovalRequest) (*ProcessResult, error) {
 	if src == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
-	processed, repaired, usedDPI, err := applyDustRemoval(src, level, req.DPI)
+	selectionRect, selectionKey, err := resolveAdjustmentSelection(req.Selection, src.Bounds())
 	if err != nil {
 		return nil, err
+	}
+	processSource := src
+	if selectionKey.Active {
+		processSource = subImage(src, selectionRect)
+	}
+	processedRegion, repaired, usedDPI, err := applyDustRemoval(processSource, level, req.DPI)
+	if err != nil {
+		return nil, err
+	}
+	processed := processedRegion
+	if selectionKey.Active {
+		processed = compositeAdjustmentSelection(src, processedRegion, selectionRect)
 	}
 	b := src.Bounds()
 	if repaired == 0 {

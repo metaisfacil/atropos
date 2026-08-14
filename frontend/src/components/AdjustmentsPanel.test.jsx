@@ -2,7 +2,7 @@
 import React from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DustRemoval } from '../../wailsjs/go/main/App'
+import { AutoContrast, DustRemoval } from '../../wailsjs/go/main/App'
 import AdjustmentsPanel from './AdjustmentsPanel'
 
 vi.mock('../../wailsjs/go/main/App', () => ({
@@ -46,6 +46,11 @@ const baseProps = {
   showStatus: vi.fn(),
   setErrorMessage: vi.fn(),
   setUnsavedChanges: vi.fn(),
+  adjustmentSelectionActive: false,
+  setAdjustmentSelectionActive: vi.fn(),
+  adjustmentRect: null,
+  setAdjustmentRect: vi.fn(),
+  clearTouchup: vi.fn(),
 }
 
 afterEach(() => {
@@ -78,9 +83,47 @@ describe('AdjustmentsPanel dust removal', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Dust removal strength' }), { target: { value: 'high' } })
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
 
-    await waitFor(() => expect(DustRemoval).toHaveBeenCalledWith({ level: 'high', dpi: 301 }))
+    await waitFor(() => expect(DustRemoval).toHaveBeenCalledWith({ level: 'high', dpi: 301, selection: null }))
     expect(props.setPreview).toHaveBeenCalledWith('/preview/dust.jpg')
     expect(props.setUnsavedChanges).toHaveBeenCalledWith(true)
     expect(props.setUseDescreenTool).toHaveBeenCalledWith(false)
+  })
+})
+
+describe('AdjustmentsPanel selection', () => {
+  it('shows the selection icon only while expanded and toggles the tool', () => {
+    const props = {
+      ...baseProps,
+      adjustmentSelectionActive: false,
+      setAdjustmentSelectionActive: vi.fn(),
+      setAdjustmentRect: vi.fn(),
+      setUseTouchupTool: vi.fn(),
+      setUseStraightEdgeTool: vi.fn(),
+    }
+    const { rerender } = render(React.createElement(AdjustmentsPanel, { ...props, adjPanelOpen: false }))
+    expect(screen.queryByRole('button', { name: 'Adjustment selection' })).toBeNull()
+
+    rerender(React.createElement(AdjustmentsPanel, { ...props, adjPanelOpen: true }))
+    fireEvent.click(screen.getByRole('button', { name: 'Adjustment selection' }))
+    expect(props.setAdjustmentSelectionActive).toHaveBeenCalledWith(true)
+    expect(props.setUseTouchupTool).toHaveBeenCalledWith(false)
+    expect(props.setUseStraightEdgeTool).toHaveBeenCalledWith(false)
+  })
+
+  it('passes the persistent image-space selection to auto contrast', async () => {
+    AutoContrast.mockResolvedValue({ preview: '/preview/contrast.jpg', black: 10, white: 240 })
+    const props = {
+      ...baseProps,
+      adjustmentSelectionActive: true,
+      adjustmentRect: { x1: 80, y1: 60, x2: 20, y2: 10 },
+      setAdjustmentRect: vi.fn(),
+    }
+    render(React.createElement(AdjustmentsPanel, props))
+    fireEvent.click(screen.getByRole('button', { name: 'Auto-contrast' }))
+
+    await waitFor(() => expect(AutoContrast).toHaveBeenCalledWith({
+      selection: { x1: 20, y1: 10, x2: 80, y2: 60 },
+    }))
+    expect(props.setAdjustmentRect).not.toHaveBeenCalled()
   })
 })

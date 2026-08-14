@@ -108,6 +108,9 @@ export default function App() {
   const [normalRect, setNormalRect] = useState(null)
   const [normalCropApplied, setNormalCropApplied] = useState(false)
   const [normalDragKind, setNormalDragKind] = useState('none')
+  const [adjustmentSelectionActive, setAdjustmentSelectionActive] = useState(false)
+  const [adjustmentRect, setAdjustmentRect] = useState(null)
+  const [adjustmentDragKind, setAdjustmentDragKind] = useState('none')
 
   const compositorDropRef = useRef(null)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
@@ -207,6 +210,7 @@ export default function App() {
     setUseDescreenTool,
     setUnsavedChanges,
     touchupDraggingRef,
+    adjustmentRect,
   })
 
   const {
@@ -238,6 +242,7 @@ export default function App() {
     setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
     setUseTouchupTool, setUseStraightEdgeTool, setDragging, setDragStart, setDragCurrent,
     setConfirmDialog, setTouchupStrokes,
+    setAdjustmentSelectionActive, setAdjustmentRect,
     touchupDraggingRef, canvasRef,
     showStatus, showError,
     setImageMeta,
@@ -268,6 +273,7 @@ export default function App() {
     imageLoaded, loading: busy, mode, dragging, dragStart, dragCurrent,
     useTouchupTool, useStraightEdgeTool, discActive, linesProcessed, touchupStrokes, brushSize,
     cornerState, dotRadius, cornersDetected, customCorner, linesDone, normalRect, lines,
+    adjustmentSelectionActive, adjustmentRect,
     realImageDims, discNoMaskPreview, discCenter, discRadius, discRotation,
     setDragging, setDragStart, setDragCurrent, setTouchupStrokes, setBrushSize, setTouchupCursor, setPreview: setPreviewFromPointer,
     setDiscRotation, setLoading, setZoom, setRealImageDims, setCornerState,
@@ -277,6 +283,7 @@ export default function App() {
     setLineDragKind, straightEdgeRemainsActive, spaceDownRef, panDragRef, canvasRef, ctrlDragRef,
     shiftDragRef, touchupDraggingRef, imgRef, lastResizeRef, mousePosRef,
     commitTouchup, showStatus, showError, setUnsavedChanges, setNormalDragKind,
+    setAdjustmentRect, setAdjustmentDragKind,
   })
 
   useKeyboardShortcuts({
@@ -292,6 +299,7 @@ export default function App() {
       await window.go.main.App.ConfirmClose()
     },
     cornerState, setCornerState, setSelectedCornerPts,
+    adjustmentSelectionActive, adjustmentRect, setAdjustmentRect,
   })
 
   const presentedVisual = usePresentedValue({
@@ -318,6 +326,9 @@ export default function App() {
     selectedCornerPts,
     dotRadius,
     normalRect,
+    adjustmentSelectionActive,
+    adjustmentRect,
+    adjustmentDragKind,
     lines,
     lineDragKind,
   }, previewPresentationPending)
@@ -502,6 +513,10 @@ export default function App() {
               discActive={discActive}
               useStraightEdgeTool={useStraightEdgeTool}
               setUseStraightEdgeTool={setUseStraightEdgeTool}
+              adjustmentSelectionActive={adjustmentSelectionActive}
+              setAdjustmentSelectionActive={setAdjustmentSelectionActive}
+              adjustmentRect={adjustmentRect}
+              setAdjustmentRect={setAdjustmentRect}
             />
             <ToolsPanel
               toolsOpen={toolsOpen}
@@ -607,7 +622,7 @@ export default function App() {
           displayWidth={displayWidth}
           scrollRef={canvasRef}
           imgRef={imgRef}
-          cursor={spacePanMode ? 'grab' : (normalDragKind === 'move' ? 'move' : 'crosshair')}
+          cursor={spacePanMode ? 'grab' : ((normalDragKind === 'move' || adjustmentDragKind === 'move') ? 'move' : 'crosshair')}
           onImageMouseLeave={handleImageMouseLeave}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}

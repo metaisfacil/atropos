@@ -19,6 +19,24 @@ export namespace image {
 
 export namespace main {
 	
+	export class AdjustmentSelection {
+	    x1: number;
+	    y1: number;
+	    x2: number;
+	    y2: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AdjustmentSelection(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.x1 = source["x1"];
+	        this.y1 = source["y1"];
+	        this.x2 = source["x2"];
+	        this.y2 = source["y2"];
+	    }
+	}
 	export class AllSettings {
 	    touchupBackend: string;
 	    iopaintUrl: string;
@@ -56,6 +74,36 @@ export namespace main {
 	        this.autoDetectOnModeSwitch = source["autoDetectOnModeSwitch"];
 	        this.appVersion = source["appVersion"];
 	    }
+	}
+	export class AutoContrastRequest {
+	    selection?: AdjustmentSelection;
+	
+	    static createFrom(source: any = {}) {
+	        return new AutoContrastRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.selection = this.convertValues(source["selection"], AdjustmentSelection);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class ClickCornerRequest {
 	    x: number;
@@ -198,6 +246,7 @@ export namespace main {
 	    radius: number;
 	    middle: number;
 	    highlight: number;
+	    selection?: AdjustmentSelection;
 	
 	    static createFrom(source: any = {}) {
 	        return new DescreenRequest(source);
@@ -209,7 +258,26 @@ export namespace main {
 	        this.radius = source["radius"];
 	        this.middle = source["middle"];
 	        this.highlight = source["highlight"];
+	        this.selection = this.convertValues(source["selection"], AdjustmentSelection);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class DiscDrawRequest {
 	    centerX: number;
@@ -256,6 +324,7 @@ export namespace main {
 	export class DustRemovalRequest {
 	    level: string;
 	    dpi: number;
+	    selection?: AdjustmentSelection;
 	
 	    static createFrom(source: any = {}) {
 	        return new DustRemovalRequest(source);
@@ -265,7 +334,26 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.level = source["level"];
 	        this.dpi = source["dpi"];
+	        this.selection = this.convertValues(source["selection"], AdjustmentSelection);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class FeatherSizeRequest {
 	    size: number;
@@ -602,6 +690,7 @@ export namespace main {
 	export class SetLevelsRequest {
 	    black: number;
 	    white: number;
+	    selection?: AdjustmentSelection;
 	
 	    static createFrom(source: any = {}) {
 	        return new SetLevelsRequest(source);
@@ -611,7 +700,26 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.black = source["black"];
 	        this.white = source["white"];
+	        this.selection = this.convertValues(source["selection"], AdjustmentSelection);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class ShiftDiscRequest {
 	    dx: number;
@@ -659,6 +767,7 @@ export namespace main {
 	    brushSize: number;
 	    patchSize: number;
 	    iterations: number;
+	    selection?: AdjustmentSelection;
 	
 	    static createFrom(source: any = {}) {
 	        return new TouchUpStrokeRequest(source);
@@ -670,6 +779,7 @@ export namespace main {
 	        this.brushSize = source["brushSize"];
 	        this.patchSize = source["patchSize"];
 	        this.iterations = source["iterations"];
+	        this.selection = this.convertValues(source["selection"], AdjustmentSelection);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

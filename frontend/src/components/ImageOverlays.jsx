@@ -5,7 +5,7 @@ function pct(value, total) {
   return (value / total) * 100
 }
 
-function NormalHitTargets({ rect, dims }) {
+function RectangleHitTargets({ rect, dims, dataAttribute }) {
   if (!rect || !(dims?.w > 0) || !(dims?.h > 0)) return null
 
   const left = Math.min(rect.x1, rect.x2)
@@ -23,7 +23,7 @@ function NormalHitTargets({ rect, dims }) {
   const edge = (name, style, cursor, orientation) => (
     <div
       key={name}
-      data-normal-handle={name}
+      {...{ [dataAttribute]: name }}
       className={`preview-hit-target preview-hit-edge preview-hit-edge--${orientation}`}
       style={{ ...style, cursor }}
     />
@@ -32,7 +32,7 @@ function NormalHitTargets({ rect, dims }) {
   const corner = (name, x, y, cursor) => (
     <div
       key={name}
-      data-normal-handle={name}
+      {...{ [dataAttribute]: name }}
       className="preview-hit-target preview-hit-corner"
       style={{ left: `${x}%`, top: `${y}%`, cursor }}
     />
@@ -80,13 +80,19 @@ function LineHitTargets({ lines, dims }) {
 export default function ImageOverlays({
   mode,
   normalRect,
+  adjustmentSelectionActive,
+  adjustmentRect,
+  useTouchupTool,
   lines,
   realImageDims,
 }) {
   return (
     <div className="preview-interaction-overlay" aria-hidden="true">
       {mode === 'normal' && normalRect && (
-        <NormalHitTargets rect={normalRect} dims={realImageDims} />
+        <RectangleHitTargets rect={normalRect} dims={realImageDims} dataAttribute="data-normal-handle" />
+      )}
+      {adjustmentSelectionActive && adjustmentRect && !useTouchupTool && (
+        <RectangleHitTargets rect={adjustmentRect} dims={realImageDims} dataAttribute="data-adjustment-handle" />
       )}
       {mode === 'line' && (
         <LineHitTargets lines={lines} dims={realImageDims} />

@@ -47,6 +47,7 @@ type App struct {
 	//   repeatedly. This snapshot is cleared by `saveUndo()` so the next
 	//   adjustment session starts from the current pixels.
 	levelsBaseImage *image.NRGBA
+	levelsSelection adjustmentSelectionKey
 
 	// `descreenBaseImage`:
 	//   A snapshot captured the first time Descreen is applied after a
@@ -64,6 +65,7 @@ type App struct {
 	//   is taken before the next descreen call rather than silently discarding
 	//   the intervening adjustment.
 	descreenResultImage *image.NRGBA
+	descreenSelection   adjustmentSelectionKey
 
 	imageLoaded bool
 	undoStack   []undoEntry

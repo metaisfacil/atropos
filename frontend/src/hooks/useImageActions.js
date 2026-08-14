@@ -33,6 +33,7 @@ export function useImageActions({
   setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
   setUseTouchupTool, setUseStraightEdgeTool, setDragging, setDragStart, setDragCurrent,
   setConfirmDialog, setTouchupStrokes,
+  setAdjustmentSelectionActive, setAdjustmentRect,
   touchupDraggingRef, canvasRef,
   showStatus, showError,
   setImageMeta,
@@ -76,6 +77,8 @@ export function useImageActions({
     setTouchupStrokes([])
     setUseTouchupTool(false)
     setUseStraightEdgeTool(false)
+    setAdjustmentSelectionActive(false)
+    setAdjustmentRect(null)
     touchupDraggingRef.current = false
     setDetectedCornerPts([])
     setSelectedCornerPts([])
@@ -756,6 +759,8 @@ export function useImageActions({
     if (m === mode) return
     setUseTouchupTool(false)
     setUseStraightEdgeTool(false)
+    setAdjustmentSelectionActive(false)
+    setAdjustmentRect(null)
     setMode(m)
     if (imageLoaded) {
       CancelTouchup()

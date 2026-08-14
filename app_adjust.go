@@ -37,16 +37,23 @@ type ResizeRequest struct {
 
 // SetLevelsRequest carries explicit black- and white-point values.
 type SetLevelsRequest struct {
-	Black int `json:"black"`
-	White int `json:"white"`
+	Black     int                  `json:"black"`
+	White     int                  `json:"white"`
+	Selection *AdjustmentSelection `json:"selection,omitempty"`
+}
+
+// AutoContrastRequest optionally limits auto contrast to an image-space selection.
+type AutoContrastRequest struct {
+	Selection *AdjustmentSelection `json:"selection,omitempty"`
 }
 
 // DescreenRequest carries parameters for the FFT-based descreen filter.
 type DescreenRequest struct {
-	Thresh    int `json:"thresh"`
-	Radius    int `json:"radius"`
-	Middle    int `json:"middle"`
-	Highlight int `json:"highlight"`
+	Thresh    int                  `json:"thresh"`
+	Radius    int                  `json:"radius"`
+	Middle    int                  `json:"middle"`
+	Highlight int                  `json:"highlight"`
+	Selection *AdjustmentSelection `json:"selection,omitempty"`
 }
 
 // workingImage returns the image that adjustment operations should act on.
@@ -87,8 +94,10 @@ func (a *App) saveUndo() {
 	// Any committing operation invalidates both adjustment baselines so that
 	// the next SetLevels / Descreen call re-snapshots from the new working image.
 	a.levelsBaseImage = nil
+	a.levelsSelection = adjustmentSelectionKey{}
 	a.descreenBaseImage = nil
 	a.descreenResultImage = nil
+	a.descreenSelection = adjustmentSelectionKey{}
 }
 
 // saveDiscRotationUndo is like saveUndo but also snapshots the current
@@ -107,6 +116,7 @@ func (a *App) saveDiscRotationUndo() {
 	angle := a.rotationAngle
 	a.undoStack = append(a.undoStack, undoEntry{image: img, rotationAngle: &angle, preWarp: preWarp})
 	a.levelsBaseImage = nil
+	a.levelsSelection = adjustmentSelectionKey{}
 }
 
 // Undo reverts the last operation on the image.
@@ -324,7 +334,7 @@ func (a *App) ResizeImage(req ResizeRequest) (*ProcessResult, error) {
 // are stored in postDiscBlack/postDiscWhite and the disc is re-rendered via
 // redrawDisc so that subsequent shift/rotate/feather operations continue to
 // apply the same tonal adjustment and never silently revert it.
-func (a *App) AutoContrast() (*ProcessResult, error) {
+func (a *App) AutoContrast(req AutoContrastRequest) (*ProcessResult, error) {
 	a.logf("AutoContrast")
 
 	if a.currentImage == nil {
@@ -333,15 +343,18 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 
 	descreenReset := a.descreenResultImage != nil
 	preWarp := a.warpedImage == nil
+	working := a.workingImage()
+	selectionRect, selectionKey, err := resolveAdjustmentSelection(req.Selection, working.Bounds())
+	if err != nil {
+		return nil, err
+	}
 
 	// Prefer the pre-adjustment base when the sliders have been touched.
 	var img *image.NRGBA
-	if a.levelsBaseImage != nil {
+	if a.levelsBaseImage != nil && a.levelsSelection == selectionKey {
 		img = a.levelsBaseImage
-	} else if preWarp {
-		img = a.currentImage
 	} else {
-		img = a.warpedImage
+		img = working
 	}
 
 	// Capture a snapshot of the image before we commit the AutoContrast so
@@ -352,15 +365,20 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 	preLevelsBase := cloneImage(img)
 	a.saveUndo()
 
-	bp, wp := computeAutoContrastPoints(img)
+	contrastSource := img
+	if selectionKey.Active {
+		contrastSource = subImage(img, selectionRect)
+	}
+	bp, wp := computeAutoContrastPoints(contrastSource)
 	a.logf("AutoContrast: blackPt=%d whitePt=%d", bp, wp)
-	adjusted := applyLevels(img, bp, wp)
+	adjusted := applyLevelsInSelection(img, bp, wp, selectionKey)
 
 	if preWarp {
 		a.currentImage = adjusted
 		// Restore the pre-adjustment base so SetLevels sessions operate
 		// against the original image (allowing sliders to revert the effect).
 		a.levelsBaseImage = preLevelsBase
+		a.levelsSelection = selectionKey
 		preview, err := a.imagePreviewURL(adjusted)
 		if err != nil {
 			return nil, err
@@ -381,10 +399,11 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 	// re-render through redrawDisc so the adjustment survives future disc
 	// operations (shift, rotate, feather). The disc re-render applies
 	// postDiscBlack/White at the end of every render, so this is persistent.
-	if a.discRadius > 0 {
+	if a.discRadius > 0 && !selectionKey.Active {
 		a.postDiscBlack = bp
 		a.postDiscWhite = wp
 		a.levelsBaseImage = preLevelsBase
+		a.levelsSelection = selectionKey
 		result, err := a.redrawDisc()
 		if err != nil {
 			return nil, err
@@ -400,6 +419,7 @@ func (a *App) AutoContrast() (*ProcessResult, error) {
 	a.warpedImage = adjusted
 	// Restore the pre-adjustment base for slider sessions as above.
 	a.levelsBaseImage = preLevelsBase
+	a.levelsSelection = selectionKey
 	preview, err := a.imagePreviewURL(adjusted)
 	if err != nil {
 		return nil, err
@@ -526,22 +546,32 @@ func (a *App) Descreen(req DescreenRequest) (*ProcessResult, error) {
 	if a.currentImage == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
+	src := a.workingImage()
+	selectionRect, selectionKey, err := resolveAdjustmentSelection(req.Selection, src.Bounds())
+	if err != nil {
+		return nil, err
+	}
 
 	// Start a new descreen session when:
 	//   (a) no base has been captured yet, OR
 	//   (b) warpedImage was changed by a non-descreen operation since the last
 	//       Descreen call (pointer differs from descreenResultImage).
-	if a.descreenBaseImage == nil || a.workingImage() != a.descreenResultImage {
-		src := a.workingImage()
-		if src == nil {
-			return nil, fmt.Errorf("no image loaded")
-		}
+	if a.descreenBaseImage == nil || src != a.descreenResultImage || a.descreenSelection != selectionKey {
 		a.saveUndo() // pushes undo entry and clears both baselines
 		a.descreenBaseImage = cloneImage(src)
+		a.descreenSelection = selectionKey
 		a.logf("Descreen: captured descreenBaseImage")
 	}
 
-	filtered := applyDescreen(a.descreenBaseImage, req.Thresh, req.Radius, req.Middle, req.Highlight, a.logf)
+	filterSource := a.descreenBaseImage
+	if selectionKey.Active {
+		filterSource = subImage(a.descreenBaseImage, selectionRect)
+	}
+	filteredRegion := applyDescreen(filterSource, req.Thresh, req.Radius, req.Middle, req.Highlight, a.logf)
+	filtered := filteredRegion
+	if selectionKey.Active {
+		filtered = compositeAdjustmentSelection(a.descreenBaseImage, filteredRegion, selectionRect)
+	}
 	a.setWorkingImage(filtered)
 	a.descreenResultImage = filtered // track pointer so next call can detect external changes
 
@@ -584,21 +614,23 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 
 	preWarp := a.warpedImage == nil
 	descreenReset := a.descreenResultImage != nil
+	working := a.workingImage()
+	_, selectionKey, err := resolveAdjustmentSelection(req.Selection, working.Bounds())
+	if err != nil {
+		return nil, err
+	}
 
 	// Snapshot the base on first touch; reuse on every subsequent drag.
-	if a.levelsBaseImage == nil {
-		if preWarp {
-			a.levelsBaseImage = cloneImage(a.currentImage)
-		} else {
-			a.levelsBaseImage = cloneImage(a.warpedImage)
-		}
+	if a.levelsBaseImage == nil || a.levelsSelection != selectionKey {
+		a.levelsBaseImage = cloneImage(working)
+		a.levelsSelection = selectionKey
 		a.logf("SetLevels: captured levelsBaseImage (preWarp=%v)", preWarp)
 	}
 
 	// Do NOT call saveUndo — slider ticks must not flood the undo stack.
 
 	if preWarp {
-		adjusted := applyLevels(a.levelsBaseImage, req.Black, req.White)
+		adjusted := applyLevelsInSelection(a.levelsBaseImage, req.Black, req.White, selectionKey)
 		a.currentImage = adjusted
 		// Frontend renders corner dots via SVG; return plain preview.
 		preview, err := a.imagePreviewURL(adjusted)
@@ -612,7 +644,7 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 	// Post-warp, disc mode: record the new levels and re-render the full disc
 	// pipeline. redrawDisc will apply postDiscBlack/White at the end, keeping
 	// the stretch alive across shift / rotate / feather operations.
-	if a.discRadius > 0 {
+	if a.discRadius > 0 && !selectionKey.Active {
 		a.postDiscBlack = req.Black
 		a.postDiscWhite = req.White
 		result, err := a.redrawDisc()
@@ -624,7 +656,7 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 	}
 
 	// Post-warp, non-disc path (corner / line mode after warp).
-	adjusted := applyLevels(a.levelsBaseImage, req.Black, req.White)
+	adjusted := applyLevelsInSelection(a.levelsBaseImage, req.Black, req.White, selectionKey)
 	a.warpedImage = adjusted
 	preview, err := a.imagePreviewURL(adjusted)
 	if err != nil {

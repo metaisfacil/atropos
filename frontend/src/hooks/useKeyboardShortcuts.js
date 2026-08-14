@@ -13,6 +13,7 @@ export function useKeyboardShortcuts({
   normalRect, handleNormalCrop, handleUndo,
   unsavedChanges, setUnsavedChanges, confirmClose,
   cornerState, setCornerState, setSelectedCornerPts,
+  adjustmentSelectionActive, adjustmentRect, setAdjustmentRect,
 }) {
   useEffect(() => {
     const handleKeyDown = async (e) => {
@@ -52,6 +53,14 @@ export function useKeyboardShortcuts({
       if (!imageLoaded) return
       try {
         let result
+
+        if ((e.ctrlKey || e.metaKey) && e.code === 'KeyD' && (adjustmentSelectionActive || adjustmentRect)) {
+          e.preventDefault()
+          if (e.repeat) return
+          setAdjustmentRect(null)
+          showStatus('Adjustment selection cleared')
+          return
+        }
 
         if (mode === 'disc' && discActive) {
           const shiftStep = e.shiftKey ? 20 : 5
@@ -192,5 +201,5 @@ export function useKeyboardShortcuts({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, canSave, handleLoadImage, cornerState.cornerCount]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, canSave, handleLoadImage, cornerState.cornerCount, adjustmentSelectionActive, adjustmentRect]) // eslint-disable-line react-hooks/exhaustive-deps
 }

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { AutoContrast, SetLevels, TrimBorders, ResizeImage, Descreen, DustRemoval } from '../../wailsjs/go/main/App'
 import DelayedHint from './DelayedHint'
 import ResizeModal from './ResizeModal'
+import { adjustmentSelectionPayload } from '../utils/adjustmentSelection'
 
 // AdjustmentsPanel renders the collapsible Adjustments section at the bottom
 // of the sidebar: Auto Contrast button + Black/White Point sliders.
@@ -41,7 +42,14 @@ export default function AdjustmentsPanel({
   showStatus,
   setErrorMessage,
   setUnsavedChanges,
+  adjustmentSelectionActive,
+  setAdjustmentSelectionActive,
+  adjustmentRect,
+  setAdjustmentRect,
+  clearTouchup,
 }) {
+  const selection = adjustmentSelectionPayload(adjustmentRect)
+
   const handleDescreenReset = (result) => {
     if (result?.descreenReset) {
       setUseDescreenTool(false)
@@ -56,6 +64,7 @@ export default function AdjustmentsPanel({
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
       handleDescreenReset(result)
+      setAdjustmentRect?.(null)
     } catch (err) {
       console.error('TrimBorders error:', err)
     } finally {
@@ -68,7 +77,7 @@ export default function AdjustmentsPanel({
     setAutoContrastPending(true)
     setLoading(true)
     try {
-      const result = await AutoContrast()
+      const result = await AutoContrast({ selection })
       if (result?.preview) setPreview(result.preview)
       // AutoContrast returns a message like "Auto Contrast applied (black=12, white=243)".
       if (typeof result?.black === 'number' && typeof result?.white === 'number') {
@@ -76,6 +85,7 @@ export default function AdjustmentsPanel({
         setWhitePoint(result.white)
       }
       handleDescreenReset(result)
+      setUnsavedChanges?.(true)
     } catch (err) {
       console.error('AutoContrast error:', err)
     } finally {
@@ -100,6 +110,12 @@ export default function AdjustmentsPanel({
     if (!postCropAvailable) setUseDustRemovalTool(false)
   }, [postCropAvailable])
 
+  useEffect(() => {
+    if (postCropAvailable) return
+    setAdjustmentSelectionActive?.(false)
+    setAdjustmentRect?.(null)
+  }, [postCropAvailable, setAdjustmentRect, setAdjustmentSelectionActive])
+
   const applyDustRemoval = async () => {
     if (!imageLoaded || !postCropAvailable || dustPending) return
     const dpiX = Number(imageMeta?.dpiX) || 0
@@ -109,7 +125,7 @@ export default function AdjustmentsPanel({
     setLoading(true)
     showStatus?.(`Removing dust (${dustLevel})…`)
     try {
-      const result = await DustRemoval({ level: dustLevel, dpi })
+      const result = await DustRemoval({ level: dustLevel, dpi, selection })
       if (result?.preview) setPreview(result.preview)
       handleDescreenReset(result)
       if (result?.changed) setUnsavedChanges?.(true)
@@ -128,10 +144,11 @@ export default function AdjustmentsPanel({
     setDescreenPending(true)
     setLoading(true)
     try {
-      const result = await Descreen({ thresh: descreenThresh, radius: descreenRadius, middle: descreenMiddle, highlight: descreenHighlight })
+      const result = await Descreen({ thresh: descreenThresh, radius: descreenRadius, middle: descreenMiddle, highlight: descreenHighlight, selection })
       if (result?.preview) setPreview(result.preview)
       handleDescreenReset(result)
       setUseDescreenTool(false)
+      setUnsavedChanges?.(true)
     } catch (err) {
       console.error('Descreen error:', err)
     } finally {
@@ -148,6 +165,7 @@ export default function AdjustmentsPanel({
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
       handleDescreenReset(result)
+      setAdjustmentRect?.(null)
     } catch (err) {
       console.error('ResizeImage error:', err)
     } finally {
@@ -159,9 +177,10 @@ export default function AdjustmentsPanel({
     if (!imageLoaded) return
     setLoading(true)
     try {
-      const result = await SetLevels({ black: bp, white: wp })
+      const result = await SetLevels({ black: bp, white: wp, selection })
       if (result?.preview) setPreview(result.preview)
       handleDescreenReset(result)
+      setUnsavedChanges?.(true)
     } catch (err) {
       console.error('SetLevels error:', err)
     } finally {
@@ -176,7 +195,35 @@ export default function AdjustmentsPanel({
         onClick={() => setAdjPanelOpen((o) => !o)}
         style={{ cursor: 'pointer', userSelect: 'none' }}
       >
-        Adjustments <span className="accordion-toggle">{adjPanelOpen ? '▾' : '▸'}</span>
+        <span>Adjustments</span>
+        <span className="adj-panel-header-actions">
+          {adjPanelOpen && (
+            <DelayedHint hint="Select a rectangular area for adjustments. Ctrl+D clears the selection.">
+              <button
+                type="button"
+                className={`adjustment-selection-btn ${adjustmentSelectionActive ? 'active' : ''}`}
+                aria-label="Adjustment selection"
+                aria-pressed={adjustmentSelectionActive}
+                disabled={!imageLoaded || !postCropAvailable || loading}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  if (adjustmentSelectionActive) {
+                    setAdjustmentSelectionActive?.(false)
+                    setAdjustmentRect?.(null)
+                    return
+                  }
+                  clearTouchup?.()
+                  setUseTouchupTool(false)
+                  setUseStraightEdgeTool(false)
+                  setAdjustmentSelectionActive?.(true)
+                }}
+              >
+                <span className="adjustment-selection-icon" aria-hidden="true" />
+              </button>
+            </DelayedHint>
+          )}
+          <span className="accordion-toggle">{adjPanelOpen ? '▾' : '▸'}</span>
+        </span>
       </div>
 
       <div className="accordion-content-outer">

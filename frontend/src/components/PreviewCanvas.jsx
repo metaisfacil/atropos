@@ -347,11 +347,14 @@ function drawCircle(ctx, x, y, radius, fill, stroke, lineWidth = 1) {
   }
 }
 
-function drawDashedRect(ctx, x, y, width, height) {
+function drawDashedRect(ctx, x, y, width, height, {
+  fill = 'rgba(0,255,0,0.08)',
+  stroke = '#00ff00',
+} = {}) {
   ctx.save()
-  ctx.fillStyle = 'rgba(0,255,0,0.08)'
+  ctx.fillStyle = fill
   ctx.fillRect(x, y, width, height)
-  ctx.strokeStyle = '#00ff00'
+  ctx.strokeStyle = stroke
   ctx.lineWidth = 2
   ctx.setLineDash([6, 3])
   ctx.strokeRect(x, y, width, height)
@@ -363,6 +366,30 @@ function drawVisualGuides(ctx, visual, layout, displayToImage, lineStartImgRef, 
   const dims = visual.realImageDims
   const imageScale = layout.stageWidth / dims.w
   const toCanvas = point => canvasPointFromImage(point, layout, dims)
+
+  if (visual.adjustmentSelectionActive) {
+    const palette = { fill: 'rgba(145,145,145,0.08)', stroke: '#a9a9a9' }
+    if (visual.dragging && visual.dragStart && visual.dragCurrent && !visual.adjustmentRect && !visual.useTouchupTool) {
+      const x = layout.stageX + Math.min(visual.dragStart.x, visual.dragCurrent.x)
+      const y = layout.stageY + Math.min(visual.dragStart.y, visual.dragCurrent.y)
+      const width = Math.abs(visual.dragCurrent.x - visual.dragStart.x)
+      const height = Math.abs(visual.dragCurrent.y - visual.dragStart.y)
+      drawDashedRect(ctx, x, y, width, height, palette)
+    } else if (visual.adjustmentRect) {
+      const x1 = Math.min(visual.adjustmentRect.x1, visual.adjustmentRect.x2)
+      const y1 = Math.min(visual.adjustmentRect.y1, visual.adjustmentRect.y2)
+      const x2 = Math.max(visual.adjustmentRect.x1, visual.adjustmentRect.x2)
+      const y2 = Math.max(visual.adjustmentRect.y1, visual.adjustmentRect.y2)
+      const a = toCanvas({ x: x1, y: y1 })
+      const b = toCanvas({ x: x2, y: y2 })
+      drawDashedRect(ctx, a.x, a.y, b.x - a.x, b.y - a.y, palette)
+      if (!visual.useTouchupTool) {
+        for (const point of [a, { x: b.x, y: a.y }, b, { x: a.x, y: b.y }]) {
+          drawCircle(ctx, point.x, point.y, 7 * imageScale, '#a9a9a9', '#343434', 1.5)
+        }
+      }
+    }
+  }
 
   if (visual.useTouchupTool && Array.isArray(visual.touchupStrokes)) {
     const radius = (visual.brushSize || 1) * imageScale / 2
@@ -1034,6 +1061,9 @@ export default function PreviewCanvas({
               <ImageOverlays
                 mode={visual?.mode}
                 normalRect={visual?.normalRect}
+                adjustmentSelectionActive={visual?.adjustmentSelectionActive}
+                adjustmentRect={visual?.adjustmentRect}
+                useTouchupTool={visual?.useTouchupTool}
                 lines={visual?.lines}
                 realImageDims={visual?.realImageDims || stageDims}
               />

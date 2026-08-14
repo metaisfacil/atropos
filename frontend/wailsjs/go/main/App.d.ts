@@ -4,7 +4,7 @@ import {main} from '../models';
 
 export function AddLine(arg1:main.LineAddRequest):Promise<main.ProcessResult>;
 
-export function AutoContrast():Promise<main.ProcessResult>;
+export function AutoContrast(arg1:main.AutoContrastRequest):Promise<main.ProcessResult>;
 
 export function CancelCornerDetect():Promise<void>;
 
