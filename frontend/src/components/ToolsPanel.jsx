@@ -1,12 +1,7 @@
 import React from 'react'
 
-// ToolsPanel renders a collapsible "Tools" section in the sidebar.
-// It hosts standalone utility features that aren't part of the main
-// crop/adjust pipeline — currently the Image Compositor.
-//
-// Props:
-//   toolsOpen / setToolsOpen  — expand/collapse state
-//   onOpenCompositor          — called when the Compositor button is clicked
+// ToolsPanel renders standalone utilities that are not part of the main
+// crop/adjustment pipeline.
 export default function ToolsPanel({ toolsOpen, setToolsOpen, onOpenCompositor }) {
   return (
     <div className={`accordion-panel ${toolsOpen ? 'expanded' : ''}`}>

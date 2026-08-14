@@ -209,6 +209,9 @@ type ProcessResult struct {
 	Message string `json:"message"`
 	Width   int    `json:"width"`
 	Height  int    `json:"height"`
+	// Changed is set by operations that can legitimately produce no pixel
+	// changes, allowing the frontend to preserve its unsaved-state indicator.
+	Changed bool `json:"changed,omitempty"`
 	// Optional numeric results (e.g. from AutoContrast)
 	Black int `json:"black,omitempty"`
 	White int `json:"white,omitempty"`

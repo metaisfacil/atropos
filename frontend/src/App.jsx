@@ -476,6 +476,11 @@ export default function App() {
               setPreview={setPreview}
               realImageDims={realImageDims}
               setRealImageDims={setRealImageDims}
+              loading={busy}
+              imageMeta={imageMeta}
+              showStatus={showStatus}
+              setErrorMessage={setErrorMessage}
+              setUnsavedChanges={setUnsavedChanges}
               useStretchPreprocess={useStretchPreprocess}
               setUseStretchPreprocess={setUseStretchPreprocess}
               postCropAvailable={

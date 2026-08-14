@@ -520,6 +520,10 @@ button.save-btn:hover {
   max-height: 200px; /* enough for 3 sliders + apply button */
 }
 
+.touchup-slider.dust-removal-controls.open {
+  max-height: 90px;
+}
+
 /* Scrollbar styling for the inner content area */
 .accordion-content::-webkit-scrollbar {
   width: 10px;
@@ -1511,6 +1515,40 @@ button.about-btn:hover {
   text-align: left;
 }
 .tools-panel-btn:hover { background: #505056; }
+.tools-panel-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.tools-panel-btn:disabled:hover { background: #3e3e42; }
+
+.dust-removal-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.dust-removal-select {
+  flex: 1;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 5px 7px;
+  background: #3e3e42;
+  color: #e0e0e0;
+  border: 1px solid #555;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.dust-removal-select:disabled { opacity: 0.5; }
+
+.dust-removal-apply {
+  flex: 0 0 auto;
+  width: auto;
+  height: 34px;
+  box-sizing: border-box;
+  white-space: nowrap;
+}
 
 .tools-panel-hint {
   font-size: 11px;

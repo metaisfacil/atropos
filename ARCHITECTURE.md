@@ -21,7 +21,7 @@ This document contains the detailed system model, data flow, and operation order
 | `components/ImageOverlays.jsx` | Transparent DOM hit targets for editable Normal/Line handles. Visible guides are drawn by `PreviewCanvas`; this component exists so the mature pointer state machine can keep DOM hit testing. |
 | `components/StatusBar.jsx` | Bottom status bar. Shows file format, pixel dimensions, DPI when known, and zoom level. Zoom is clickable and resets to 100%. All fields use `DelayedHint`. |
 | `components/DelayedHint.jsx` | Portal-rendered tooltip that appears after a 1 s hover delay. Uses a two-pass `useLayoutEffect` to clamp the tooltip inside the viewport before making it visible, avoiding flicker and edge clipping. |
-| `components/*Panel.jsx` | Mode-specific sidebar controls. `AdjustmentsPanel` owns resize, trim borders, auto-contrast, levels, descreen, touch-up brush, and disc straight-edge controls. `ShortcutsPanel` accepts `canSave` and `imageLoaded` props and applies `.shortcut-item--disabled` to unavailable shortcuts. `ToolsPanel` is a collapsible sidebar panel between Adjustments and Shortcuts that houses the Image Compositor button. |
+| `components/*Panel.jsx` | Mode-specific sidebar controls. `AdjustmentsPanel` owns resize, trim borders, auto-contrast, levels, descreen, dust removal, touch-up brush, and disc straight-edge controls. `ShortcutsPanel` accepts `canSave` and `imageLoaded` props and applies `.shortcut-item--disabled` to unavailable shortcuts. `ToolsPanel` is a collapsible sidebar panel between Adjustments and Shortcuts that houses the Image Compositor. |
 | `components/ResizeModal.jsx` | Modal for width/height or percentage resize with optional aspect lock and warning confirmation for large upscales. |
 | `components/CompositorModal.jsx` | Modal for image stitching. Manages an ordered list of image paths and an orientation selector, calls `CompositorStitch`, shows a preview, and exposes a “Load output” button that calls `CompositorLoadResult` and triggers `handleCompositorLoad`. |
 
@@ -50,6 +50,7 @@ originalImage  ── immutable after LoadImage; never modified
                                                    All subsequent ops:
                                                    Crop / Rotate / Undo
                                                    Levels / AutoContrast / Descreen
+                                                   DustRemoval
                                                    TrimBorders / ResizeImage
                                                    TouchUpApply
                                                    SaveImage ◄────────────
@@ -522,6 +523,28 @@ Undo()
 ```
 
 Undo is blocked in the frontend while any drag operation is active (disc shift, rotation, etc.) to prevent undo from firing mid-drag and corrupting disc state.
+
+### Dust Removal (`app_dust.go`, `imgproc_dust.go`)
+
+`DustRemoval({level, dpi})` is exposed in the Adjustments accordion after crop/skip.
+It reads `workingImage()`, applies a calibration profile, calls `saveUndo()`
+only when pixels actually change, and writes the result back to the matching
+pre-warp or post-warp image field. Missing DPI metadata defaults to 300 DPI.
+
+```text
+8-bit NRGBA -> BT.601 luminance -> 3x3 Sobel magnitude
+    -> normalize by the image-wide maximum and threshold at 0.09
+    -> 3x3 dilation at <=100 DPI, otherwise 5x5
+    -> 8-connected component shape/area classification
+    -> intersect with original Sobel seeds -> fill enclosed holes
+    -> in-place 3x3 target / 5x5 unmasked-sample median repair
+```
+
+The Low/Medium/High dense/sparse/elongated area banks at the 400-DPI
+reflective baseline are respectively `160/280/400`, `240/420/600`, and
+`320/600/900`. Below 400 DPI they scale by `dpi/400`; above 400 DPI detection
+is performed on a nearest-neighbour 400-DPI proxy and the mask is scaled back
+to the working image.
 
 ---
 

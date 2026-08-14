@@ -253,6 +253,20 @@ export namespace main {
 	        this.cutoutPercent = source["cutoutPercent"];
 	    }
 	}
+	export class DustRemovalRequest {
+	    level: string;
+	    dpi: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DustRemovalRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.level = source["level"];
+	        this.dpi = source["dpi"];
+	    }
+	}
 	export class FeatherSizeRequest {
 	    size: number;
 	
@@ -474,6 +488,7 @@ export namespace main {
 	    message: string;
 	    width: number;
 	    height: number;
+	    changed?: boolean;
 	    black?: number;
 	    white?: number;
 	    corners?: image.Point[];
@@ -499,6 +514,7 @@ export namespace main {
 	        this.message = source["message"];
 	        this.width = source["width"];
 	        this.height = source["height"];
+	        this.changed = source["changed"];
 	        this.black = source["black"];
 	        this.white = source["white"];
 	        this.corners = this.convertValues(source["corners"], image.Point);

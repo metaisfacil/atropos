@@ -66,6 +66,10 @@ export function DrawDisc(arg1) {
   return window['go']['main']['App']['DrawDisc'](arg1);
 }
 
+export function DustRemoval(arg1) {
+  return window['go']['main']['App']['DustRemoval'](arg1);
+}
+
 export function GetAllSettings() {
   return window['go']['main']['App']['GetAllSettings']();
 }

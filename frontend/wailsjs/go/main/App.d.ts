@@ -34,6 +34,8 @@ export function DetectCorners(arg1:main.CornerDetectRequest):Promise<main.Proces
 
 export function DrawDisc(arg1:main.DiscDrawRequest):Promise<main.ProcessResult>;
 
+export function DustRemoval(arg1:main.DustRemovalRequest):Promise<main.ProcessResult>;
+
 export function GetAllSettings():Promise<main.AllSettings>;
 
 export function GetCleanPreview():Promise<main.ProcessResult>;

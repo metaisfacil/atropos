@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { AutoContrast, SetLevels, TrimBorders, ResizeImage, Descreen } from '../../wailsjs/go/main/App'
+import React, { useEffect, useState } from 'react'
+import { AutoContrast, SetLevels, TrimBorders, ResizeImage, Descreen, DustRemoval } from '../../wailsjs/go/main/App'
 import DelayedHint from './DelayedHint'
 import ResizeModal from './ResizeModal'
 
@@ -36,6 +36,11 @@ export default function AdjustmentsPanel({
   setUseStraightEdgeTool,
   realImageDims,
   setRealImageDims,
+  loading,
+  imageMeta,
+  showStatus,
+  setErrorMessage,
+  setUnsavedChanges,
 }) {
   const handleDescreenReset = (result) => {
     if (result?.descreenReset) {
@@ -86,6 +91,37 @@ export default function AdjustmentsPanel({
   const [descreenMiddle, setDescreenMiddle] = useState(4)
   const [descreenHighlight, setDescreenHighlight] = useState(0)
   const [descreenPending, setDescreenPending] = useState(false)
+
+  const [useDustRemovalTool, setUseDustRemovalTool] = useState(false)
+  const [dustLevel, setDustLevel] = useState('medium')
+  const [dustPending, setDustPending] = useState(false)
+
+  useEffect(() => {
+    if (!postCropAvailable) setUseDustRemovalTool(false)
+  }, [postCropAvailable])
+
+  const applyDustRemoval = async () => {
+    if (!imageLoaded || !postCropAvailable || dustPending) return
+    const dpiX = Number(imageMeta?.dpiX) || 0
+    const dpiY = Number(imageMeta?.dpiY) || 0
+    const dpi = dpiX > 0 && dpiY > 0 ? (dpiX + dpiY) / 2 : Math.max(dpiX, dpiY)
+    setDustPending(true)
+    setLoading(true)
+    showStatus?.(`Removing dust (${dustLevel})…`)
+    try {
+      const result = await DustRemoval({ level: dustLevel, dpi })
+      if (result?.preview) setPreview(result.preview)
+      handleDescreenReset(result)
+      if (result?.changed) setUnsavedChanges?.(true)
+      showStatus?.(result?.message || 'Dust removal complete')
+    } catch (err) {
+      console.error('DustRemoval error:', err)
+      setErrorMessage?.(err?.message || String(err))
+    } finally {
+      setDustPending(false)
+      setLoading(false)
+    }
+  }
 
   const applyDescreen = async () => {
     if (!imageLoaded) return
@@ -187,6 +223,17 @@ export default function AdjustmentsPanel({
               </button>
             </DelayedHint>
 
+            <DelayedHint hint="Dust removal filter. Toggle to choose Low, Medium, or High strength, then apply.">
+              <button
+                className={`adjustments-btn ${useDustRemovalTool ? 'active' : ''}`}
+                onClick={() => setUseDustRemovalTool((value) => !value)}
+                disabled={!imageLoaded || !postCropAvailable || dustPending}
+                aria-pressed={useDustRemovalTool}
+              >
+                Dust removal
+              </button>
+            </DelayedHint>
+
             <DelayedHint hint="Toggles the touch-up brush which uses a PatchMatch-style content-aware fill. Draw strokes on the preview to build a mask, then commit to fill. Hold Alt and right-drag horizontally on the preview to resize the brush; the brush outline and pixel-size readout update live.">
               <button
                 className={`adjustments-btn touchup-btn ${useTouchupTool ? 'active' : ''}`}
@@ -217,6 +264,34 @@ export default function AdjustmentsPanel({
               </DelayedHint>
             )}
           </div>
+
+          {postCropAvailable && (
+            <div className={`touchup-slider dust-removal-controls ${useDustRemovalTool ? 'open' : 'closed'}`}>
+              <div className="dust-removal-row">
+                <select
+                  className="dust-removal-select"
+                  aria-label="Dust removal strength"
+                  value={dustLevel}
+                  onChange={(event) => setDustLevel(event.target.value)}
+                  disabled={loading || dustPending}
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+                <DelayedHint hint="Removes dust from the image - higher strength repairs larger defects. Uses the scan DPI when available, or 300 DPI otherwise.">
+                  <button
+                    className="adjustments-btn dust-removal-apply"
+                    onClick={applyDustRemoval}
+                    disabled={loading || dustPending || !imageLoaded}
+                  >
+                    {dustPending ? 'Removing dust…' : 'Apply'}
+                  </button>
+                </DelayedHint>
+              </div>
+              <div style={{ marginTop: '10px' }}></div>
+            </div>
+          )}
 
           <div className={`touchup-slider descreen-controls ${useDescreenTool ? 'open' : 'closed'}`}>
             <DelayedHint hint="Threshold for the distance-weighted log-magnitude spectrum. Higher values filter only the strongest screen patterns; lower values are more aggressive.">
