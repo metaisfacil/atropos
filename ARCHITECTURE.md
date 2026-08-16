@@ -861,6 +861,8 @@ GetCleanPreview()
 
 When switching back to corner mode, if all of `{maxCorners, qualityLevel, minDistance, accent, useStretch}` match `lastDetectSettings.current`, `RestoreCornerOverlay` is called instead of re-detecting. `lastDetectSettings.current` is set after every successful `DetectCorners` call and cleared by `resetImageState` (used by `loadFile`, `loadImageFromBytes`, and compositor-load promotion).
 
+Suggested Max Corners and Min Distance values are load-time defaults only. Pressing **Detect** or automatically detecting after returning to Corner mode uses the current controls, so manual changes made after image load are preserved even when `autoCornerParams` is enabled.
+
 ---
 
 ## Image Processing Kernels (`imgproc.go`)

@@ -106,3 +106,42 @@ describe('Re-crop viewport reset', () => {
     expect(props.setPreview).toHaveBeenCalledWith('/__atropos/preview/session-2/1.jpg')
   })
 })
+
+describe('Manual corner parameters', () => {
+  it('does not reapply load-time suggestions when Detect is pressed', async () => {
+    const props = makeProps()
+    props.mode = 'corner'
+    props.autoCornerParams = true
+    appMocks.DetectCorners.mockResolvedValue({
+      preview: '/__atropos/preview/session-3/1.jpg',
+      width: 2400,
+      height: 1600,
+      corners: [],
+      message: 'Detected 0 corners',
+    })
+
+    const { result, rerender } = renderHook(currentProps => useImageActions(currentProps), {
+      initialProps: props,
+    })
+    await waitFor(() => expect(appMocks.GetLaunchArgs).toHaveBeenCalled())
+
+    await act(async () => result.current.handleCompositorLoad({
+      preview: '/__atropos/preview/session-3/0.jpg',
+      width: 2400,
+      height: 1600,
+      suggestedCornerParams: { maxCorners: 500, minDistance: 80 },
+    }))
+
+    const manuallyAdjusted = {
+      ...props,
+      cornerState: { ...props.cornerState, maxCorners: 275, minDistance: 37 },
+    }
+    rerender(manuallyAdjusted)
+    await act(async () => result.current.handleDetectCorners())
+
+    expect(appMocks.DetectCorners).toHaveBeenLastCalledWith(expect.objectContaining({
+      maxCorners: 275,
+      minDistance: 37,
+    }))
+  })
+})

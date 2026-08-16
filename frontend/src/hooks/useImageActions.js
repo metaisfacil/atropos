@@ -368,7 +368,9 @@ export function useImageActions({
   const handleDetectCorners = async () => {
     setLoading(true)
     try {
-      await runDetectCorners(autoCornerParams ? suggestedCornerParamsRef.current : {})
+      // Suggested values are load-time defaults only. A manual Detect must use
+      // the values currently shown in the controls, even when auto-adjust is on.
+      await runDetectCorners()
     } catch (err) {
       console.error('Detect error:', err)
     } finally {
@@ -844,7 +846,9 @@ export function useImageActions({
         if (m === 'corner' && autoDetectOnModeSwitch) {
           setLoading(true)
           try {
-            await runDetectCorners(autoCornerParams ? suggestedCornerParamsRef.current : {})
+            // Returning to Corner mode is equivalent to pressing Detect: retain
+            // any parameter changes the user made after loading the image.
+            await runDetectCorners()
           } finally {
             setLoading(false)
           }
