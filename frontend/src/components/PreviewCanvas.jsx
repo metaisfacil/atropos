@@ -361,6 +361,17 @@ function drawDashedRect(ctx, x, y, width, height, {
   ctx.restore()
 }
 
+export function shouldDrawDiscCropGuide(visual, ctrlDragActive = false, shiftDragActive = false) {
+  return Boolean(
+    visual?.mode === 'disc' &&
+    !visual.adjustmentSelectionActive &&
+    !visual.useStraightEdgeTool &&
+    !visual.useTouchupTool &&
+    visual.dragging && visual.dragStart && visual.dragCurrent &&
+    !ctrlDragActive && !shiftDragActive
+  )
+}
+
 function drawVisualGuides(ctx, visual, layout, displayToImage, lineStartImgRef, ctrlDragRef, shiftDragRef) {
   if (!visual || !validDims(visual.realImageDims)) return
   const dims = visual.realImageDims
@@ -442,13 +453,7 @@ function drawVisualGuides(ctx, visual, layout, displayToImage, lineStartImgRef, 
     ctx.restore()
   }
 
-  if (
-    visual.mode === 'disc' &&
-    !visual.useStraightEdgeTool &&
-    !visual.useTouchupTool &&
-    visual.dragging && visual.dragStart && visual.dragCurrent &&
-    !ctrlDragRef?.current && !shiftDragRef?.current
-  ) {
+  if (shouldDrawDiscCropGuide(visual, Boolean(ctrlDragRef?.current), Boolean(shiftDragRef?.current))) {
     const dx = visual.dragStart.x - visual.dragCurrent.x
     const dy = visual.dragStart.y - visual.dragCurrent.y
     const radius = Math.sqrt(dx * dx + dy * dy)

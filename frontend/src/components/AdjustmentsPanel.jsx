@@ -301,7 +301,11 @@ export default function AdjustmentsPanel({
                 <button
                   className={`adjustments-btn straight-edge-btn ${useStraightEdgeTool ? 'active' : ''}`}
                   onClick={() => {
-                    if (!useStraightEdgeTool) setUseTouchupTool(false)
+                    if (!useStraightEdgeTool) {
+                      setUseTouchupTool(false)
+                      setAdjustmentSelectionActive?.(false)
+                      setAdjustmentRect?.(null)
+                    }
                     setUseStraightEdgeTool(!useStraightEdgeTool)
                   }}
                   disabled={!discActive || useTouchupTool}

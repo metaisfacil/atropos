@@ -149,4 +149,24 @@ describe('AdjustmentsPanel selection', () => {
     }))
     expect(props.setAdjustmentRect).not.toHaveBeenCalled()
   })
+
+  it('exits rectangular selection when Straight edge is activated', () => {
+    const props = {
+      ...baseProps,
+      mode: 'disc',
+      discActive: true,
+      adjustmentSelectionActive: true,
+      adjustmentRect: { x1: 10, y1: 20, x2: 80, y2: 90 },
+      setAdjustmentSelectionActive: vi.fn(),
+      setAdjustmentRect: vi.fn(),
+      setUseStraightEdgeTool: vi.fn(),
+    }
+    render(React.createElement(AdjustmentsPanel, props))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Straight edge' }))
+
+    expect(props.setAdjustmentSelectionActive).toHaveBeenCalledWith(false)
+    expect(props.setAdjustmentRect).toHaveBeenCalledWith(null)
+    expect(props.setUseStraightEdgeTool).toHaveBeenCalledWith(true)
+  })
 })

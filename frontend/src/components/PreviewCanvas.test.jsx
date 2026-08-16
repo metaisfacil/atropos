@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildViewportRequest, clippedRasterDrawRect, sourceRectContains } from './PreviewCanvas'
+import { buildViewportRequest, clippedRasterDrawRect, shouldDrawDiscCropGuide, sourceRectContains } from './PreviewCanvas'
 
 describe('buildViewportRequest', () => {
   it('requests an overscanned, quantized source region at viewport density', () => {
@@ -97,5 +97,28 @@ describe('clippedRasterDrawRect', () => {
       { stageX: 1000, stageY: 1000, stageWidth: 1000, stageHeight: 1000 },
       { w: 500, h: 500 },
     )).toBeNull()
+  })
+})
+
+describe('shouldDrawDiscCropGuide', () => {
+  const discDrag = {
+    mode: 'disc',
+    dragging: true,
+    dragStart: { x: 10, y: 20 },
+    dragCurrent: { x: 30, y: 40 },
+    useStraightEdgeTool: false,
+    useTouchupTool: false,
+  }
+
+  it('draws the disc crop guide for a normal disc-selection drag', () => {
+    expect(shouldDrawDiscCropGuide(discDrag)).toBe(true)
+  })
+
+  it('suppresses the disc crop guide while drawing a post-crop adjustment selection', () => {
+    expect(shouldDrawDiscCropGuide({
+      ...discDrag,
+      discActive: true,
+      adjustmentSelectionActive: true,
+    })).toBe(false)
   })
 })
