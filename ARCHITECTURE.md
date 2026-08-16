@@ -209,16 +209,22 @@ setLoading(false)
 ```
 DetectCorners(req)
     1. Downsample to ~1500px, producing accent/CLAHE and raw grayscale in one source traversal
-    2. Apply complementary 230..255 and 240..255 highlight curves to the raw grayscale; these suppress
-       coloured/text detail while expanding different strengths of white-media/background boundaries
-    3. Weighted Shi-Tomasi (goodFeaturesToTrack): two highlight boundary passes at scale 1 plus
+    2. Apply complementary 230..255 and 240..255 highlight curves plus a perimeter-derived adaptive
+       highlight curve; these suppress coloured/text detail while expanding media/background boundaries
+    3. Estimate median scanner RGB and its normal variation from the outer perimeter, then create a
+       colour-distance silhouette which suppresses textured grey/coloured backgrounds; run a small
+       Shi-Tomasi pass on it and retain both localizations when the measured perimeter is dark
+    4. Boundary-line proposal path over grayscale, highlight, and colour-distance maps:
+       oriented Sobel/Hough voting -> finite supported segments -> merge
+       collinear lines -> near-endpoint intersections -> convex, area, and interior-angle quad validation
+    5. Weighted Shi-Tomasi (goodFeaturesToTrack): two highlight boundary passes at scale 1 plus
        regular detail/silhouette passes at scales [1, 2, 4, 16]
-    4. Refine scale-16 silhouette coordinates against fine highlight candidates within one coarse cell
-    5. Refine all except authoritative 240-highlight coordinates against block-11 raw corners within one coarse cell,
+    6. Refine scale-16 silhouette coordinates against fine highlight candidates within one coarse cell
+    7. Refine all except authoritative 240-highlight coordinates against block-11 raw corners within one coarse cell,
        then sharpen against block-5 raw corners within half a cell
-    6. Deduplicate corners, map back to full-resolution coordinates
-    7. Store in detectedCorners
-    8. Return clean currentImage preview + Corners array
+    8. Append line-derived proposals after point candidates so deduplication preserves established point localization
+    9. Deduplicate corners, map back to full-resolution coordinates, and store in detectedCorners
+    10. Return clean currentImage preview + Corners array
          Dots are rendered by the frontend canvas overlay — never baked into the image
 ```
 
@@ -227,7 +233,8 @@ DetectCorners(req)
 ```
 ClickCorner(req)
     1. If not custom && detectedCorners exist:
-           snap pt to nearest detected corner
+           snap pt to nearest detected corner only when it is within the image-scaled bounded snap radius;
+           otherwise retain the raw click coordinate
        Else (custom=true OR Ctrl+click):
            use raw click coordinate
     2. Append pt to selectedCorners

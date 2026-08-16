@@ -114,6 +114,63 @@ func stretchGrayRange(src *image.Gray, blackPoint, whitePoint int) *image.Gray {
 	return dst
 }
 
+// adaptiveHighlightStretch estimates scanner background brightness from the
+// outer perimeter. It adds an image-specific silhouette view alongside the
+// two established fixed highlight curves; it never replaces them.
+func adaptiveHighlightStretch(src *image.Gray) (*image.Gray, int, int) {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w == 0 || h == 0 {
+		return src, 0, 255
+	}
+	if min(w, h) < 4 {
+		return src, 0, 255
+	}
+	thickness := min(w, h) / 50
+	if thickness < 2 {
+		thickness = 2
+	}
+	if thickness*2 > min(w, h) {
+		thickness = min(w, h) / 2
+	}
+	var hist [256]int
+	for y := 0; y < h; y++ {
+		row := src.Pix[y*src.Stride : y*src.Stride+w]
+		for x, value := range row {
+			if x < thickness || x >= w-thickness || y < thickness || y >= h-thickness {
+				hist[value]++
+			}
+		}
+	}
+	percentile := func(fraction float64) int {
+		total := 0
+		for _, count := range hist {
+			total += count
+		}
+		target, seen := int(float64(total)*fraction), 0
+		for value, count := range hist {
+			seen += count
+			if seen >= target {
+				return value
+			}
+		}
+		return 255
+	}
+	p10, background, p90 := percentile(0.10), percentile(0.50), percentile(0.90)
+	spread := max(2, p90-p10)
+	blackPoint, whitePoint := 0, 255
+	if background >= 128 {
+		blackPoint = background - max(12, 2*spread)
+		whitePoint = background + max(3, spread/2)
+	} else {
+		blackPoint = background - max(3, spread/2)
+		whitePoint = background + max(12, 2*spread)
+	}
+	blackPoint = clamp(blackPoint, 0, 254)
+	whitePoint = clamp(whitePoint, blackPoint+1, 255)
+	return stretchGrayRange(src, blackPoint, whitePoint), blackPoint, whitePoint
+}
+
 // dedupeCornerPoints removes only near-identical localizations produced by
 // different scales. The detector's full minDistance is intentionally not used
 // here: scale-space localization can shift a broad corner without making the
@@ -289,9 +346,9 @@ func (a *App) CancelCornerDetect() {
 	}
 }
 
-// DetectCorners detects corners in the current image using Shi-Tomasi algorithm.
-// It returns the clean (unmodified) preview together with the detected corner
-// coordinates so the frontend can render the overlay dots via SVG.
+// DetectCorners detects corners with complementary point and boundary-line
+// proposal paths. It returns the clean (unmodified) preview together with the
+// detected coordinates so the frontend can render the overlay dots via SVG.
 func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	a.logf("DetectCorners: maxCorners=%d qualityLevel=%.2f minDistance=%d accentValue=%d",
 		req.MaxCorners, req.QualityLevel, req.MinDistance, req.AccentValue)
@@ -344,6 +401,20 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	}
 	highlightGray240 := stretchGrayRange(rawGray, 240, 255)
 	highlightGray230 := stretchGrayRange(rawGray, 230, 255)
+	adaptiveHighlightGray, adaptiveBlack, adaptiveWhite := adaptiveHighlightStretch(rawGray)
+	a.logf("DetectCorners: adaptive perimeter highlight range %d-%d", adaptiveBlack, adaptiveWhite)
+	workColor := a.currentImage
+	if workW != imgW || workH != imgH {
+		workColor = resizeNRGBA(a.currentImage, workW, workH)
+	}
+	backgroundSilhouette, perimeter := backgroundDistanceSilhouette(workColor)
+	a.logf("DetectCorners: perimeter RGB=(%d,%d,%d) noise=%d silhouette=%d-%d dark=%v",
+		perimeter.r, perimeter.g, perimeter.b, perimeter.noise, perimeter.blackPoint, perimeter.whitePoint, perimeter.dark)
+	lineCorners, err := lineDerivedCornerProposals(ctx, []*image.Gray{rawGray, highlightGray240, highlightGray230, adaptiveHighlightGray, backgroundSilhouette}, req.MaxCorners, int(float64(req.MinDistance)*scaleFactor))
+	if err != nil {
+		return nil, err
+	}
+	a.logf("DetectCorners: line boundary path proposed %d corners", len(lineCorners))
 
 	// Optionally pre-stretch contrast using percentiles to handle non-white backgrounds,
 	// then apply CLAHE to boost local contrast before detection.
@@ -410,6 +481,18 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	silhouetteMax := req.MaxCorners / 8
+	if silhouetteMax < 16 {
+		silhouetteMax = 16
+	}
+	if silhouetteMax > 64 {
+		silhouetteMax = 64
+	}
+	backgroundCorners, err := goodFeaturesToTrack(ctx, backgroundSilhouette, silhouetteMax, quality, workMinDist, 7)
+	if err != nil {
+		return nil, err
+	}
+	a.logf("DetectCorners: perimeter-colour silhouette got %d pts", len(backgroundCorners))
 
 	// Multi-scale detection: run detector at several integer scales and
 	// accumulate results, then remove duplicates.
@@ -480,12 +563,37 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 			allCorners = append(allCorners, workPoint)
 		}
 	}
+	if !perimeter.dark {
+		allCorners = append(allCorners, backgroundCorners...)
+	}
+	// Preserve the established point detector's localization when it already
+	// found a nearby corner. Line intersections complement missing candidates;
+	// they do not displace known-good Shi-Tomasi results.
+	allCorners = append(allCorners, lineCorners...)
 
 	a.logf("DetectCorners: %d raw corners from all scales", len(allCorners))
 
 	// Remove only near-identical cross-scale results. A broader radius can
 	// discard the better localization of a large, low-contrast corner.
 	uniq := dedupeCornerPoints(allCorners, workMinDist)
+	if perimeter.dark {
+		// Retain both established point localizations and colour-silhouette
+		// localizations on dark backgrounds. The two sources may differ by only
+		// a few working pixels, but either can be the more accurate side of a
+		// blurred physical edge. Suppress exact duplicates only.
+		for _, candidate := range backgroundCorners {
+			exact := false
+			for _, existing := range uniq {
+				if candidate == existing {
+					exact = true
+					break
+				}
+			}
+			if !exact {
+				uniq = append(uniq, candidate)
+			}
+		}
+	}
 
 	a.logf("DetectCorners: %d unique corners after dedupe", len(uniq))
 
@@ -514,8 +622,23 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	}, nil
 }
 
-// ClickCorner registers a corner selection click. If detected corners exist
-// the click is snapped to the nearest one; otherwise the raw coordinate is used.
+// cornerSnapRadius bounds automatic snapping so a click cannot jump to an
+// unrelated artwork feature when no useful proposal exists nearby.
+func cornerSnapRadius(w, h int) float64 {
+	shortSide := min(w, h)
+	radius := float64(shortSide) * 0.03
+	if radius < 24 {
+		radius = 24
+	}
+	if radius > 160 {
+		radius = 160
+	}
+	return radius
+}
+
+// ClickCorner registers a corner selection click. If a detected corner is
+// within the bounded snap radius, the click is snapped to the nearest one;
+// otherwise the raw coordinate is used.
 // After 4 corners the perspective warp is performed automatically.
 // For clicks 1–3 no preview is returned — the frontend renders dots via SVG.
 func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
@@ -537,8 +660,14 @@ func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
 				bestPt = c
 			}
 		}
-		pt = bestPt
-		a.logf("ClickCorner: snapped to (%d,%d) dist=%.1f", pt.X, pt.Y, bestDist)
+		b := a.currentImage.Bounds()
+		snapRadius := cornerSnapRadius(b.Dx(), b.Dy())
+		if bestDist <= snapRadius {
+			pt = bestPt
+			a.logf("ClickCorner: snapped to (%d,%d) dist=%.1f radius=%.1f", pt.X, pt.Y, bestDist, snapRadius)
+		} else {
+			a.logf("ClickCorner: no detected corner within snap radius (nearest=%.1f radius=%.1f); using raw click", bestDist, snapRadius)
+		}
 	} else {
 		a.logf("ClickCorner: custom placement at (%d,%d)", pt.X, pt.Y)
 	}

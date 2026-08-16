@@ -2,6 +2,7 @@ package main
 
 import (
 	"image"
+	"image/color"
 	"strings"
 	"testing"
 )
@@ -89,6 +90,25 @@ func TestStretchGrayRangeExpandsHighlights(t *testing.T) {
 		if got.Pix[i] != want[i] {
 			t.Fatalf("pixel %d: got %d, want %d", i, got.Pix[i], want[i])
 		}
+	}
+}
+
+func TestAdaptiveHighlightStretchUsesBrightPerimeter(t *testing.T) {
+	src := image.NewGray(image.Rect(0, 0, 100, 100))
+	for i := range src.Pix {
+		src.Pix[i] = 248
+	}
+	for y := 20; y < 80; y++ {
+		for x := 20; x < 80; x++ {
+			src.SetGray(x, y, color.Gray{Y: 220})
+		}
+	}
+	got, blackPoint, whitePoint := adaptiveHighlightStretch(src)
+	if blackPoint <= 220 || blackPoint >= 248 || whitePoint < 248 {
+		t.Fatalf("unexpected adaptive range %d-%d", blackPoint, whitePoint)
+	}
+	if got.GrayAt(50, 50).Y != 0 || got.GrayAt(0, 0).Y < 200 {
+		t.Fatalf("adaptive stretch did not separate object and perimeter: object=%d perimeter=%d", got.GrayAt(50, 50).Y, got.GrayAt(0, 0).Y)
 	}
 }
 
@@ -216,6 +236,30 @@ func TestClickCorner_SnapsToNearestDetectedCorner(t *testing.T) {
 	}
 	if res.SnappedX != 50 || res.SnappedY != 50 {
 		t.Fatalf("expected snap to (50,50), got (%d,%d)", res.SnappedX, res.SnappedY)
+	}
+}
+
+func TestClickCorner_DoesNotSnapBeyondRadius(t *testing.T) {
+	a := newLoadedTestApp(1000, 1000)
+	a.detectedCorners = []image.Point{{500, 500}}
+	res, err := a.ClickCorner(ClickCornerRequest{X: 100, Y: 100})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.SnappedX != 100 || res.SnappedY != 100 {
+		t.Fatalf("expected raw click (100,100), got (%d,%d)", res.SnappedX, res.SnappedY)
+	}
+}
+
+func TestCornerSnapRadiusIsBounded(t *testing.T) {
+	if got := cornerSnapRadius(200, 300); got != 24 {
+		t.Fatalf("small image radius: got %.1f, want 24", got)
+	}
+	if got := cornerSnapRadius(5100, 7020); got != 153 {
+		t.Fatalf("scan radius: got %.1f, want 153", got)
+	}
+	if got := cornerSnapRadius(10000, 12000); got != 160 {
+		t.Fatalf("large image radius: got %.1f, want 160", got)
 	}
 }
 
