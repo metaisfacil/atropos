@@ -209,6 +209,77 @@ func TestApplyDescreen_UniformImagePreserved(t *testing.T) {
 	}
 }
 
+func TestApplyDescreenLuminance_UniformImagePreservesColorAndAlpha(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			src.SetNRGBA(x, y, color.NRGBA{R: 180, G: 120, B: 60, A: 173})
+		}
+	}
+
+	dst := applyDescreenLuminance(src, 92, 6, 4, 100, nil)
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			got := dst.NRGBAAt(x, y)
+			if math.Abs(float64(got.R)-180) > 2 ||
+				math.Abs(float64(got.G)-120) > 2 ||
+				math.Abs(float64(got.B)-60) > 2 {
+				t.Fatalf("pixel (%d,%d) = %v, expected approximately (180,120,60)", x, y, got)
+			}
+			if got.A != 173 {
+				t.Fatalf("pixel (%d,%d) alpha = %d, want 173", x, y, got.A)
+			}
+		}
+	}
+}
+
+func TestApplyDescreenLuminance_PreservesChromaDifferences(t *testing.T) {
+	const size = 32
+	src := image.NewNRGBA(image.Rect(0, 0, size, size))
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			dot := 40
+			if (x/2+y/2)%2 == 0 {
+				dot = -40
+			}
+			src.SetNRGBA(x, y, color.NRGBA{
+				R: uint8(130 + dot),
+				G: uint8(110 + dot),
+				B: uint8(90 + dot),
+				A: 211,
+			})
+		}
+	}
+
+	plan, err := newDescreenFFTPlan32(size, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spectrum := plan.forwardLuminance(src, 4)
+	if _, peaks := plan.buildDescreenThresholdMask(spectrum, 92, 4, 4); peaks == 0 {
+		t.Fatal("test pattern produced no luminance peaks")
+	}
+
+	dst := applyDescreenLuminance(src, 92, 2, 4, 0, nil)
+	changed := false
+	for i := 0; i < len(src.Pix); i += 4 {
+		if dst.Pix[i] != src.Pix[i] {
+			changed = true
+		}
+		if int(dst.Pix[i])-int(dst.Pix[i+1]) != 20 ||
+			int(dst.Pix[i+1])-int(dst.Pix[i+2]) != 20 {
+			t.Fatalf("pixel byte %d changed chroma differences: got RGB (%d,%d,%d)",
+				i, dst.Pix[i], dst.Pix[i+1], dst.Pix[i+2])
+		}
+		if dst.Pix[i+3] != 211 {
+			t.Fatalf("pixel byte %d alpha = %d, want 211", i, dst.Pix[i+3])
+		}
+	}
+	if !changed {
+		t.Fatal("luminance descreen did not alter the screen pattern")
+	}
+}
+
 func TestDescreenFFT32TwoDimensionalRoundTrip(t *testing.T) {
 	const width, height = 30, 18
 	src := image.NewNRGBA(image.Rect(0, 0, width, height))

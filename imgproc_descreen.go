@@ -75,6 +75,47 @@ func (p *descreenFFTPlan32) forwardChannel(src *image.NRGBA, channel, workers in
 	return spectrum
 }
 
+// forwardLuminance transforms a single Rec. 601 luminance plane. The fast
+// descreen path filters this plane once instead of transforming all three RGB
+// channels independently.
+func (p *descreenFFTPlan32) forwardLuminance(src *image.NRGBA, workers int) []complex64 {
+	b := src.Bounds()
+	origRows, origCols := b.Dy(), b.Dx()
+	spectrum := make([]complex64, p.rows*p.halfCols)
+
+	pFor(origRows, workers, func(sy, ey int) {
+		rowInput := make([]float32, p.cols)
+		packed := make([]complex64, p.cols/2)
+		scratch := make([]complex64, p.cols/2)
+		for y := sy; y < ey; y++ {
+			for x := 0; x < origCols; x++ {
+				off := y*src.Stride + x*4
+				rowInput[x] = 0.299*float32(src.Pix[off]) +
+					0.587*float32(src.Pix[off+1]) +
+					0.114*float32(src.Pix[off+2])
+			}
+			clear(rowInput[origCols:])
+			rowOut := spectrum[y*p.halfCols : (y+1)*p.halfCols]
+			p.row.forward(rowInput, rowOut, packed, scratch)
+		}
+	})
+
+	pFor(p.halfCols, workers, func(sx, ex int) {
+		column := make([]complex64, p.rows)
+		scratch := make([]complex64, p.rows)
+		for x := sx; x < ex; x++ {
+			for y := 0; y < p.rows; y++ {
+				column[y] = spectrum[y*p.halfCols+x]
+			}
+			p.column.transform(column, scratch, false)
+			for y := 0; y < p.rows; y++ {
+				spectrum[y*p.halfCols+x] = column[y]
+			}
+		}
+	})
+	return spectrum
+}
+
 // inverseChannel writes one filtered channel directly into dst. Avoiding a
 // full-size float result for every colour channel keeps the working set bounded.
 func (p *descreenFFTPlan32) inverseChannel(spectrum []complex64, dst *image.NRGBA, channel, workers int) {
@@ -114,6 +155,69 @@ func (p *descreenFFTPlan32) inverseChannel(spectrum []complex64, dst *image.NRGB
 				}
 				off := (b.Min.Y+y)*dst.Stride + (b.Min.X+x)*4 + channel
 				dst.Pix[off] = clampByte(int(value + 0.5))
+			}
+		}
+	})
+}
+
+// inverseLuminance reconstructs the filtered luminance plane and combines it
+// with the source RGB channels by adding the luminance delta. This preserves
+// the source chroma while removing screen frequencies from luminance. Highlight
+// restoration operates on the filtered luminance before it is recombined.
+func (p *descreenFFTPlan32) inverseLuminance(spectrum []complex64, src, dst *image.NRGBA, highlightRestore, workers int) {
+	if len(spectrum) != p.rows*p.halfCols {
+		panic("descreenFFTPlan32.inverseLuminance: invalid spectrum length")
+	}
+
+	pFor(p.halfCols, workers, func(sx, ex int) {
+		column := make([]complex64, p.rows)
+		scratch := make([]complex64, p.rows)
+		for x := sx; x < ex; x++ {
+			for y := 0; y < p.rows; y++ {
+				column[y] = spectrum[y*p.halfCols+x]
+			}
+			p.column.transform(column, scratch, true)
+			for y := 0; y < p.rows; y++ {
+				spectrum[y*p.halfCols+x] = column[y]
+			}
+		}
+	})
+
+	b := src.Bounds()
+	origRows, origCols := b.Dy(), b.Dx()
+	blendStrength := float64(highlightRestore) / 100
+	pFor(origRows, workers, func(sy, ey int) {
+		rowOutput := make([]float32, p.cols)
+		packed := make([]complex64, p.cols/2)
+		scratch := make([]complex64, p.cols/2)
+		for y := sy; y < ey; y++ {
+			rowIn := spectrum[y*p.halfCols : (y+1)*p.halfCols]
+			p.row.inverse(rowIn, rowOutput, packed, scratch)
+			for x := 0; x < origCols; x++ {
+				srcOff := y*src.Stride + x*4
+				dstOff := y*dst.Stride + x*4
+				origR := float64(src.Pix[srcOff])
+				origG := float64(src.Pix[srcOff+1])
+				origB := float64(src.Pix[srcOff+2])
+				origY := 0.299*origR + 0.587*origG + 0.114*origB
+				filteredY := math.Abs(float64(rowOutput[x]))
+
+				if blendStrength > 0 {
+					hf := (origY - 128) / 127
+					if hf > 0 {
+						if hf > 1 {
+							hf = 1
+						}
+						blend := blendStrength * hf
+						filteredY = filteredY*(1-blend) + origY*blend
+					}
+				}
+
+				delta := filteredY - origY
+				dst.Pix[dstOff] = clampByte(int(math.Round(origR + delta)))
+				dst.Pix[dstOff+1] = clampByte(int(math.Round(origG + delta)))
+				dst.Pix[dstOff+2] = clampByte(int(math.Round(origB + delta)))
+				dst.Pix[dstOff+3] = src.Pix[srcOff+3]
 			}
 		}
 	})
@@ -345,6 +449,73 @@ func applyDescreen(src *image.NRGBA, thresh, radius, middle, highlightRestore in
 	if logf != nil {
 		logf("Descreen: write output %s", time.Since(t).Round(time.Millisecond))
 		logf("Descreen: total %s", time.Since(totalStart).Round(time.Millisecond))
+	}
+	return dst
+}
+
+// applyDescreenLuminance is the fast descreen path. It detects and suppresses
+// screen frequencies in one luminance plane, then adds the filtered luminance
+// delta back to RGB so the source chroma and alpha are retained.
+func applyDescreenLuminance(src *image.NRGBA, thresh, radius, middle, highlightRestore int, logf func(string, ...interface{})) *image.NRGBA {
+	totalStart := time.Now()
+	b := src.Bounds()
+	origRows, origCols := b.Dy(), b.Dx()
+	paddedRows := nextSmoothFFT(origRows)
+	paddedCols := nextSmoothEvenFFT(origCols)
+	n := paddedRows * paddedCols
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 1 {
+		workers = 1
+	}
+
+	if logf != nil {
+		logf("Descreen fast: start %dx%d -> smooth %dx%d, nCPU=%d",
+			origCols, origRows, paddedCols, paddedRows, workers)
+	}
+
+	t := time.Now()
+	plan, err := newDescreenFFTPlan32(paddedRows, paddedCols)
+	if err != nil {
+		panic(err)
+	}
+	if logf != nil {
+		logf("Descreen fast: setup (FFT plans) %s", time.Since(t).Round(time.Millisecond))
+	}
+
+	t = time.Now()
+	spectrum := plan.forwardLuminance(src, workers)
+	if logf != nil {
+		logf("Descreen fast: [Y] real fwd FFT %s", time.Since(t).Round(time.Millisecond))
+	}
+
+	t = time.Now()
+	mask, peakCount := plan.buildDescreenThresholdMask(spectrum, thresh, middle, workers)
+	if logf != nil {
+		logf("Descreen fast: [Y] threshold+mask %s - %d peaks (%.2f%% of spectrum)",
+			time.Since(t).Round(time.Millisecond), peakCount, 100*float64(peakCount)/float64(n))
+	}
+
+	if radius > 0 {
+		scratchMask := make([]float32, len(mask))
+		t = time.Now()
+		dilateBinaryMaskFFTInPlace(mask, scratchMask, paddedRows, paddedCols, radius, radius, workers)
+		if logf != nil {
+			logf("Descreen fast: [Y] dilate %s", time.Since(t).Round(time.Millisecond))
+		}
+		t = time.Now()
+		gaussianBlur2dFFTInPlace(mask, scratchMask, paddedRows, paddedCols, float64(radius)/3, workers)
+		if logf != nil {
+			logf("Descreen fast: [Y] blur %s", time.Since(t).Round(time.Millisecond))
+		}
+	}
+
+	t = time.Now()
+	plan.applyMask(spectrum, mask, workers)
+	dst := image.NewNRGBA(b)
+	plan.inverseLuminance(spectrum, src, dst, highlightRestore, workers)
+	if logf != nil {
+		logf("Descreen fast: [Y] filter+real inv FFT+recombine %s", time.Since(t).Round(time.Millisecond))
+		logf("Descreen fast: total %s", time.Since(totalStart).Round(time.Millisecond))
 	}
 	return dst
 }

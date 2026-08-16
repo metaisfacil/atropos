@@ -53,6 +53,7 @@ type DescreenRequest struct {
 	Radius    int                  `json:"radius"`
 	Middle    int                  `json:"middle"`
 	Highlight int                  `json:"highlight"`
+	Fast      bool                 `json:"fast"`
 	Selection *AdjustmentSelection `json:"selection,omitempty"`
 }
 
@@ -540,8 +541,9 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 //	thresh — distance-weighted log-magnitude threshold (0–200; default 92)
 //	radius — dilation/blur radius for the suppression mask (1–20; default 6)
 //	middle — DC neighbourhood preservation ratio (1–10; default 4)
+//	fast — filter one luminance plane and preserve source chroma
 func (a *App) Descreen(req DescreenRequest) (*ProcessResult, error) {
-	a.logf("Descreen: thresh=%d radius=%d middle=%d highlight=%d", req.Thresh, req.Radius, req.Middle, req.Highlight)
+	a.logf("Descreen: thresh=%d radius=%d middle=%d highlight=%d fast=%t", req.Thresh, req.Radius, req.Middle, req.Highlight, req.Fast)
 
 	if a.currentImage == nil {
 		return nil, fmt.Errorf("no image loaded")
@@ -567,7 +569,12 @@ func (a *App) Descreen(req DescreenRequest) (*ProcessResult, error) {
 	if selectionKey.Active {
 		filterSource = subImage(a.descreenBaseImage, selectionRect)
 	}
-	filteredRegion := applyDescreen(filterSource, req.Thresh, req.Radius, req.Middle, req.Highlight, a.logf)
+	var filteredRegion *image.NRGBA
+	if req.Fast {
+		filteredRegion = applyDescreenLuminance(filterSource, req.Thresh, req.Radius, req.Middle, req.Highlight, a.logf)
+	} else {
+		filteredRegion = applyDescreen(filterSource, req.Thresh, req.Radius, req.Middle, req.Highlight, a.logf)
+	}
 	filtered := filteredRegion
 	if selectionKey.Active {
 		filtered = compositeAdjustmentSelection(a.descreenBaseImage, filteredRegion, selectionRect)
@@ -582,7 +589,7 @@ func (a *App) Descreen(req DescreenRequest) (*ProcessResult, error) {
 	rb := filtered.Bounds()
 	return &ProcessResult{
 		Preview: preview,
-		Message: fmt.Sprintf("Descreen applied (thresh=%d, radius=%d, middle=%d, highlight=%d)", req.Thresh, req.Radius, req.Middle, req.Highlight),
+		Message: fmt.Sprintf("Descreen applied (thresh=%d, radius=%d, middle=%d, highlight=%d, fast=%t)", req.Thresh, req.Radius, req.Middle, req.Highlight, req.Fast),
 		Width:   rb.Dx(),
 		Height:  rb.Dy(),
 	}, nil

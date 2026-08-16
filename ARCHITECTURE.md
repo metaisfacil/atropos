@@ -491,6 +491,12 @@ digit-reversal permutation, and twiddles; the row real transform stores only
 transforms. Channels run sequentially with all available workers so their large
 frequency planes never compete for memory bandwidth.
 
+When the optional fast mode is enabled, `applyDescreenLuminance` transforms and
+filters a single Rec. 601 luminance plane. The filtered luminance delta is added
+back to each RGB channel, preserving source chroma and alpha while avoiding the
+other two channel FFT/mask passes. It may leave screen patterns that exist only
+in chroma, so the independent RGB path remains the default.
+
 The spectrum remains in natural FFT order. Threshold-mask construction maps
 frequency coordinates into the legacy centered layout without physically
 shifting the complex plane, and replaces per-bin `sqrt`/`log` evaluation with

@@ -246,6 +246,7 @@ export namespace main {
 	    radius: number;
 	    middle: number;
 	    highlight: number;
+	    fast: boolean;
 	    selection?: AdjustmentSelection;
 	
 	    static createFrom(source: any = {}) {
@@ -258,6 +259,7 @@ export namespace main {
 	        this.radius = source["radius"];
 	        this.middle = source["middle"];
 	        this.highlight = source["highlight"];
+	        this.fast = source["fast"];
 	        this.selection = this.convertValues(source["selection"], AdjustmentSelection);
 	    }
 	

@@ -100,6 +100,7 @@ export default function AdjustmentsPanel({
   const [descreenRadius, setDescreenRadius] = useState(6)
   const [descreenMiddle, setDescreenMiddle] = useState(4)
   const [descreenHighlight, setDescreenHighlight] = useState(0)
+  const [descreenFast, setDescreenFast] = useState(false)
   const [descreenPending, setDescreenPending] = useState(false)
 
   const [useDustRemovalTool, setUseDustRemovalTool] = useState(false)
@@ -144,7 +145,7 @@ export default function AdjustmentsPanel({
     setDescreenPending(true)
     setLoading(true)
     try {
-      const result = await Descreen({ thresh: descreenThresh, radius: descreenRadius, middle: descreenMiddle, highlight: descreenHighlight, selection })
+      const result = await Descreen({ thresh: descreenThresh, radius: descreenRadius, middle: descreenMiddle, highlight: descreenHighlight, fast: descreenFast, selection })
       if (result?.preview) setPreview(result.preview)
       handleDescreenReset(result)
       setUseDescreenTool(false)
@@ -369,6 +370,19 @@ export default function AdjustmentsPanel({
                 <span className="level-value">{descreenHighlight}</span>
               </div>
             </DelayedHint>
+            <div className="shortcut-item">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={descreenFast}
+                  onChange={(event) => setDescreenFast(event.target.checked)}
+                  disabled={descreenPending}
+                />
+                <DelayedHint hint="Filters one luminance plane instead of all three RGB channels. This is substantially faster but may leave coloured screen patterns.">
+                  <span style={{ fontWeight: 500 }}>Fast mode (luminance only)</span>
+                </DelayedHint>
+              </label>
+            </div>
             <div className="shortcut-item">
               <button
                 className="adjustments-btn"

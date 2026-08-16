@@ -2,7 +2,7 @@
 import React from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AutoContrast, DustRemoval } from '../../wailsjs/go/main/App'
+import { AutoContrast, Descreen, DustRemoval } from '../../wailsjs/go/main/App'
 import AdjustmentsPanel from './AdjustmentsPanel'
 
 vi.mock('../../wailsjs/go/main/App', () => ({
@@ -87,6 +87,29 @@ describe('AdjustmentsPanel dust removal', () => {
     expect(props.setPreview).toHaveBeenCalledWith('/preview/dust.jpg')
     expect(props.setUnsavedChanges).toHaveBeenCalledWith(true)
     expect(props.setUseDescreenTool).toHaveBeenCalledWith(false)
+  })
+})
+
+describe('AdjustmentsPanel descreen', () => {
+  it('passes the luminance-only fast mode choice to the backend', async () => {
+    Descreen.mockResolvedValue({ preview: '/preview/descreen.jpg' })
+    const props = { ...baseProps, useDescreenTool: true, setPreview: vi.fn() }
+    render(React.createElement(AdjustmentsPanel, props))
+
+    const fastMode = screen.getByRole('checkbox', { name: 'Fast mode (luminance only)' })
+    expect(fastMode.checked).toBe(false)
+    fireEvent.click(fastMode)
+    fireEvent.click(screen.getByRole('button', { name: 'Apply descreen' }))
+
+    await waitFor(() => expect(Descreen).toHaveBeenCalledWith({
+      thresh: 92,
+      radius: 6,
+      middle: 4,
+      highlight: 0,
+      fast: true,
+      selection: null,
+    }))
+    expect(props.setPreview).toHaveBeenCalledWith('/preview/descreen.jpg')
   })
 })
 
