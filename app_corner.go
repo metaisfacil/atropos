@@ -40,6 +40,148 @@ type CornerDetectRequest struct {
 	StretchHigh  float64 `json:"stretchHigh"`
 }
 
+// cornerDetectBlockSize uses a wider structure-tensor window at the coarsest
+// scale. Broad, low-contrast object corners are otherwise easily outranked by
+// small high-contrast details after the image has been reduced to that scale.
+func cornerDetectBlockSize(scale int) int {
+	if scale >= 4 {
+		return 11
+	}
+	return 7
+}
+
+type cornerDetectPass struct {
+	scale               int
+	maxCorners          int
+	highlightBlackPoint int
+}
+
+// cornerDetectPasses divides the requested result budget between detail,
+// mid-scale, broad-corner, silhouette, and highlight-boundary passes. The two
+// highlight passes emulate aggressive levels curves and need only small
+// candidate shares because they suppress nearly all non-highlight detail.
+func cornerDetectPasses(maxCorners int) []cornerDetectPass {
+	if maxCorners < 1 {
+		maxCorners = 1
+	}
+	weights := [...]int{4, 7, 16, 10, 17, 10}
+	passes := []cornerDetectPass{
+		{scale: 1, highlightBlackPoint: 240},
+		{scale: 1, highlightBlackPoint: 230},
+		{scale: 1},
+		{scale: 2},
+		{scale: 4},
+		{scale: 16},
+	}
+	const totalWeight = 64
+
+	allocated := 0
+	for i := range passes {
+		passes[i].maxCorners = maxCorners * weights[i] / totalWeight
+		allocated += passes[i].maxCorners
+	}
+	// Assign rounding leftovers to broad object corners first, then to the
+	// highlight boundary and silhouette passes.
+	for _, i := range [...]int{4, 0, 1, 5, 2, 3} {
+		if allocated == maxCorners {
+			break
+		}
+		passes[i].maxCorners++
+		allocated++
+	}
+	return passes
+}
+
+// stretchGrayRange applies a deliberately severe linear curve to a grayscale
+// image. A narrow highlight range isolates subtle differences between white
+// media and a white scanner background while mapping coloured text and artwork
+// to black, making the media outline competitive with interior feature corners.
+func stretchGrayRange(src *image.Gray, blackPoint, whitePoint int) *image.Gray {
+	if blackPoint >= whitePoint {
+		return src
+	}
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	dst := image.NewGray(image.Rect(0, 0, w, h))
+	scale := 255.0 / float64(whitePoint-blackPoint)
+	for y := 0; y < h; y++ {
+		srcRow := src.Pix[y*src.Stride : y*src.Stride+w]
+		dstRow := dst.Pix[y*dst.Stride : y*dst.Stride+w]
+		for x, value := range srcRow {
+			dstRow[x] = clampByte(int(float64(int(value)-blackPoint) * scale))
+		}
+	}
+	return dst
+}
+
+// dedupeCornerPoints removes only near-identical localizations produced by
+// different scales. The detector's full minDistance is intentionally not used
+// here: scale-space localization can shift a broad corner without making the
+// two candidates redundant for snapping purposes.
+func dedupeCornerPoints(corners []image.Point, minDistance int) []image.Point {
+	var unique []image.Point
+	dedupeDistance := float64(minDistance) / 3.0
+	minDistSq := dedupeDistance * dedupeDistance
+	for _, c := range corners {
+		duplicate := false
+		for _, u := range unique {
+			dx := float64(c.X - u.X)
+			dy := float64(c.Y - u.Y)
+			if dx*dx+dy*dy < minDistSq {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			unique = append(unique, c)
+		}
+	}
+	return unique
+}
+
+// refineCoarseCorner replaces a coarse-scale localization with the nearest
+// fine highlight candidate within one coarse cell. The coarse pass is good at
+// discovering broad silhouettes, but mapping its integer grid coordinate
+// directly to the source can be off by tens of pixels on large scans.
+func refineCoarseCorner(coarse image.Point, fine []image.Point, radius int) image.Point {
+	if radius < 1 || len(fine) == 0 {
+		return coarse
+	}
+	best := coarse
+	bestDistSq := int64(radius)*int64(radius) + 1
+	for _, candidate := range fine {
+		dx := int64(candidate.X - coarse.X)
+		dy := int64(candidate.Y - coarse.Y)
+		distanceSq := dx*dx + dy*dy
+		if distanceSq <= int64(radius)*int64(radius) && distanceSq < bestDistSq {
+			best = candidate
+			bestDistSq = distanceSq
+		}
+	}
+	return best
+}
+
+const (
+	rawBroadRefinementRadius = 16
+	rawFineRefinementRadius  = 8
+)
+
+// refineDetectedCorner applies localization sources in order of authority.
+// The severe 240 highlight-pass points already describe the intended subtle
+// white-media boundary, so raw texture must not move them (notably on the
+// test-pilot regression). The broader 230 pass still benefits from raw edge
+// localization on dark media.
+func refineDetectedCorner(point image.Point, pass cornerDetectPass, highlight, rawBroad, rawFine []image.Point) image.Point {
+	if pass.highlightBlackPoint == 240 {
+		return point
+	}
+	if pass.scale >= 16 {
+		point = refineCoarseCorner(point, highlight, pass.scale)
+	}
+	point = refineCoarseCorner(point, rawBroad, rawBroadRefinementRadius)
+	return refineCoarseCorner(point, rawFine, rawFineRefinementRadius)
+}
+
 // ClickCornerRequest holds the image-space coordinates of a user click.
 type ClickCornerRequest struct {
 	X      int  `json:"x"`
@@ -193,12 +335,15 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	// applyAccentAdjustment + toGrayscale + resizeGray into a single
 	// parallelized pass over the source pixels to avoid the large
 	// intermediate NRGBA clone and full-resolution gray buffer.
-	var workGray *image.Gray
+	var workGray, rawGray *image.Gray
 	if scaleFactor < 1.0 {
-		workGray = resizeNRGBAToGray(a.currentImage, workW, workH, req.AccentValue)
+		workGray, rawGray = resizeNRGBAToGrayPair(a.currentImage, workW, workH, req.AccentValue)
 	} else {
 		workGray = toGrayscaleAccent(a.currentImage, req.AccentValue)
+		rawGray = toGrayscale(a.currentImage)
 	}
+	highlightGray240 := stretchGrayRange(rawGray, 240, 255)
+	highlightGray230 := stretchGrayRange(rawGray, 230, 255)
 
 	// Optionally pre-stretch contrast using percentiles to handle non-white backgrounds,
 	// then apply CLAHE to boost local contrast before detection.
@@ -249,16 +394,39 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 
 	a.logf("DetectCorners: running multi-scale goodFeaturesToTrack on %dx%d", workW, workH)
 
-	// Multi-scale detection: run detector at several integer scales and
-	// accumulate results, then remove duplicates.
-	scales := []int{1, 2, 4}
-	var allCorners []image.Point
-	perScale := req.MaxCorners / len(scales)
-	if perScale < 1 {
-		perScale = 1
+	// Build a private set of localizers from the unmodified grayscale. Accent,
+	// CLAHE, and large tensor windows improve discovery but can pull the peak
+	// away from the physical edge intersection. These points do not consume the
+	// user's result budget; they only refine nearby discovered candidates.
+	refinementMax := req.MaxCorners
+	if refinementMax < 1 {
+		refinementMax = 1
+	}
+	rawBroadRefinementCorners, err := goodFeaturesToTrack(ctx, rawGray, refinementMax, quality, workMinDist, 11)
+	if err != nil {
+		return nil, err
+	}
+	rawFineRefinementCorners, err := goodFeaturesToTrack(ctx, rawGray, refinementMax, quality, workMinDist, 5)
+	if err != nil {
+		return nil, err
 	}
 
-	for _, s := range scales {
+	// Multi-scale detection: run detector at several integer scales and
+	// accumulate results, then remove duplicates.
+	var allCorners []image.Point
+	var highlightRefinementCorners []image.Point
+	for _, pass := range cornerDetectPasses(req.MaxCorners) {
+		if pass.maxCorners == 0 {
+			continue
+		}
+		s := pass.scale
+		passGray := workGray
+		switch pass.highlightBlackPoint {
+		case 240:
+			passGray = highlightGray240
+		case 230:
+			passGray = highlightGray230
+		}
 		var srcGray *image.Gray
 		if s > 1 {
 			sw := workW / s
@@ -269,9 +437,9 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 			if sh < 1 {
 				sh = 1
 			}
-			srcGray = resizeGray(workGray, sw, sh)
+			srcGray = resizeGray(passGray, sw, sh)
 		} else {
-			srcGray = workGray
+			srcGray = passGray
 		}
 
 		thisMinDist := workMinDist / s
@@ -282,38 +450,42 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		a.logf("DetectCorners: scale=%d src=%dx%d max=%d minDist=%d", s, srcGray.Bounds().Dx(), srcGray.Bounds().Dy(), perScale, thisMinDist)
-		pts, err := goodFeaturesToTrack(ctx, srcGray, perScale, quality, thisMinDist, 7)
+		a.logf("DetectCorners: scale=%d highlightBlack=%d src=%dx%d max=%d minDist=%d", s, pass.highlightBlackPoint, srcGray.Bounds().Dx(), srcGray.Bounds().Dy(), pass.maxCorners, thisMinDist)
+		blockSize := cornerDetectBlockSize(s)
+		detectMax := pass.maxCorners
+		if pass.highlightBlackPoint == 240 && detectMax < req.MaxCorners {
+			// Keep the full requested set privately for localizing silhouette
+			// candidates, while exposing only this pass's allotted share.
+			detectMax = req.MaxCorners
+		}
+		if detectMax < 1 {
+			detectMax = 1
+		}
+		pts, err := goodFeaturesToTrack(ctx, srcGray, detectMax, quality, thisMinDist, blockSize)
 		if err != nil {
 			return nil, err
 		}
 		a.logf("DetectCorners: scale=%d got %d pts", s, len(pts))
+		if pass.highlightBlackPoint > 0 {
+			highlightRefinementCorners = append(highlightRefinementCorners, pts...)
+			if len(pts) > pass.maxCorners {
+				pts = pts[:pass.maxCorners]
+			}
+		}
 
 		// Scale pts back to working resolution
 		for _, p := range pts {
-			allCorners = append(allCorners, image.Pt(p.X*s, p.Y*s))
+			workPoint := image.Pt(p.X*s, p.Y*s)
+			workPoint = refineDetectedCorner(workPoint, pass, highlightRefinementCorners, rawBroadRefinementCorners, rawFineRefinementCorners)
+			allCorners = append(allCorners, workPoint)
 		}
 	}
 
 	a.logf("DetectCorners: %d raw corners from all scales", len(allCorners))
 
-	// Remove duplicates by enforcing a minimum squared distance
-	var uniq []image.Point
-	minDistSq := float64(workMinDist*workMinDist) / 4.0
-	for _, c := range allCorners {
-		dup := false
-		for _, u := range uniq {
-			dx := float64(c.X - u.X)
-			dy := float64(c.Y - u.Y)
-			if dx*dx+dy*dy < minDistSq {
-				dup = true
-				break
-			}
-		}
-		if !dup {
-			uniq = append(uniq, c)
-		}
-	}
+	// Remove only near-identical cross-scale results. A broader radius can
+	// discard the better localization of a large, low-contrast corner.
+	uniq := dedupeCornerPoints(allCorners, workMinDist)
 
 	a.logf("DetectCorners: %d unique corners after dedupe", len(uniq))
 

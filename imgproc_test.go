@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"image"
 	"image/color"
@@ -19,6 +20,29 @@ func TestClamp_InRange(t *testing.T) {
 func TestClamp_BelowMin(t *testing.T) {
 	if v := clamp(-3, 0, 10); v != 0 {
 		t.Fatalf("expected 0, got %d", v)
+	}
+}
+
+func TestResizeNRGBAToGrayPairMatchesIndependentResults(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 17, 13))
+	for y := 0; y < 13; y++ {
+		for x := 0; x < 17; x++ {
+			src.SetNRGBA(x, y, color.NRGBA{
+				R: uint8((x*29 + y*7) % 256),
+				G: uint8((x*11 + y*31) % 256),
+				B: uint8((x*17 + y*19) % 256),
+				A: 255,
+			})
+		}
+	}
+	accented, raw := resizeNRGBAToGrayPair(src, 7, 5, 20)
+	wantAccented := resizeNRGBAToGray(src, 7, 5, 20)
+	wantRaw := resizeNRGBAToGray(src, 7, 5, 0)
+	if accented.Bounds() != wantAccented.Bounds() || !bytes.Equal(accented.Pix, wantAccented.Pix) {
+		t.Fatal("paired accented output differs from independent conversion")
+	}
+	if raw.Bounds() != wantRaw.Bounds() || !bytes.Equal(raw.Pix, wantRaw.Pix) {
+		t.Fatal("paired raw output differs from independent conversion")
 	}
 }
 

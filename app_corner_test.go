@@ -45,6 +45,130 @@ func TestClickCorner_NoImage(t *testing.T) {
 	}
 }
 
+func TestCornerDetectBlockSizeWidensCoarsestScale(t *testing.T) {
+	if got := cornerDetectBlockSize(1); got != 7 {
+		t.Fatalf("scale 1 block size: got %d, want 7", got)
+	}
+	if got := cornerDetectBlockSize(2); got != 7 {
+		t.Fatalf("scale 2 block size: got %d, want 7", got)
+	}
+	if got := cornerDetectBlockSize(4); got != 11 {
+		t.Fatalf("scale 4 block size: got %d, want 11", got)
+	}
+	if got := cornerDetectBlockSize(16); got != 11 {
+		t.Fatalf("scale 16 block size: got %d, want 11", got)
+	}
+}
+
+func TestCornerDetectPassesPreserveRequestedBudget(t *testing.T) {
+	passes := cornerDetectPasses(500)
+	want := []cornerDetectPass{
+		{scale: 1, maxCorners: 32, highlightBlackPoint: 240},
+		{scale: 1, maxCorners: 54, highlightBlackPoint: 230},
+		{scale: 1, maxCorners: 125},
+		{scale: 2, maxCorners: 78},
+		{scale: 4, maxCorners: 133},
+		{scale: 16, maxCorners: 78},
+	}
+	if len(passes) != len(want) {
+		t.Fatalf("got %v, want %v", passes, want)
+	}
+	for i := range want {
+		if passes[i] != want[i] {
+			t.Fatalf("got %v, want %v", passes, want)
+		}
+	}
+}
+
+func TestStretchGrayRangeExpandsHighlights(t *testing.T) {
+	src := image.NewGray(image.Rect(0, 0, 4, 1))
+	src.Pix = []byte{239, 240, 248, 255}
+	got := stretchGrayRange(src, 240, 255)
+	want := []byte{0, 0, 136, 255}
+	for i := range want {
+		if got.Pix[i] != want[i] {
+			t.Fatalf("pixel %d: got %d, want %d", i, got.Pix[i], want[i])
+		}
+	}
+}
+
+func TestCornerDetectPassesHandleSmallBudget(t *testing.T) {
+	passes := cornerDetectPasses(1)
+	total := 0
+	for _, pass := range passes {
+		total += pass.maxCorners
+	}
+	if total != 1 {
+		t.Fatalf("allocated %d corners, want 1: %v", total, passes)
+	}
+}
+
+func TestDedupeCornerPointsPreservesDistinctScaleLocalizations(t *testing.T) {
+	points := []image.Point{
+		{X: 100, Y: 100},
+		{X: 110, Y: 100}, // duplicate: less than 90/3 pixels away
+		{X: 140, Y: 100}, // distinct: formerly removed by the 90/2 radius
+	}
+	got := dedupeCornerPoints(points, 90)
+	want := []image.Point{{X: 100, Y: 100}, {X: 140, Y: 100}}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestRefineCoarseCornerUsesNearestFineCandidate(t *testing.T) {
+	coarse := image.Pt(256, 192)
+	fine := []image.Point{{280, 192}, {257, 196}, {250, 198}}
+	got := refineCoarseCorner(coarse, fine, 16)
+	want := image.Pt(257, 196)
+	if got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestRefineCoarseCornerKeepsPointWithoutNearbyCandidate(t *testing.T) {
+	coarse := image.Pt(256, 192)
+	fine := []image.Point{{280, 192}, {256, 209}}
+	if got := refineCoarseCorner(coarse, fine, 16); got != coarse {
+		t.Fatalf("got %v, want unchanged %v", got, coarse)
+	}
+}
+
+func TestRefineDetectedCornerUsesRawCandidateForRegularPass(t *testing.T) {
+	point := image.Pt(100, 100)
+	rawBroad := []image.Point{{90, 100}}
+	rawFine := []image.Point{{84, 100}}
+	got := refineDetectedCorner(point, cornerDetectPass{scale: 1}, nil, rawBroad, rawFine)
+	if got != rawFine[0] {
+		t.Fatalf("got %v, want %v", got, rawFine[0])
+	}
+}
+
+func TestRefineDetectedCornerDoesNotMoveHighlightPass(t *testing.T) {
+	point := image.Pt(100, 100)
+	rawBroad := []image.Point{{90, 100}}
+	rawFine := []image.Point{{84, 100}}
+	got := refineDetectedCorner(point, cornerDetectPass{scale: 1, highlightBlackPoint: 240}, nil, rawBroad, rawFine)
+	if got != point {
+		t.Fatalf("got %v, want unchanged %v", got, point)
+	}
+}
+
+func TestRefineDetectedCornerLocalizesBroaderHighlightPass(t *testing.T) {
+	point := image.Pt(100, 100)
+	rawBroad := []image.Point{{90, 100}}
+	rawFine := []image.Point{{84, 100}}
+	got := refineDetectedCorner(point, cornerDetectPass{scale: 1, highlightBlackPoint: 230}, nil, rawBroad, rawFine)
+	if got != rawFine[0] {
+		t.Fatalf("got %v, want %v", got, rawFine[0])
+	}
+}
+
 func TestClickCorner_FirstThreeReturnNoPreview(t *testing.T) {
 	a := newLoadedTestApp(200, 200)
 	for i := 1; i <= 3; i++ {

@@ -1051,14 +1051,35 @@ func resizeGray(src *image.Gray, newW, newH int) *image.Gray {
 // gray buffer that the three-step pipeline (applyAccentAdjustment +
 // toGrayscale + resizeGray) would allocate.
 func resizeNRGBAToGray(src *image.NRGBA, newW, newH, accentValue int) *image.Gray {
+	dst, _ := resizeNRGBAToGrayInternal(src, newW, newH, accentValue, false)
+	return dst
+}
+
+// resizeNRGBAToGrayPair produces the normal accent-adjusted grayscale image
+// and an unadjusted grayscale image in one source traversal. Corner detection
+// uses the raw result for its highlight-boundary curve, which must retain
+// distinctions that a positive accent would clip to white.
+func resizeNRGBAToGrayPair(src *image.NRGBA, newW, newH, accentValue int) (*image.Gray, *image.Gray) {
+	return resizeNRGBAToGrayInternal(src, newW, newH, accentValue, true)
+}
+
+func resizeNRGBAToGrayInternal(src *image.NRGBA, newW, newH, accentValue int, includeRaw bool) (*image.Gray, *image.Gray) {
 	b := src.Bounds()
 	origW, origH := b.Dx(), b.Dy()
 	dst := image.NewGray(image.Rect(0, 0, newW, newH))
+	var rawDst *image.Gray
+	if includeRaw {
+		rawDst = image.NewGray(image.Rect(0, 0, newW, newH))
+	}
 	if newW <= 0 || newH <= 0 {
-		return dst
+		return dst, rawDst
 	}
 	if newW == origW && newH == origH {
-		return toGrayscaleAccent(src, accentValue)
+		dst = toGrayscaleAccent(src, accentValue)
+		if includeRaw {
+			rawDst = toGrayscale(src)
+		}
+		return dst, rawDst
 	}
 	srcStride := src.Stride
 	dstStride := dst.Stride
@@ -1083,11 +1104,17 @@ func resizeNRGBAToGray(src *image.NRGBA, newW, newH, accentValue int) *image.Gra
 				if srcX1 == srcX0 {
 					srcX1 = srcX0 + 1
 				}
-				sum, count := 0, 0
+				sum, rawSum, count := 0, 0, 0
 				for sy := srcY0; sy < srcY1; sy++ {
 					srcRow := sy * srcStride
 					for sx := srcX0; sx < srcX1; sx++ {
 						off := srcRow + sx*4
+						if includeRaw {
+							rawR := uint32(src.Pix[off])
+							rawG := uint32(src.Pix[off+1])
+							rawB := uint32(src.Pix[off+2])
+							rawSum += int((19595*rawR + 38470*rawG + 7471*rawB + 32768) >> 16)
+						}
 						r := uint32(clampByte(int(src.Pix[off]) + accentValue))
 						g := uint32(clampByte(int(src.Pix[off+1]) + accentValue))
 						bl := uint32(clampByte(int(src.Pix[off+2]) + accentValue))
@@ -1097,11 +1124,14 @@ func resizeNRGBAToGray(src *image.NRGBA, newW, newH, accentValue int) *image.Gra
 				}
 				if count > 0 {
 					dst.Pix[dstRow+outX] = uint8(sum / count)
+					if includeRaw {
+						rawDst.Pix[dstRow+outX] = uint8(rawSum / count)
+					}
 				}
 			}
 		}
 	})
-	return dst
+	return dst, rawDst
 }
 
 // resizeNRGBA resizes an NRGBA image using nearest-neighbor interpolation.

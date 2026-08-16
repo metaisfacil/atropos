@@ -208,11 +208,17 @@ setLoading(false)
 
 ```
 DetectCorners(req)
-    1. Downsample to ~1500px, apply accent/CLAHE contrast prep
-    2. Multi-scale Shi-Tomasi (goodFeaturesToTrack) at scales [1, 2, 4]
-    3. Deduplicate corners, map back to full-resolution coordinates
-    4. Store in detectedCorners
-    5. Return clean currentImage preview + Corners array
+    1. Downsample to ~1500px, producing accent/CLAHE and raw grayscale in one source traversal
+    2. Apply complementary 230..255 and 240..255 highlight curves to the raw grayscale; these suppress
+       coloured/text detail while expanding different strengths of white-media/background boundaries
+    3. Weighted Shi-Tomasi (goodFeaturesToTrack): two highlight boundary passes at scale 1 plus
+       regular detail/silhouette passes at scales [1, 2, 4, 16]
+    4. Refine scale-16 silhouette coordinates against fine highlight candidates within one coarse cell
+    5. Refine all except authoritative 240-highlight coordinates against block-11 raw corners within one coarse cell,
+       then sharpen against block-5 raw corners within half a cell
+    6. Deduplicate corners, map back to full-resolution coordinates
+    7. Store in detectedCorners
+    8. Return clean currentImage preview + Corners array
          Dots are rendered by the frontend canvas overlay — never baked into the image
 ```
 
