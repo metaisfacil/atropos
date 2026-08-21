@@ -123,6 +123,20 @@ func TestCornerDetectPassesHandleSmallBudget(t *testing.T) {
 	}
 }
 
+func TestHighlightRecoveryBudgetFavorsBrightPerimeterScans(t *testing.T) {
+	bright := highlightRecoveryBudget(500, perimeterBackground{dark: false})
+	if bright != 375 {
+		t.Fatalf("bright perimeter budget: got %d, want 375", bright)
+	}
+	dark := highlightRecoveryBudget(500, perimeterBackground{dark: true})
+	if dark != 500 {
+		t.Fatalf("dark perimeter budget: got %d, want 500", dark)
+	}
+	if got := highlightRecoveryBudget(1, perimeterBackground{dark: false}); got != 1 {
+		t.Fatalf("small bright budget: got %d, want 1", got)
+	}
+}
+
 func TestDedupeCornerPointsPreservesDistinctScaleLocalizations(t *testing.T) {
 	points := []image.Point{
 		{X: 100, Y: 100},

@@ -239,6 +239,29 @@ func refineDetectedCorner(point image.Point, pass cornerDetectPass, highlight, r
 	return refineCoarseCorner(point, rawFine, rawFineRefinementRadius)
 }
 
+// highlightRecoveryBudget keeps a useful secondary set of candidates from
+// the severe highlight curve when the measured scanner perimeter is bright.
+// In that situation a clipped white document can have a real outer corner
+// that ranks well below ordinary artwork corners, even though the curve has
+// isolated it correctly. Dark-background scans keep the established small
+// highlight share so this recovery path does not drown out their detail.
+func highlightRecoveryBudget(maxCorners int, perimeter perimeterBackground) int {
+	if maxCorners < 1 {
+		return 1
+	}
+	if perimeter.dark {
+		return maxCorners
+	}
+	budget := maxCorners * 3 / 4
+	if budget < 32 {
+		budget = 32
+	}
+	if budget > maxCorners {
+		budget = maxCorners
+	}
+	return budget
+}
+
 // ClickCornerRequest holds the image-space coordinates of a user click.
 type ClickCornerRequest struct {
 	X      int  `json:"x"`
@@ -410,10 +433,18 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	backgroundSilhouette, perimeter := backgroundDistanceSilhouette(workColor)
 	a.logf("DetectCorners: perimeter RGB=(%d,%d,%d) noise=%d silhouette=%d-%d dark=%v",
 		perimeter.r, perimeter.g, perimeter.b, perimeter.noise, perimeter.blackPoint, perimeter.whitePoint, perimeter.dark)
-	lineCorners, err := lineDerivedCornerProposals(ctx, []*image.Gray{rawGray, highlightGray240, highlightGray230, adaptiveHighlightGray, backgroundSilhouette}, req.MaxCorners, int(float64(req.MinDistance)*scaleFactor))
-	if err != nil {
-		return nil, err
+	// Keep each source map's line proposals independent. A strong but
+	// distracting line in one map can otherwise consume the shared proposal
+	// budget before a partial document edge from another map is considered.
+	var lineCorners []image.Point
+	for _, lineSource := range []*image.Gray{rawGray, highlightGray240, highlightGray230, adaptiveHighlightGray, backgroundSilhouette} {
+		proposals, lineErr := lineDerivedCornerProposals(ctx, []*image.Gray{lineSource}, req.MaxCorners, int(float64(req.MinDistance)*scaleFactor))
+		if lineErr != nil {
+			return nil, lineErr
+		}
+		lineCorners = append(lineCorners, proposals...)
 	}
+	lineCorners = dedupeCornerPoints(lineCorners, int(float64(req.MinDistance)*scaleFactor))
 	a.logf("DetectCorners: line boundary path proposed %d corners", len(lineCorners))
 
 	// Optionally pre-stretch contrast using percentiles to handle non-white backgrounds,
@@ -551,8 +582,15 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 		a.logf("DetectCorners: scale=%d got %d pts", s, len(pts))
 		if pass.highlightBlackPoint > 0 {
 			highlightRefinementCorners = append(highlightRefinementCorners, pts...)
-			if len(pts) > pass.maxCorners {
-				pts = pts[:pass.maxCorners]
+			keep := pass.maxCorners
+			if pass.highlightBlackPoint == 240 {
+				recoveryBudget := highlightRecoveryBudget(req.MaxCorners, perimeter)
+				if recoveryBudget > keep {
+					keep = recoveryBudget
+				}
+			}
+			if len(pts) > keep {
+				pts = pts[:keep]
 			}
 		}
 
@@ -596,6 +634,19 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	}
 
 	a.logf("DetectCorners: %d unique corners after dedupe", len(uniq))
+	// The highlight recovery pass can use most of the requested budget on a
+	// bright, low-contrast scan. Keep the public result bounded by the same
+	// MaxCorners contract as the regular detector; the recovery candidates are
+	// first in allCorners, so they retain priority over later duplicate-scale
+	// detail proposals.
+	resultMax := req.MaxCorners
+	if resultMax < 1 {
+		resultMax = 1
+	}
+	if len(uniq) > resultMax {
+		uniq = uniq[:resultMax]
+		a.logf("DetectCorners: capped unique corners to requested maximum %d", resultMax)
+	}
 
 	// Map working-space corners to full-resolution image coordinates
 	var fullCorners []image.Point
