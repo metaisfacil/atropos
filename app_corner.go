@@ -634,19 +634,6 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	}
 
 	a.logf("DetectCorners: %d unique corners after dedupe", len(uniq))
-	// The highlight recovery pass can use most of the requested budget on a
-	// bright, low-contrast scan. Keep the public result bounded by the same
-	// MaxCorners contract as the regular detector; the recovery candidates are
-	// first in allCorners, so they retain priority over later duplicate-scale
-	// detail proposals.
-	resultMax := req.MaxCorners
-	if resultMax < 1 {
-		resultMax = 1
-	}
-	if len(uniq) > resultMax {
-		uniq = uniq[:resultMax]
-		a.logf("DetectCorners: capped unique corners to requested maximum %d", resultMax)
-	}
 
 	// Map working-space corners to full-resolution image coordinates
 	var fullCorners []image.Point
