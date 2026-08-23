@@ -53,6 +53,7 @@ export default function App() {
   const [mode, setMode] = useState('corner')
   const [preview, setPreview] = useState(null)
   const [presentedPreview, setPresentedPreview] = useState(null)
+  const [optimisticCrop, setOptimisticCrop] = useState(null)
   const [imageLoaded, setImageLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState(null)
@@ -290,6 +291,7 @@ export default function App() {
     imageLoaded, mode, discActive, featherSize, discRotation,
     ctrlDragRef, shiftDragRef, mousePosRef,
     setPreview, setFeatherSize, setLoading, setRealImageDims,
+    preview, realImageDims, optimisticCrop, setOptimisticCrop,
     setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setDiscRotation,
     displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, handleLoadImage,
     canSave: imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive),
@@ -331,11 +333,14 @@ export default function App() {
     adjustmentDragKind,
     lines,
     lineDragKind,
-  }, previewPresentationPending)
+  }, previewPresentationPending && !optimisticCrop)
 
   const handlePreviewPresented = (source, dims) => {
     handleImgLoad(dims)
-    if (source === preview) setPresentedPreview(preview)
+    if (source === preview) {
+      setPresentedPreview(preview)
+      setOptimisticCrop(current => current && source !== current.source ? null : current)
+    }
   }
 
   useEffect(() => {
@@ -631,6 +636,7 @@ export default function App() {
           scrollerStyle={spacePanMode ? { cursor: 'grab' } : undefined}
           showPlaceholder={!preview && !busy}
           onPresented={handlePreviewPresented}
+          optimisticCrop={optimisticCrop}
           visual={presentedVisual}
           discLiveActive={discLiveActive}
           discLiveTransform={discLiveTransform}

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { buildViewportRequest, clippedRasterDrawRect, shouldDrawDiscCropGuide, sourceRectContains } from './PreviewCanvas'
+import {
+  buildViewportRequest,
+  clippedRasterDrawRect,
+  croppedRasterDrawRect,
+  optimisticCropSourceRect,
+  shouldDrawDiscCropGuide,
+  sourceRectContains,
+} from './PreviewCanvas'
 
 describe('buildViewportRequest', () => {
   it('requests an overscanned, quantized source region at viewport density', () => {
@@ -97,6 +104,42 @@ describe('clippedRasterDrawRect', () => {
       { stageX: 1000, stageY: 1000, stageWidth: 1000, stageHeight: 1000 },
       { w: 500, h: 500 },
     )).toBeNull()
+  })
+})
+
+describe('optimistic crop rendering', () => {
+  const raster = {
+    dims: { w: 100, h: 80 },
+    rect: { x: 0, y: 0, w: 100, h: 80 },
+    width: 100,
+    height: 80,
+    bitmap: { naturalWidth: 100, naturalHeight: 80 },
+  }
+  const layout = { stageX: 0, stageY: 0, stageWidth: 100, stageHeight: 77 }
+  const viewport = { w: 100, h: 77 }
+
+  it('maps a top crop to the matching source pixels immediately', () => {
+    const crop = {
+      sourceDims: { w: 100, h: 80 },
+      targetDims: { w: 100, h: 77 },
+      direction: 'top',
+      amount: 3,
+    }
+    expect(optimisticCropSourceRect(crop)).toEqual({ x: 0, y: 3, w: 100, h: 77 })
+    expect(croppedRasterDrawRect(raster, layout, crop, viewport)).toEqual({
+      source: { x: 0, y: 3, w: 100, h: 77 },
+      destination: { x: 0, y: 0, w: 100, h: 77 },
+    })
+  })
+
+  it('anchors left and right crops to their requested edge', () => {
+    const base = {
+      sourceDims: { w: 100, h: 80 },
+      targetDims: { w: 97, h: 80 },
+      amount: 3,
+    }
+    expect(optimisticCropSourceRect({ ...base, direction: 'left' })).toEqual({ x: 3, y: 0, w: 97, h: 80 })
+    expect(optimisticCropSourceRect({ ...base, direction: 'right' })).toEqual({ x: 0, y: 0, w: 97, h: 80 })
   })
 })
 

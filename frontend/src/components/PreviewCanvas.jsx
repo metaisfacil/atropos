@@ -361,6 +361,57 @@ function drawDashedRect(ctx, x, y, width, height, {
   ctx.restore()
 }
 
+export function optimisticCropSourceRect(crop) {
+  if (!crop?.sourceDims || !crop?.targetDims) return null
+  const { w, h } = crop.sourceDims
+  const targetW = crop.targetDims.w
+  const targetH = crop.targetDims.h
+  const amount = crop.amount || 0
+  switch (crop.direction) {
+    case 'top': return { x: 0, y: amount, w, h: targetH }
+    case 'bottom': return { x: 0, y: 0, w, h: targetH }
+    case 'left': return { x: amount, y: 0, w: targetW, h }
+    case 'right': return { x: 0, y: 0, w: targetW, h }
+    default: return null
+  }
+}
+
+// Maps the currently decoded pre-crop raster into the immediately visible
+// post-crop geometry. This is only a visual fallback; the backend revision
+// remains authoritative and replaces it as soon as its raster is presented.
+export function croppedRasterDrawRect(raster, layout, crop, viewport) {
+  if (!raster || !sameDims(raster.dims, crop?.sourceDims) || !validDims(crop?.targetDims)) return null
+  if (!(viewport?.w > 0) || !(viewport?.h > 0)) return null
+
+  const cropRect = optimisticCropSourceRect(crop)
+  if (!cropRect) return null
+  const sourceIntersection = intersectRect(raster.rect, cropRect)
+  if (!sourceIntersection) return null
+
+  const destination = {
+    x: layout.stageX + ((sourceIntersection.x - cropRect.x) / crop.targetDims.w) * layout.stageWidth,
+    y: layout.stageY + ((sourceIntersection.y - cropRect.y) / crop.targetDims.h) * layout.stageHeight,
+    w: (sourceIntersection.w / crop.targetDims.w) * layout.stageWidth,
+    h: (sourceIntersection.h / crop.targetDims.h) * layout.stageHeight,
+  }
+  const visible = intersectRect(destination, { x: 0, y: 0, w: viewport.w, h: viewport.h })
+  if (!visible || !(destination.w > 0) || !(destination.h > 0)) return null
+
+  const bitmapWidth = raster.bitmap?.naturalWidth || raster.bitmap?.width || raster.width
+  const bitmapHeight = raster.bitmap?.naturalHeight || raster.bitmap?.height || raster.height
+  if (!(bitmapWidth > 0) || !(bitmapHeight > 0)) return null
+
+  const source = {
+    x: ((sourceIntersection.x - raster.rect.x) / raster.rect.w) * bitmapWidth +
+      ((visible.x - destination.x) / destination.w) * (sourceIntersection.w / raster.rect.w) * bitmapWidth,
+    y: ((sourceIntersection.y - raster.rect.y) / raster.rect.h) * bitmapHeight +
+      ((visible.y - destination.y) / destination.h) * (sourceIntersection.h / raster.rect.h) * bitmapHeight,
+    w: (visible.w / destination.w) * (sourceIntersection.w / raster.rect.w) * bitmapWidth,
+    h: (visible.h / destination.h) * (sourceIntersection.h / raster.rect.h) * bitmapHeight,
+  }
+  return { source, destination: visible }
+}
+
 export function shouldDrawDiscCropGuide(visual, ctrlDragActive = false, shiftDragActive = false) {
   return Boolean(
     visual?.mode === 'disc' &&
@@ -552,6 +603,7 @@ export default function PreviewCanvas({
   scrollerStyle,
   showPlaceholder,
   onPresented,
+  optimisticCrop,
   visual,
   discLiveActive,
   discLiveTransform,
@@ -580,7 +632,9 @@ export default function PreviewCanvas({
   const onPresentedRef = useRef(onPresented)
   onPresentedRef.current = onPresented
 
-  const stageDims = validDims(presented.dims)
+  const stageDims = validDims(optimisticCrop?.targetDims)
+    ? optimisticCrop.targetDims
+    : validDims(presented.dims)
     ? presented.dims
     : (validDims(imageDims) ? imageDims : { w: 1, h: 1 })
   const stageWidth = useMemo(() => {
@@ -608,6 +662,7 @@ export default function PreviewCanvas({
   latestPropsRef.current = {
     source,
     imageDims,
+    optimisticCrop,
     visual,
     discLiveActive,
     discLiveTransform,
@@ -663,8 +718,15 @@ export default function PreviewCanvas({
       const raster = activeRasterRef.current
       if (raster && validDims(raster.dims)) {
         const drawRaster = candidate => {
-          const destination = canvasRectFromImage(candidate.rect, drawLayout, candidate.dims)
-          if (props.discLiveActive) {
+          const optimistic = props.optimisticCrop && sameDims(candidate.dims, props.optimisticCrop.sourceDims)
+          const clipped = optimistic
+            ? croppedRasterDrawRect(candidate, drawLayout, props.optimisticCrop, { w: width, h: height })
+            : null
+          if (optimistic && !clipped) return null
+          const destination = optimistic
+            ? clipped.destination
+            : canvasRectFromImage(candidate.rect, drawLayout, candidate.dims)
+          if (props.discLiveActive && !optimistic) {
             // The disc preview applies an additional canvas transform. Its
             // inverse-transformed viewport is not axis-aligned, so retain the
             // full draw during the brief live gesture.
@@ -672,20 +734,22 @@ export default function PreviewCanvas({
             return destination
           }
 
-          const clipped = clippedRasterDrawRect(candidate, drawLayout, { w: width, h: height })
-          if (!clipped) return destination
+          const drawRect = optimistic
+            ? clipped
+            : clippedRasterDrawRect(candidate, drawLayout, { w: width, h: height })
+          if (!drawRect) return destination
           ctx.drawImage(
             candidate.bitmap,
-            clipped.source.x,
-            clipped.source.y,
-            clipped.source.w,
-            clipped.source.h,
-            clipped.destination.x,
-            clipped.destination.y,
-            clipped.destination.w,
-            clipped.destination.h,
+            drawRect.source.x,
+            drawRect.source.y,
+            drawRect.source.w,
+            drawRect.source.h,
+            drawRect.destination.x,
+            drawRect.destination.y,
+            drawRect.destination.w,
+            drawRect.destination.h,
           )
-          return destination
+          return drawRect.destination
         }
 
         ctx.save()
@@ -796,6 +860,7 @@ export default function PreviewCanvas({
 
     const requestedSource = source
     try {
+      if (optimisticCrop && requestedSource === optimisticCrop.source) return
       const scroller = scrollRef.current
       const currentLayout = layoutRef.current
       if (!scroller || !currentLayout || !requestedSource || !validDims(imageDims)) return
@@ -911,7 +976,7 @@ export default function PreviewCanvas({
         requestTimerRef.current = window.setTimeout(() => requestRasterRef.current?.(), 0)
       }
     }
-  }, [activateRaster, displayWidth, findCoveringRaster, imageDims, pruneRasterCache, scrollRef, source])
+  }, [activateRaster, displayWidth, findCoveringRaster, imageDims, optimisticCrop, pruneRasterCache, scrollRef, source])
 
   // Keep scheduling stable across zoom/layout renders. The previous version
   // closed over requestRaster, whose identity changes with displayWidth; that
@@ -991,6 +1056,7 @@ export default function PreviewCanvas({
     visual,
     discLiveActive,
     discLiveTransform,
+    optimisticCrop,
     scheduleDraw,
   ])
 

@@ -4,10 +4,22 @@ import {
 } from '../../wailsjs/go/main/App'
 import { Quit } from '../../wailsjs/runtime/runtime'
 
+export const KEYBOARD_CROP_AMOUNT = 3
+
+export function optimisticCropDimensions(dims, direction, amount = KEYBOARD_CROP_AMOUNT) {
+  if (!dims || !(dims.w > 0) || !(dims.h > 0)) return null
+  const crop = Math.max(1, amount)
+  return {
+    w: ['left', 'right'].includes(direction) ? Math.max(1, dims.w - crop) : dims.w,
+    h: ['top', 'bottom'].includes(direction) ? Math.max(1, dims.h - crop) : dims.h,
+  }
+}
+
 export function useKeyboardShortcuts({
   imageLoaded, mode, discActive, featherSize, discRotation,
   ctrlDragRef, shiftDragRef, mousePosRef,
   setPreview, setFeatherSize, setLoading, setRealImageDims,
+  preview, realImageDims, optimisticCrop, setOptimisticCrop,
   setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setDiscRotation,
   displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, handleLoadImage, canSave,
   normalRect, handleNormalCrop, handleUndo,
@@ -51,6 +63,7 @@ export function useKeyboardShortcuts({
         return
       }
       if (!imageLoaded) return
+      let pendingCrop = null
       try {
         let result
 
@@ -154,14 +167,46 @@ export function useKeyboardShortcuts({
         }
 
         if (['w', 's', 'a', 'd', 'q', 'e'].includes(key)) {
+          if (['w', 's', 'a', 'd'].includes(key)) e.preventDefault()
           if (!canSave) { showStatus('Apply a crop first before adjusting'); return }
         }
 
+        const beginOptimisticCrop = direction => {
+          // Hold a second crop until the first authoritative revision is
+          // presented so local geometry and backend undo order stay aligned.
+          if (optimisticCrop) return null
+          const targetDims = optimisticCropDimensions(realImageDims, direction)
+          if (!targetDims || !preview) return null
+          pendingCrop = {
+            source: preview,
+            sourceDims: { ...realImageDims },
+            targetDims,
+            direction,
+            amount: KEYBOARD_CROP_AMOUNT,
+          }
+          setOptimisticCrop(pendingCrop)
+          setRealImageDims(targetDims)
+          return pendingCrop
+        }
+
         switch (key) {
-          case 'w': result = await Crop({ direction: 'top'    }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); setUnsavedChanges(true); await flushPendingSave(); break
-          case 's': result = await Crop({ direction: 'bottom' }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); setUnsavedChanges(true); await flushPendingSave(); break
-          case 'a': result = await Crop({ direction: 'left'   }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); setUnsavedChanges(true); await flushPendingSave(); break
-          case 'd': result = await Crop({ direction: 'right'  }); if (result?.preview) setPreview(result.preview); if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height }); setUnsavedChanges(true); await flushPendingSave(); break
+          case 'w':
+          case 's':
+          case 'a':
+          case 'd': {
+            const direction = { w: 'top', s: 'bottom', a: 'left', d: 'right' }[key]
+            if (!beginOptimisticCrop(direction)) return
+            result = await Crop({ direction })
+            // From this point on the backend state is committed. Keep the
+            // optimistic renderer alive until presentation, but do not roll
+            // the frontend geometry back if an unrelated deferred save fails.
+            pendingCrop = null
+            if (result?.preview) setPreview(result.preview)
+            if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
+            setUnsavedChanges(true)
+            await flushPendingSave()
+            break
+          }
           case 'q':
             setLoading(true); showStatus('Rotating…')
             result = mode === 'disc' && discActive
@@ -195,11 +240,15 @@ export function useKeyboardShortcuts({
         }
       } catch (err) {
         console.error('Shortcut error:', err)
+        if (pendingCrop) {
+          setRealImageDims(pendingCrop.sourceDims)
+          setOptimisticCrop(null)
+        }
         showError(err)
         setLoading(false)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, canSave, handleLoadImage, cornerState.cornerCount, adjustmentSelectionActive, adjustmentRect]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, canSave, handleLoadImage, cornerState.cornerCount, adjustmentSelectionActive, adjustmentRect, preview, realImageDims, optimisticCrop]) // eslint-disable-line react-hooks/exhaustive-deps
 }
