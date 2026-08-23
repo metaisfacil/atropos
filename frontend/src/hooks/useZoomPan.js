@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { LogFrontend, SetFeatherSize } from '../../wailsjs/go/main/App'
+import { fitWidthFor } from '../utils/previewLayout'
 
 export function maxUsefulZoom(naturalWidth, fitWidth) {
   if (!(naturalWidth > 0) || !(fitWidth > 0)) return 5
@@ -8,13 +9,6 @@ export function maxUsefulZoom(naturalWidth, fitWidth) {
 
 function validDims(value) {
   return value && Number.isFinite(value.w) && Number.isFinite(value.h) && value.w > 0 && value.h > 0
-}
-
-function fitWidthFor(container, dims) {
-  if (!container || !validDims(dims)) return 0
-  const availableWidth = Math.max(1, container.clientWidth)
-  const availableHeight = Math.max(1, container.clientHeight)
-  return Math.min(availableWidth, availableHeight * (dims.w / dims.h))
 }
 
 export function useZoomPan({

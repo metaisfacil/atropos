@@ -1,5 +1,12 @@
 import React from 'react'
 
+// Edge and corner hit targets intentionally straddle selection boundaries.
+// Clip their transparent outer halves at the image bounds so a selection on
+// an image edge cannot enlarge the canvas-area scroll extent and make the
+// viewport fit oscillate as scrollbars appear. Visible canvas guides are
+// unaffected because they are rendered outside this interaction-only layer.
+const interactionOverlayStyle = { overflow: 'hidden' }
+
 function pct(value, total) {
   if (!(total > 0)) return 0
   return (value / total) * 100
@@ -87,7 +94,7 @@ export default function ImageOverlays({
   realImageDims,
 }) {
   return (
-    <div className="preview-interaction-overlay" aria-hidden="true">
+    <div className="preview-interaction-overlay" style={interactionOverlayStyle} aria-hidden="true">
       {mode === 'normal' && normalRect && (
         <RectangleHitTargets rect={normalRect} dims={realImageDims} dataAttribute="data-normal-handle" />
       )}

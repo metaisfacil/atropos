@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { OnFileDrop, OnFileDropOff, EventsOn, EventsOff, Quit } from '../../wailsjs/runtime/runtime'
+import { fitWidthFor } from '../utils/previewLayout'
 import {
   LoadImage,
   DetectCorners,
@@ -782,7 +783,7 @@ export function useImageActions({
             if (width && height) {
               setRealImageDims({ w: width, h: height })
               const c = canvasRef.current
-              if (c) setFitWidth(Math.min(c.clientWidth, c.clientHeight * width / height))
+              if (c) setFitWidth(fitWidthFor(c, { w: width, h: height }))
             }
             cornerEntryRef.current = null
           }
@@ -823,7 +824,7 @@ export function useImageActions({
               cornerEntryRef.current = { preview: res.preview, width: res.width, height: res.height }
               const c = canvasRef.current
               if (c && res.width && res.height) {
-                setFitWidth(Math.min(c.clientWidth, c.clientHeight * res.width / res.height))
+                setFitWidth(fitWidthFor(c, { w: res.width, h: res.height }))
               } else {
                 setFitWidth(0)
               }
@@ -859,7 +860,7 @@ export function useImageActions({
         if (res?.preview) {
           const c = canvasRef.current
           if (c && res.width && res.height) {
-            setFitWidth(Math.min(c.clientWidth, c.clientHeight * res.width / res.height))
+            setFitWidth(fitWidthFor(c, { w: res.width, h: res.height }))
           } else {
             setFitWidth(0)
           }
