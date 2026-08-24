@@ -192,11 +192,11 @@ export function useImageActions({
     detectGenRef.current++
     CancelCornerDetect()
     setLoading(true)
+
+    const result = await LoadImageFromClipboard()
     setLoadingFull(true)
     setZoom(1)
     showStatus('Loading clipboard image…')
-
-    const result = await LoadImageFromClipboard()
     await applyLoadedImage(result, true)
   }
 

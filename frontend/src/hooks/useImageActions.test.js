@@ -184,6 +184,8 @@ describe('Backend clipboard load', () => {
 
     expect(consoleError).toHaveBeenCalledWith('Clipboard image load error:', error)
     expect(props.showError).not.toHaveBeenCalled()
+    expect(props.showStatus).not.toHaveBeenCalledWith('Loading clipboard image…')
+    expect(props.setZoom).not.toHaveBeenCalled()
     consoleError.mockRestore()
   })
 })
