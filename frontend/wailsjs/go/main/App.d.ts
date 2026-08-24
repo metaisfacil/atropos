@@ -26,6 +26,8 @@ export function CompositorStitch(arg1:main.CompositorStitchRequest):Promise<main
 
 export function ConfirmClose():Promise<void>;
 
+export function CopySelectionToClipboard(arg1:main.AdjustmentSelection):Promise<string>;
+
 export function Crop(arg1:main.CropRequest):Promise<main.ProcessResult>;
 
 export function Descreen(arg1:main.DescreenRequest):Promise<main.ProcessResult>;

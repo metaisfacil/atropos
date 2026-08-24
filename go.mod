@@ -6,6 +6,7 @@ toolchain go1.22.2
 
 require (
 	github.com/wailsapp/wails/v2 v2.11.0
+	golang.design/x/clipboard v0.7.0
 	golang.org/x/image v0.23.0
 	golang.org/x/sys v0.30.0
 )
@@ -35,6 +36,8 @@ require (
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
 	golang.org/x/crypto v0.33.0 // indirect
+	golang.org/x/exp v0.0.0-20190731235908-ec7cb31e5a56 // indirect
+	golang.org/x/mobile v0.0.0-20230301163155-e0f57694e12c // indirect
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
 )

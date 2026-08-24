@@ -535,6 +535,7 @@ export default function App() {
               discActive={discActive}
               canSave={imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive)}
               imageLoaded={imageLoaded}
+              canCopySelection={imageLoaded && Boolean(adjustmentRect || (mode === 'normal' && normalRect))}
             />
           </div>
 

@@ -1,8 +1,9 @@
 import { useEffect } from 'react'
 import {
-  Crop, Rotate, ShiftDisc, RotateDisc, SetFeatherSize, GetPixelColor, ConfirmClose, UndoLastCorner,
+  Crop, Rotate, ShiftDisc, RotateDisc, SetFeatherSize, GetPixelColor, ConfirmClose, CopySelectionToClipboard, UndoLastCorner,
 } from '../../wailsjs/go/main/App'
 import { Quit } from '../../wailsjs/runtime/runtime'
+import { adjustmentSelectionPayload } from '../utils/adjustmentSelection'
 
 export const KEYBOARD_CROP_AMOUNT = 3
 
@@ -72,6 +73,18 @@ export function useKeyboardShortcuts({
           if (e.repeat) return
           setAdjustmentRect(null)
           showStatus('Adjustment selection cleared')
+          return
+        }
+
+        const copyRect = adjustmentRect || (mode === 'normal' ? normalRect : null)
+        if ((e.ctrlKey || e.metaKey) && e.code === 'KeyC' && copyRect) {
+          const active = document.activeElement
+          if (active && (['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable)) return
+          e.preventDefault()
+          if (e.repeat) return
+          showStatus('Copying selection…')
+          const message = await CopySelectionToClipboard(adjustmentSelectionPayload(copyRect))
+          showStatus(message || 'Selection copied to clipboard')
           return
         }
 

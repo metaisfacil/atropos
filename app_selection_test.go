@@ -78,3 +78,41 @@ func TestClipAlphaToAdjustmentSelection(t *testing.T) {
 		t.Fatalf("clipped bounds = %v, want %v", clipped.Bounds(), key.Rect)
 	}
 }
+
+func TestCopySelectionToClipboardUsesWorkingImageWithoutMutation(t *testing.T) {
+	a := NewApp()
+	a.currentImage = solidSelectionTestImage(6, 5, 20)
+	a.warpedImage = solidSelectionTestImage(4, 3, 200)
+	workingBefore := a.warpedImage
+	undoBefore := len(a.undoStack)
+	var copiedSource *image.NRGBA
+	var copiedRect image.Rectangle
+	a.clipboardWriter = func(src *image.NRGBA, rect image.Rectangle) error {
+		copiedSource = src
+		copiedRect = rect
+		return nil
+	}
+
+	message, err := a.CopySelectionToClipboard(AdjustmentSelection{X1: 3, Y1: 2, X2: 1, Y2: 0})
+	if err != nil {
+		t.Fatalf("CopySelectionToClipboard returned error: %v", err)
+	}
+	if message != "Copied 2×2 selection to clipboard" {
+		t.Fatalf("unexpected copy message: %q", message)
+	}
+	if copiedSource != workingBefore {
+		t.Fatal("clipboard writer did not receive warped working image")
+	}
+	if copiedRect != image.Rect(1, 0, 3, 2) {
+		t.Fatalf("clipboard rect = %v, want (1,0)-(3,2)", copiedRect)
+	}
+	if a.warpedImage != workingBefore || len(a.undoStack) != undoBefore {
+		t.Fatal("copying a selection mutated working image or undo state")
+	}
+}
+
+func TestCopySelectionToClipboardRejectsMissingImage(t *testing.T) {
+	if _, err := NewApp().CopySelectionToClipboard(AdjustmentSelection{X1: 0, Y1: 0, X2: 1, Y2: 1}); err == nil {
+		t.Fatal("expected an error with no image loaded")
+	}
+}

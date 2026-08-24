@@ -43,6 +43,31 @@ func resolveAdjustmentSelection(selection *AdjustmentSelection, bounds image.Rec
 	return rect, adjustmentSelectionKey{Rect: rect, Active: true}, nil
 }
 
+// CopySelectionToClipboard copies a full-resolution image-space selection
+// directly to the native clipboard without modifying working image or undo
+// state. No image bytes cross the Wails bridge.
+func (a *App) CopySelectionToClipboard(selection AdjustmentSelection) (string, error) {
+	src := a.workingImage()
+	if src == nil {
+		return "", fmt.Errorf("no image loaded")
+	}
+	rect, _, err := resolveAdjustmentSelection(&selection, src.Bounds())
+	if err != nil {
+		return "", err
+	}
+
+	a.clipboardMu.Lock()
+	defer a.clipboardMu.Unlock()
+	writer := a.clipboardWriter
+	if writer == nil {
+		writer = copyImageRegionToClipboard
+	}
+	if err := writer(src, rect); err != nil {
+		return "", fmt.Errorf("copy selection: %w", err)
+	}
+	return fmt.Sprintf("Copied %d×%d selection to clipboard", rect.Dx(), rect.Dy()), nil
+}
+
 func applyLevelsInSelection(src *image.NRGBA, black, white int, key adjustmentSelectionKey) *image.NRGBA {
 	if !key.Active {
 		return applyLevels(src, black, white)

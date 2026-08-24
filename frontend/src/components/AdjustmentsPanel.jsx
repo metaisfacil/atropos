@@ -199,7 +199,7 @@ export default function AdjustmentsPanel({
         <span>Adjustments</span>
         <span className="adj-panel-header-actions">
           {adjPanelOpen && (
-            <DelayedHint hint="Select a rectangular area for adjustments. Ctrl+D clears the selection.">
+            <DelayedHint hint="Select a rectangular area for adjustments. Ctrl+C copies it; Ctrl+D clears it.">
               <button
                 type="button"
                 className={`adjustment-selection-btn ${adjustmentSelectionActive ? 'active' : ''}`}

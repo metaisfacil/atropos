@@ -50,6 +50,10 @@ export function ConfirmClose() {
   return window['go']['main']['App']['ConfirmClose']();
 }
 
+export function CopySelectionToClipboard(arg1) {
+  return window['go']['main']['App']['CopySelectionToClipboard'](arg1);
+}
+
 export function Crop(arg1) {
   return window['go']['main']['App']['Crop'](arg1);
 }
