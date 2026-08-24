@@ -207,7 +207,10 @@ export function useImageActions({
       await loadImageFromClipboard()
     } catch (err) {
       console.error('Clipboard image load error:', err)
-      showError(err)
+      const message = err?.message || String(err)
+      if (!message.includes('clipboard does not contain an image')) {
+        showError(err)
+      }
     } finally {
       loadingRef.current = false
       setLoading(false)

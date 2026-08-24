@@ -171,4 +171,19 @@ describe('Backend clipboard load', () => {
     expect(props.setRealImageDims).toHaveBeenCalledWith({ w: 7200, h: 3600 })
     expect(props.setAdjustmentRect).toHaveBeenCalledWith(null)
   })
+
+  it('logs an empty clipboard error without displaying an alert', async () => {
+    const props = makeProps()
+    const error = new Error('LoadImageFromClipboard: read error: clipboard does not contain an image')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    appMocks.LoadImageFromClipboard.mockRejectedValue(error)
+    const { result } = renderHook(() => useImageActions(props))
+    await waitFor(() => expect(appMocks.GetLaunchArgs).toHaveBeenCalled())
+
+    await act(async () => result.current.handlePasteImage())
+
+    expect(consoleError).toHaveBeenCalledWith('Clipboard image load error:', error)
+    expect(props.showError).not.toHaveBeenCalled()
+    consoleError.mockRestore()
+  })
 })
