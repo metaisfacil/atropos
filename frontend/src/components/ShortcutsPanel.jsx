@@ -1,4 +1,6 @@
 import React from 'react'
+import { useKeyboardLayout } from '../hooks/useKeyboardLayout'
+import { CROP_SHORTCUT_CODES, ROTATE_SHORTCUT_CODES } from '../utils/keyboardShortcuts'
 
 // ShortcutsPanel renders the collapsible accordion-panel reference at the
 // bottom of the sidebar.
@@ -11,6 +13,7 @@ import React from 'react'
 //   canCopySelection — bool (an adjustment or uncommitted Normal selection exists)
 export default function ShortcutsPanel({ shortcutsOpen, setShortcutsOpen, mode, discActive, canSave, imageLoaded, canCopySelection }) {
   const cls = (active) => `shortcut-item${active ? '' : ' shortcut-item--disabled'}`
+  const spatialKeyLabels = useKeyboardLayout()
 
   return (
     <div className={`accordion-panel ${shortcutsOpen ? 'expanded' : ''}`}>
@@ -25,11 +28,15 @@ export default function ShortcutsPanel({ shortcutsOpen, setShortcutsOpen, mode, 
       <div className="accordion-content-outer">
         <div className={`accordion-content ${shortcutsOpen ? 'open' : 'closed'}`}>
           <div className={cls(canSave)}>
-            <div className="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div>
+            <div className="keys">
+              {CROP_SHORTCUT_CODES.map(code => <kbd key={code}>{spatialKeyLabels[code]}</kbd>)}
+            </div>
             <div className="caption">Crop edges</div>
           </div>
           <div className={cls(canSave)}>
-            <div className="keys"><kbd>Q</kbd><kbd>E</kbd></div>
+            <div className="keys">
+              {ROTATE_SHORTCUT_CODES.map(code => <kbd key={code}>{spatialKeyLabels[code]}</kbd>)}
+            </div>
             <div className="caption">Rotate {mode === 'disc' ? '±15°' : '±90°'}</div>
           </div>
           <div className={cls(canSave)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd></div><div className="caption">Undo</div></div>

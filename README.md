@@ -58,7 +58,7 @@ A content-aware brush for removing dust, scratches, or other blemishes. Enable i
 
 ### Crop edges
 
-WASD keys trim 3 px from the top, left, bottom, and right edges of the working image.
+The physical WASD positions trim 3 px from the top, left, bottom, and right edges of the working image. The Shortcuts panel displays the corresponding keys for the active layout (for example, ZQSD on AZERTY).
 
 ### Rotate
 
@@ -82,9 +82,9 @@ Ctrl/⌘ + S or the **Save image** button. Output format is determined by the fi
 
 | Key | Action |
 |---|---|
-| W A S D | Crop top / left / bottom / right |
-| Q | Rotate CCW 90° (or disc −15°) |
-| E | Rotate CW 90° (or disc +15°) |
+| Physical W A S D positions | Crop top / left / bottom / right |
+| Physical Q position | Rotate CCW 90° (or disc −15°) |
+| Physical E position | Rotate CW 90° (or disc +15°) |
 | Ctrl/⌘ + Z | Undo |
 | Ctrl/⌘ + O | Load |
 | Ctrl/⌘ + S | Save |

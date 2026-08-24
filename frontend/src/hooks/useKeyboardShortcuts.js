@@ -4,6 +4,7 @@ import {
 } from '../../wailsjs/go/main/App'
 import { Quit } from '../../wailsjs/runtime/runtime'
 import { adjustmentSelectionPayload } from '../utils/adjustmentSelection'
+import { spatialShortcutKey } from '../utils/keyboardShortcuts'
 
 export const KEYBOARD_CROP_AMOUNT = 3
 
@@ -30,7 +31,13 @@ export function useKeyboardShortcuts({
 }) {
   useEffect(() => {
     const handleKeyDown = async (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyW') {
+      // `key` follows the user's active keyboard layout, while `code` names the
+      // physical QWERTY key position. Shortcuts shown as letters should follow
+      // the label the user actually presses (for example Z on AZERTY/Dvorak).
+      const key = e.key.toLowerCase()
+      const spatialKey = spatialShortcutKey(e)
+
+      if ((e.ctrlKey || e.metaKey) && key === 'w') {
         e.preventDefault()
         if (unsavedChanges) {
           const saveFirst = window.confirm('You have unsaved changes. Save before quitting?')
@@ -53,7 +60,7 @@ export function useKeyboardShortcuts({
         Quit()
         return
       }
-      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyO') {
+      if ((e.ctrlKey || e.metaKey) && key === 'o') {
         e.preventDefault()
         try {
           await handleLoadImage()
@@ -64,7 +71,7 @@ export function useKeyboardShortcuts({
         return
       }
 
-      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyV') {
+      if ((e.ctrlKey || e.metaKey) && key === 'v') {
         const active = document.activeElement
         if (active && (['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable)) return
         e.preventDefault()
@@ -78,7 +85,7 @@ export function useKeyboardShortcuts({
       try {
         let result
 
-        if ((e.ctrlKey || e.metaKey) && e.code === 'KeyD' && (adjustmentSelectionActive || adjustmentRect)) {
+        if ((e.ctrlKey || e.metaKey) && key === 'd' && (adjustmentSelectionActive || adjustmentRect)) {
           e.preventDefault()
           if (e.repeat) return
           setAdjustmentRect(null)
@@ -87,7 +94,7 @@ export function useKeyboardShortcuts({
         }
 
         const copyRect = adjustmentRect || (mode === 'normal' ? normalRect : null)
-        if ((e.ctrlKey || e.metaKey) && e.code === 'KeyC' && copyRect) {
+        if ((e.ctrlKey || e.metaKey) && key === 'c' && copyRect) {
           const active = document.activeElement
           if (active && (['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable)) return
           e.preventDefault()
@@ -147,8 +154,7 @@ export function useKeyboardShortcuts({
           }
         }
 
-        const key = e.key.toLowerCase()
-        if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') {
+        if ((e.ctrlKey || e.metaKey) && key === 'z') {
           if (e.repeat) return
           const active = document.activeElement
           if (active && (['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable)) return
@@ -170,7 +176,7 @@ export function useKeyboardShortcuts({
           return
         }
 
-        if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
+        if ((e.ctrlKey || e.metaKey) && key === 's') {
           if (e.repeat) return
           e.preventDefault()
           if (!canSave) return
@@ -189,8 +195,8 @@ export function useKeyboardShortcuts({
           return
         }
 
-        if (['w', 's', 'a', 'd', 'q', 'e'].includes(key)) {
-          if (['w', 's', 'a', 'd'].includes(key)) e.preventDefault()
+        if (spatialKey) {
+          if (['w', 's', 'a', 'd'].includes(spatialKey)) e.preventDefault()
           if (!canSave) { showStatus('Apply a crop first before adjusting'); return }
         }
 
@@ -212,12 +218,12 @@ export function useKeyboardShortcuts({
           return pendingCrop
         }
 
-        switch (key) {
+        switch (spatialKey) {
           case 'w':
           case 's':
           case 'a':
           case 'd': {
-            const direction = { w: 'top', s: 'bottom', a: 'left', d: 'right' }[key]
+            const direction = { w: 'top', s: 'bottom', a: 'left', d: 'right' }[spatialKey]
             if (!beginOptimisticCrop(direction)) return
             result = await Crop({ direction })
             // From this point on the backend state is committed. Keep the

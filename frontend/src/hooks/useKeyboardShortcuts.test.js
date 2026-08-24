@@ -64,10 +64,10 @@ function makeProps(overrides = {}) {
   }
 }
 
-async function pressCopy() {
+async function pressCopy(code = 'KeyC') {
   const event = new KeyboardEvent('keydown', {
     key: 'c',
-    code: 'KeyC',
+    code,
     ctrlKey: true,
     bubbles: true,
     cancelable: true,
@@ -109,6 +109,17 @@ describe('Ctrl+C selection copy', () => {
 
     expect(appMocks.CopySelectionToClipboard).toHaveBeenCalledWith({ x1: 15, y1: 5, x2: 90, y2: 70 })
   })
+
+  it('uses the layout-aware key instead of the physical QWERTY key code', async () => {
+    const props = makeProps({
+      adjustmentRect: { x1: 10, y1: 20, x2: 30, y2: 40 },
+    })
+    renderHook(() => useKeyboardShortcuts(props))
+
+    await pressCopy('KeyJ')
+
+    expect(appMocks.CopySelectionToClipboard).toHaveBeenCalledWith({ x1: 10, y1: 20, x2: 30, y2: 40 })
+  })
 })
 
 describe('Ctrl+V clipboard load', () => {
@@ -140,5 +151,100 @@ describe('Ctrl+V clipboard load', () => {
     expect(event.defaultPrevented).toBe(false)
     expect(props.handlePasteImage).not.toHaveBeenCalled()
     input.remove()
+  })
+
+  it('recognizes the typed letter when its physical key code differs', async () => {
+    const props = makeProps({ imageLoaded: false })
+    renderHook(() => useKeyboardShortcuts(props))
+    const event = new KeyboardEvent('keydown', {
+      key: 'v', code: 'Period', ctrlKey: true, bubbles: true, cancelable: true,
+    })
+
+    act(() => window.dispatchEvent(event))
+    await waitFor(() => expect(props.handlePasteImage).toHaveBeenCalledOnce())
+
+    expect(event.defaultPrevented).toBe(true)
+  })
+})
+
+describe('layout-aware command shortcuts', () => {
+  it('saves using the typed S key regardless of physical position', async () => {
+    const props = makeProps({ canSave: true })
+    renderHook(() => useKeyboardShortcuts(props))
+    const event = new KeyboardEvent('keydown', {
+      key: 's', code: 'KeyO', ctrlKey: true, bubbles: true, cancelable: true,
+    })
+
+    act(() => window.dispatchEvent(event))
+    await waitFor(() => expect(props.handleSaveImage).toHaveBeenCalledOnce())
+
+    expect(event.defaultPrevented).toBe(true)
+  })
+
+  it('undoes using the typed Z key regardless of physical position', async () => {
+    const props = makeProps()
+    renderHook(() => useKeyboardShortcuts(props))
+    const event = new KeyboardEvent('keydown', {
+      key: 'z', code: 'Semicolon', ctrlKey: true, bubbles: true, cancelable: true,
+    })
+
+    act(() => window.dispatchEvent(event))
+    await waitFor(() => expect(props.handleUndo).toHaveBeenCalledOnce())
+
+    expect(event.defaultPrevented).toBe(true)
+  })
+
+  it('does not trigger a command from its old physical QWERTY position', () => {
+    const props = makeProps({ canSave: true })
+    renderHook(() => useKeyboardShortcuts(props))
+    const event = new KeyboardEvent('keydown', {
+      key: 'o', code: 'KeyS', ctrlKey: true, bubbles: true, cancelable: true,
+    })
+
+    act(() => window.dispatchEvent(event))
+
+    expect(props.handleSaveImage).not.toHaveBeenCalled()
+    expect(props.handleLoadImage).toHaveBeenCalledOnce()
+  })
+})
+
+describe('layout-independent spatial shortcuts', () => {
+  it.each([
+    ['z', 'KeyW', 'top'],
+    ['q', 'KeyA', 'left'],
+    ['s', 'KeyS', 'bottom'],
+    ['d', 'KeyD', 'right'],
+  ])('maps AZERTY %s at %s to crop %s', async (key, code, direction) => {
+    const props = makeProps({ canSave: true })
+    renderHook(() => useKeyboardShortcuts(props))
+    const event = new KeyboardEvent('keydown', {
+      key, code, bubbles: true, cancelable: true,
+    })
+
+    act(() => window.dispatchEvent(event))
+    await waitFor(() => expect(appMocks.Crop).toHaveBeenCalledWith({ direction }))
+  })
+
+  it('uses the physical Q/E positions for rotation on Dvorak', async () => {
+    const props = makeProps({ canSave: true })
+    renderHook(() => useKeyboardShortcuts(props))
+    const event = new KeyboardEvent('keydown', {
+      key: "'", code: 'KeyQ', bubbles: true, cancelable: true,
+    })
+
+    act(() => window.dispatchEvent(event))
+    await waitFor(() => expect(appMocks.Rotate).toHaveBeenCalledWith({ flipCode: 2 }))
+  })
+
+  it('does not treat Ctrl plus a spatial position as a crop command', () => {
+    const props = makeProps({ canSave: true })
+    renderHook(() => useKeyboardShortcuts(props))
+    const event = new KeyboardEvent('keydown', {
+      key: 'x', code: 'KeyW', ctrlKey: true, bubbles: true, cancelable: true,
+    })
+
+    act(() => window.dispatchEvent(event))
+
+    expect(appMocks.Crop).not.toHaveBeenCalled()
   })
 })
