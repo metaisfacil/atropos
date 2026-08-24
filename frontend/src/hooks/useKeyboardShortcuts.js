@@ -22,7 +22,7 @@ export function useKeyboardShortcuts({
   setPreview, setFeatherSize, setLoading, setRealImageDims,
   preview, realImageDims, optimisticCrop, setOptimisticCrop,
   setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setDiscRotation,
-  displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, handleLoadImage, canSave,
+  displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, handleLoadImage, handlePasteImage, canSave,
   normalRect, handleNormalCrop, handleUndo,
   unsavedChanges, setUnsavedChanges, confirmClose,
   cornerState, setCornerState, setSelectedCornerPts,
@@ -63,6 +63,16 @@ export function useKeyboardShortcuts({
         }
         return
       }
+
+      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyV') {
+        const active = document.activeElement
+        if (active && (['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable)) return
+        e.preventDefault()
+        if (e.repeat) return
+        await handlePasteImage()
+        return
+      }
+
       if (!imageLoaded) return
       let pendingCrop = null
       try {
@@ -263,5 +273,5 @@ export function useKeyboardShortcuts({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, canSave, handleLoadImage, cornerState.cornerCount, adjustmentSelectionActive, adjustmentRect, preview, realImageDims, optimisticCrop]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, canSave, handleLoadImage, handlePasteImage, cornerState.cornerCount, adjustmentSelectionActive, adjustmentRect, preview, realImageDims, optimisticCrop]) // eslint-disable-line react-hooks/exhaustive-deps
 }

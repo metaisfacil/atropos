@@ -57,6 +57,20 @@ var (
 	procClipboardGlobalFree   = clipboardKernel32.NewProc("GlobalFree")
 )
 
+func openWindowsClipboard() error {
+	deadline := time.Now().Add(750 * time.Millisecond)
+	for {
+		opened, _, callErr := procOpenClipboard.Call(0)
+		if opened != 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("open clipboard: %v", callErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func clipboardDIBV5Size(rect image.Rectangle) (int, error) {
 	width, height := rect.Dx(), rect.Dy()
 	if width < 1 || height < 1 {
@@ -132,16 +146,8 @@ func copyImageRegionToClipboard(src *image.NRGBA, rect image.Rectangle) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	deadline := time.Now().Add(750 * time.Millisecond)
-	for {
-		opened, _, callErr := procOpenClipboard.Call(0)
-		if opened != 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("open clipboard: %v", callErr)
-		}
-		time.Sleep(10 * time.Millisecond)
+	if err := openWindowsClipboard(); err != nil {
+		return err
 	}
 	defer procCloseClipboard.Call()
 

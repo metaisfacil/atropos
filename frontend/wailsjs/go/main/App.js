@@ -114,6 +114,10 @@ export function LoadImageBytes(arg1) {
   return window['go']['main']['App']['LoadImageBytes'](arg1);
 }
 
+export function LoadImageFromClipboard() {
+  return window['go']['main']['App']['LoadImageFromClipboard']();
+}
+
 export function LogFrontend(arg1) {
   return window['go']['main']['App']['LogFrontend'](arg1);
 }

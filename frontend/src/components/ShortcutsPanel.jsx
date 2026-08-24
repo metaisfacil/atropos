@@ -34,6 +34,7 @@ export default function ShortcutsPanel({ shortcutsOpen, setShortcutsOpen, mode, 
           </div>
           <div className={cls(canSave)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd></div><div className="caption">Undo</div></div>
           <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>O</kbd></div><div className="caption">Load</div></div>
+          <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>V</kbd></div><div className="caption">Paste image</div></div>
           <div className={cls(canCopySelection)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>C</kbd></div><div className="caption">Copy selection</div></div>
           <div className={cls(canSave)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>S</kbd></div><div className="caption">Save</div></div>
           <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>W</kbd></div><div className="caption">Quit</div></div>

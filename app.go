@@ -70,9 +70,10 @@ type App struct {
 	imageLoaded bool
 	undoStack   []undoEntry
 	clipboardMu sync.Mutex
-	// clipboardWriter is injectable so selection-copy behavior can be tested
-	// without replacing the developer's real system clipboard.
+	// Clipboard accessors are injectable so copy/paste behavior can be tested
+	// without reading or replacing the developer's real system clipboard.
 	clipboardWriter func(*image.NRGBA, image.Rectangle) error
+	clipboardReader func() (*image.NRGBA, string, error)
 
 	// Processing state
 	detectedCorners []image.Point
@@ -170,6 +171,7 @@ func NewApp() *App {
 		cropAmount:        3,
 		undoStack:         []undoEntry{},
 		clipboardWriter:   copyImageRegionToClipboard,
+		clipboardReader:   readImageFromClipboard,
 		bgColor:           color.NRGBA{R: 255, G: 255, B: 255, A: 255},
 		postDiscWhite:     255,
 		touchupBackend:    "patchmatch",

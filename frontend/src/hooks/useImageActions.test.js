@@ -19,6 +19,7 @@ const appMocks = vi.hoisted(() => ({
   RecropImage: vi.fn(),
   CancelCornerDetect: vi.fn(),
   CancelTouchup: vi.fn(),
+  LoadImageFromClipboard: vi.fn(),
   LoadImageBytes: vi.fn(),
   ResetDisc: vi.fn(),
   ClearLines: vi.fn(),
@@ -143,5 +144,31 @@ describe('Manual corner parameters', () => {
       maxCorners: 275,
       minDistance: 37,
     }))
+  })
+})
+
+describe('Backend clipboard load', () => {
+  it('loads clipboard pixels without transferring frontend bytes', async () => {
+    const props = makeProps()
+    appMocks.LoadImageFromClipboard.mockResolvedValue({
+      preview: '/__atropos/preview/session-4/0.jpg',
+      width: 7200,
+      height: 3600,
+      format: 'BMP',
+      dpiX: 0,
+      dpiY: 0,
+    })
+    const { result } = renderHook(() => useImageActions(props))
+    await waitFor(() => expect(appMocks.GetLaunchArgs).toHaveBeenCalled())
+
+    await act(async () => result.current.handlePasteImage())
+
+    expect(appMocks.CancelTouchup).toHaveBeenCalled()
+    expect(appMocks.CancelCornerDetect).toHaveBeenCalled()
+    expect(appMocks.LoadImageFromClipboard).toHaveBeenCalledOnce()
+    expect(appMocks.LoadImageBytes).not.toHaveBeenCalled()
+    expect(props.setPreview).toHaveBeenCalledWith('/__atropos/preview/session-4/0.jpg')
+    expect(props.setRealImageDims).toHaveBeenCalledWith({ w: 7200, h: 3600 })
+    expect(props.setAdjustmentRect).toHaveBeenCalledWith(null)
   })
 })

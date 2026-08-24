@@ -10,9 +10,9 @@ This document contains the detailed system model, data flow, and operation order
 
 | File | Responsibility |
 |------|----------------|
-| `hooks/useImageActions.js` | Go API action handlers: `loadFile`, `loadImageFromBytes`, `handleLoadImage`, `handleDetectCorners`, `handleSkipCrop`, `handleRecrop`, `handleResetCorners/Disc/Normal`, `handleNormalCrop`, `handleClearLines`, `handleSaveImage`, `flushPendingSave`, `handleModeSwitch`, `handleCompositorLoad`, `handleUndo`. Also owns the `OnFileDrop` / paste / URL-drop / launch-args effects, close-request event flow, corner-detect generation guards (`detectGenRef`), cached corner entry (`cornerEntryRef`), and deferred save/drop queues. |
+| `hooks/useImageActions.js` | Go API action handlers: `loadFile`, `loadImageFromBytes`, `handleLoadImage`, `handlePasteImage`, `handleDetectCorners`, `handleSkipCrop`, `handleRecrop`, `handleResetCorners/Disc/Normal`, `handleNormalCrop`, `handleClearLines`, `handleSaveImage`, `flushPendingSave`, `handleModeSwitch`, `handleCompositorLoad`, `handleUndo`. Also owns the `OnFileDrop` / URL-drop / launch-args effects, close-request event flow, corner-detect generation guards (`detectGenRef`), cached corner entry (`cornerEntryRef`), and deferred save/drop queues. |
 | `hooks/useMouseHandlers.js` | All pointer interaction: `handleMouseDown/Move/Up/ImageMouseLeave` across all modes. Owns refs for corner click guards, disc drag state, line endpoint editing, and Normal-mode draw/move/resize (`normalDragPendingRef`, `normalMoveDragRef`, `normalHandleDragRef`). Uses shared `computeDiscShift` mapping from `utils/imageCoords` for consistent disc translation math across live preview and backend commit. Registers `window` `mouseup` and `mousemove` listeners to safely finish drags outside the canvas area. Returns `displayToImage` and `lineStartImgRef` for stable image-space coordinates during zoom changes mid-drag. |
-| `hooks/useKeyboardShortcuts.js` | Single `keydown` effect: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+C`/`Cmd+C` (send an adjustment selection or uncommitted Normal crop rectangle to the backend for native clipboard copy), `Ctrl+Z` (undo), `Ctrl+S` (save), `Ctrl+O` (load), `Ctrl+W`/`Cmd+W` (quit), `Enter` (apply Normal crop), and `WASDQE` (crop/rotate). In corner mode, `Ctrl+Z` first calls `UndoLastCorner` for in-progress corner picks (1–3) before using backend image undo. WASDQE are guarded by `canSave`; if no crop result exists, `showStatus` is shown instead of forwarding to Go. |
+| `hooks/useKeyboardShortcuts.js` | Single `keydown` effect: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+C`/`Cmd+C` (send an adjustment selection or uncommitted Normal crop rectangle to the backend for native clipboard copy), `Ctrl+V`/`Cmd+V` (ask the backend to read the native image clipboard and replace the document), `Ctrl+Z` (undo), `Ctrl+S` (save), `Ctrl+O` (load), `Ctrl+W`/`Cmd+W` (quit), `Enter` (apply Normal crop), and `WASDQE` (crop/rotate). In corner mode, `Ctrl+Z` first calls `UndoLastCorner` for in-progress corner picks (1–3) before using backend image undo. WASDQE are guarded by `canSave`; if no crop result exists, `showStatus` is shown instead of forwarding to Go. |
 | `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, window mouseup effect, `EventsOn("touchup-done")` effect. |
 | `hooks/useZoomPan.js` | Viewport camera state: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, and scroll anchoring. `imgRef` points at the transparent logical image surface, so cursor anchoring and the existing pointer state machine use the same geometry as the canvas renderer without making image pixels a DOM `<img>`. |
 | `hooks/usePersistentSettings.js` | File-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, `autoCornerParams`, `closeAfterSave`, `postSaveEnabled`, `postSaveCommand`, `touchupRemainsActive`, `straightEdgeRemainsActive`, `autoDetectOnModeSwitch`). Loads from Go (`GetAllSettings`) on mount and persists via `SaveAllSettings` on every change. Performs a one-time migration from `localStorage` on first launch of the file-backed version. |
@@ -175,14 +175,14 @@ LoadImage(req)
     9. Return ImageInfo{Width, Height, Preview, Format, DPIX, DPIY, SuggestedCornerParams{MinDistance, MaxCorners}}
 ```
 
-`LoadImageBytes(req)` follows the same pipeline and state reset, but decodes from raw bytes (clipboard or browser URL drop) instead of a filesystem path.
+`LoadImageBytes(req)` follows the same pipeline and state reset for browser URL drops. `LoadImageFromClipboard()` reads clipboard pixels inside the backend; on Windows it prefers direct DIBV5/DIB conversion so large images do not become JavaScript blobs or byte arrays.
 
 **Frontend `loadFile(filePath, autoDetect)` / `loadImageFromBytes(...)` flow:**
 
 ```
 setLoading(true)
 setZoom(1)
-LoadImage(...) or LoadImageBytes(...)
+LoadImage(...), LoadImageBytes(...), or LoadImageFromClipboard()
     → setPreview, setImageLoaded, setRealImageDims
     → setImageMeta({ format, dpiX, dpiY })
     → reset ALL mode-specific frontend state (cornerCount, linesDone, discActive,

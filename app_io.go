@@ -43,7 +43,7 @@ type LoadImageRequest struct {
 	FilePath string `json:"filePath"`
 }
 
-// LoadImageBytesRequest contains image bytes for loading an image from clipboard/drag drop.
+// LoadImageBytesRequest contains image bytes for loading browser-originated data.
 type LoadImageBytesRequest struct {
 	Data []byte `json:"data"`
 	Name string `json:"name,omitempty"`
@@ -300,7 +300,7 @@ func (a *App) SaveImage(req SaveRequest) (*ProcessResult, error) {
 	}, nil
 }
 
-// LoadImageBytes loads an image directly from raw bytes (clipboard or browser drop).
+// LoadImageBytes loads an image directly from raw bytes (for example, a browser URL drop).
 func (a *App) LoadImageBytes(req LoadImageBytesRequest) (*ImageInfo, error) {
 	if !a.loadMu.TryLock() {
 		const msg = "LoadImageBytes: rejected, another load is already in progress"

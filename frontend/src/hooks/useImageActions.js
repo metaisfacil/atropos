@@ -17,6 +17,7 @@ import {
   RecropImage,
   CancelCornerDetect,
   CancelTouchup,
+  LoadImageFromClipboard,
   LoadImageBytes,
   ResetDisc,
   ClearLines,
@@ -174,6 +175,8 @@ export function useImageActions({
 
   const loadImageFromBytes = async (arrayBuffer, sourceName = '[Clipboard Data]') => {
     CancelTouchup()
+    detectGenRef.current++
+    CancelCornerDetect()
     setLoading(true)
     setLoadingFull(true)
     setZoom(1)
@@ -182,6 +185,34 @@ export function useImageActions({
     const bytes = Array.from(new Uint8Array(arrayBuffer))
     const result = await LoadImageBytes({ data: bytes, name: sourceName })
     await applyLoadedImage(result, true)
+  }
+
+  const loadImageFromClipboard = async () => {
+    CancelTouchup()
+    detectGenRef.current++
+    CancelCornerDetect()
+    setLoading(true)
+    setLoadingFull(true)
+    setZoom(1)
+    showStatus('Loading clipboard image…')
+
+    const result = await LoadImageFromClipboard()
+    await applyLoadedImage(result, true)
+  }
+
+  const handlePasteImage = async () => {
+    if (loadingRef.current || savingRef.current) return
+    loadingRef.current = true
+    try {
+      await loadImageFromClipboard()
+    } catch (err) {
+      console.error('Clipboard image load error:', err)
+      showError(err)
+    } finally {
+      loadingRef.current = false
+      setLoading(false)
+      setLoadingFull(false)
+    }
   }
 
   // ── Load image (dialog) ───────────────────────────────────────────────────
@@ -244,28 +275,8 @@ export function useImageActions({
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Clipboard paste / browser URL drop image loading ─────────────────────────
+  // ── Browser URL drop image loading ───────────────────────────────────────────
   useEffect(() => {
-    const onPaste = async (e) => {
-      const items = e.clipboardData?.items
-      if (!items || items.length === 0) return
-
-      const imageItem = Array.from(items).find(i => i.type.startsWith('image/'))
-      if (!imageItem) return
-
-      e.preventDefault()
-      const file = imageItem.getAsFile()
-      if (!file) return
-
-      try {
-        const buffer = await file.arrayBuffer()
-        await loadImageFromBytes(buffer, '[Clipboard Data]')
-      } catch (err) {
-        console.error('Clipboard image load error:', err)
-        showError(err)
-      }
-    }
-
     const onDrop = async (e) => {
       if (!e.dataTransfer) return
       // File drops from the filesystem are handled exclusively by Wails OnFileDrop
@@ -289,11 +300,9 @@ export function useImageActions({
       }
     }
 
-    window.addEventListener('paste', onPaste)
     window.addEventListener('drop', onDrop)
 
     return () => {
-      window.removeEventListener('paste', onPaste)
       window.removeEventListener('drop', onDrop)
     }
   }, [])
@@ -879,6 +888,7 @@ export function useImageActions({
     loadingFull,
     saving,
     handleLoadImage,
+    handlePasteImage,
     handleDetectCorners,
     handleCompositorLoad,
     handleSkipCrop,

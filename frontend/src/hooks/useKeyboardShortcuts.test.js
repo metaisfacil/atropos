@@ -46,6 +46,7 @@ function makeProps(overrides = {}) {
     handleSaveImage: vi.fn(),
     flushPendingSave: vi.fn(),
     handleLoadImage: vi.fn(),
+    handlePasteImage: vi.fn(),
     canSave: false,
     normalRect: null,
     handleNormalCrop: vi.fn(),
@@ -107,5 +108,37 @@ describe('Ctrl+C selection copy', () => {
     await pressCopy()
 
     expect(appMocks.CopySelectionToClipboard).toHaveBeenCalledWith({ x1: 15, y1: 5, x2: 90, y2: 70 })
+  })
+})
+
+describe('Ctrl+V clipboard load', () => {
+  it('invokes the backend paste path even when no document is loaded', async () => {
+    const props = makeProps({ imageLoaded: false })
+    renderHook(() => useKeyboardShortcuts(props))
+    const event = new KeyboardEvent('keydown', {
+      key: 'v', code: 'KeyV', ctrlKey: true, bubbles: true, cancelable: true,
+    })
+
+    act(() => window.dispatchEvent(event))
+    await waitFor(() => expect(props.handlePasteImage).toHaveBeenCalledOnce())
+
+    expect(event.defaultPrevented).toBe(true)
+  })
+
+  it('leaves native paste intact for editable controls', async () => {
+    const props = makeProps()
+    renderHook(() => useKeyboardShortcuts(props))
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.focus()
+    const event = new KeyboardEvent('keydown', {
+      key: 'v', code: 'KeyV', ctrlKey: true, bubbles: true, cancelable: true,
+    })
+
+    act(() => window.dispatchEvent(event))
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(props.handlePasteImage).not.toHaveBeenCalled()
+    input.remove()
   })
 })
