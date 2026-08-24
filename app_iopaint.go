@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"atropos/internal/raster"
 )
 
 // iopaintRequest mirrors the JSON body expected by the IOPaint /api/v1/inpaint endpoint.
@@ -70,11 +72,11 @@ func (a *App) iopaintFill(ctx context.Context, src *image.NRGBA, mask *image.Alp
 	const cropMargin = 128
 	crop, hasMask := maskBoundingBox(mask, cropMargin, src.Bounds())
 	if !hasMask {
-		return toNRGBA(src), nil
+		return raster.ToNRGBA(src), nil
 	}
 
 	// Crop source to the patch region (origin translated to 0,0 by toNRGBA).
-	cropSrc := toNRGBA(src.SubImage(crop))
+	cropSrc := raster.ToNRGBA(src.SubImage(crop))
 
 	// Crop mask to the same region.
 	cropMask := image.NewAlpha(image.Rect(0, 0, crop.Dx(), crop.Dy()))
@@ -203,10 +205,10 @@ func (a *App) iopaintFill(ctx context.Context, src *image.NRGBA, mask *image.Alp
 		}
 	}
 
-	patch := toNRGBA(out)
+	patch := raster.ToNRGBA(out)
 
 	// Composite: copy inpainted pixels back into a full clone of src.
-	result := toNRGBA(src)
+	result := raster.ToNRGBA(src)
 	for y := crop.Min.Y; y < crop.Max.Y; y++ {
 		for x := crop.Min.X; x < crop.Max.X; x++ {
 			if mask.AlphaAt(x, y).A > 0 {

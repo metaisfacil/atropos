@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"atropos/internal/raster"
+
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/image/bmp"
 	"golang.org/x/image/tiff"
@@ -26,7 +28,7 @@ import (
 // loaded. It does NOT touch originalImage, currentImage, imageLoaded, or
 // loadedFilePath — the caller is responsible for those.
 func (a *App) resetPipelineState() {
-	a.previewAssets.reset()
+	a.previewAssets.Reset()
 	a.warpedImage = nil
 	a.levelsBaseImage = nil
 	a.descreenBaseImage = nil
@@ -90,12 +92,12 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	a.logf("LoadImage: decode took %v", time.Since(t0))
 
 	t1 := time.Now()
-	nrgba := toNRGBA(src)
+	nrgba := raster.ToNRGBA(src)
 	a.logf("LoadImage: toNRGBA took %v", time.Since(t1))
 
 	t2 := time.Now()
-	a.originalImage = nrgba            // reuse — toNRGBA already made a fresh copy
-	a.currentImage = cloneImage(nrgba) // one clone instead of two
+	a.originalImage = nrgba                   // reuse — toNRGBA already made a fresh copy
+	a.currentImage = raster.CloneNRGBA(nrgba) // one clone instead of two
 	a.imageLoaded = true
 	a.loadedFilePath = req.FilePath
 	a.resetPipelineState()
@@ -322,12 +324,12 @@ func (a *App) LoadImageBytes(req LoadImageBytesRequest) (*ImageInfo, error) {
 	a.logf("LoadImageBytes: decode took %v", time.Since(t0))
 
 	t1 := time.Now()
-	nrgba := toNRGBA(src)
+	nrgba := raster.ToNRGBA(src)
 	a.logf("LoadImageBytes: toNRGBA took %v", time.Since(t1))
 
 	t2 := time.Now()
 	a.originalImage = nrgba
-	a.currentImage = cloneImage(nrgba)
+	a.currentImage = raster.CloneNRGBA(nrgba)
 	a.imageLoaded = true
 	a.loadedFilePath = ""
 	a.resetPipelineState()
@@ -375,7 +377,7 @@ func (a *App) RecropImage() (*ImageInfo, error) {
 
 	src := a.warpedImage
 	a.originalImage = src
-	a.currentImage = cloneImage(src)
+	a.currentImage = raster.CloneNRGBA(src)
 	a.resetPipelineState()
 
 	preview, err := a.imagePreviewURL(a.currentImage)

@@ -15,6 +15,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"atropos/internal/compositor"
+	"atropos/internal/imageops"
+	"atropos/internal/raster"
+
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/image/bmp"
 	"golang.org/x/image/tiff"
@@ -102,7 +106,7 @@ func (a *App) CompositorStitch(req CompositorStitchRequest) (*CompositorResult, 
 				ch <- decodeResult{idx: i, err: fmt.Errorf("failed to decode image %d (%q): %w", i, filepath.Base(path), err)}
 				return
 			}
-			img := toNRGBA(raw)
+			img := raster.ToNRGBA(raw)
 			a.logf("CompositorStitch: image %d decoded: %v", i, img.Bounds())
 			ch <- decodeResult{idx: i, img: img}
 		}(i, path)
@@ -117,7 +121,7 @@ func (a *App) CompositorStitch(req CompositorStitchRequest) (*CompositorResult, 
 	}
 
 	// Run the stitching algorithm.
-	result, err := stitchImages(imgs)
+	result, err := compositor.Stitch(imgs)
 	if err != nil {
 		return nil, err
 	}
@@ -171,14 +175,14 @@ func (a *App) CompositorLoadResult(req CompositorLoadResultRequest) (*ImageInfo,
 	defer a.loadMu.Unlock()
 	a.cancelTouchup()
 
-	img := cloneImage(result)
+	img := raster.CloneNRGBA(result)
 	steps := ((req.RotationSteps % 4) + 4) % 4
 	for i := 0; i < steps; i++ {
-		img = rotate90(img, 1) // 1 = CW
+		img = imageops.Rotate90(img, 1) // 1 = CW
 	}
 
 	a.originalImage = img
-	a.currentImage = cloneImage(img)
+	a.currentImage = raster.CloneNRGBA(img)
 	a.warpedImage = nil
 	a.levelsBaseImage = nil
 	a.imageLoaded = true

@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"unsafe"
 
+	"atropos/internal/raster"
+
 	"golang.org/x/sys/windows"
 )
 
@@ -102,7 +104,7 @@ func readImageFromClipboard() (*image.NRGBA, string, error) {
 		if err != nil {
 			continue
 		}
-		return toNRGBA(decoded), decodedFormat, nil
+		return raster.ToNRGBA(decoded), decodedFormat, nil
 	}
 
 	if lastErr != nil {

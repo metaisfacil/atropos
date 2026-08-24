@@ -4,6 +4,8 @@ import (
 	"context"
 	"image"
 	"testing"
+
+	"atropos/internal/raster"
 )
 
 func solidTouchupTestImage(value uint8) *image.NRGBA {
@@ -28,8 +30,8 @@ func registerTouchupTestOperation(a *App) uint64 {
 func TestTouchupUndoTouchupUndoKeepsHistoryConsistent(t *testing.T) {
 	a := NewApp()
 	base := solidTouchupTestImage(10)
-	a.currentImage = cloneImage(base)
-	a.warpedImage = cloneImage(base)
+	a.currentImage = raster.CloneNRGBA(base)
+	a.warpedImage = raster.CloneNRGBA(base)
 
 	firstSource := a.workingImage()
 	firstGeneration := registerTouchupTestOperation(a)
@@ -68,7 +70,7 @@ func TestTouchupUndoTouchupUndoKeepsHistoryConsistent(t *testing.T) {
 func TestTouchupCommitRejectsStaleSourceWithoutChangingUndo(t *testing.T) {
 	a := NewApp()
 	oldSource := solidTouchupTestImage(10)
-	a.currentImage = cloneImage(oldSource)
+	a.currentImage = raster.CloneNRGBA(oldSource)
 	a.warpedImage = oldSource
 	generation := registerTouchupTestOperation(a)
 

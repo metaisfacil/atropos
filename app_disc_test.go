@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"atropos/internal/raster"
 )
 
 // drawTestDisc is a convenience helper that calls DrawDisc on a loaded app
@@ -85,7 +87,7 @@ func TestDrawDisc_ResetsPostDiscLevels(t *testing.T) {
 
 func TestDrawDisc_ResetsLevelsBaseImage(t *testing.T) {
 	a := newTestApp(200, 200)
-	a.levelsBaseImage = cloneImage(a.currentImage)
+	a.levelsBaseImage = raster.CloneNRGBA(a.currentImage)
 	_, err := a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 50})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -204,7 +206,7 @@ func TestResetDisc_ClearsWarpedImage(t *testing.T) {
 func TestResetDisc_ClearsLevelsBaseImage(t *testing.T) {
 	a := newTestApp(200, 200)
 	drawTestDisc(t, a)
-	a.levelsBaseImage = cloneImage(a.currentImage)
+	a.levelsBaseImage = raster.CloneNRGBA(a.currentImage)
 	_, err := a.ResetDisc()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

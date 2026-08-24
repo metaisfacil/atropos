@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"image"
 
+	"atropos/internal/raster"
+
 	"golang.design/x/clipboard"
 )
 
@@ -22,5 +24,5 @@ func readImageFromClipboard() (*image.NRGBA, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("decode clipboard image: %w", err)
 	}
-	return toNRGBA(decoded), format, nil
+	return raster.ToNRGBA(decoded), format, nil
 }

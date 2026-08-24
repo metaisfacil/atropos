@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"atropos/internal/raster"
+
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -43,7 +45,7 @@ func (a *App) LoadImageFromClipboard() (*ImageInfo, error) {
 
 	t1 := time.Now()
 	a.originalImage = nrgba
-	a.currentImage = cloneImage(nrgba)
+	a.currentImage = raster.CloneNRGBA(nrgba)
 	a.imageLoaded = true
 	a.loadedFilePath = ""
 	a.resetPipelineState()

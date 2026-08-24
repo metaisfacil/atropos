@@ -3,6 +3,9 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"atropos/internal/dust"
+	"atropos/internal/raster"
 )
 
 // DustRemovalRequest selects one of three dust-removal strength banks.
@@ -30,9 +33,9 @@ func (a *App) DustRemoval(req DustRemovalRequest) (*ProcessResult, error) {
 	}
 	processSource := src
 	if selectionKey.Active {
-		processSource = subImage(src, selectionRect)
+		processSource = raster.CropNRGBA(src, selectionRect)
 	}
-	processedRegion, repaired, usedDPI, err := applyDustRemoval(processSource, level, req.DPI)
+	processedRegion, repaired, usedDPI, err := dust.Apply(processSource, level, req.DPI)
 	if err != nil {
 		return nil, err
 	}

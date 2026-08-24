@@ -6,6 +6,13 @@ import (
 	"fmt"
 	"image"
 	"math"
+
+	"atropos/internal/geometry"
+	"atropos/internal/imageops"
+	"atropos/internal/raster"
+
+	"atropos/internal/cornerdetect"
+	"atropos/internal/patchmatch"
 )
 
 // suggestCornerParams returns sensible detection defaults derived from image
@@ -108,7 +115,7 @@ func stretchGrayRange(src *image.Gray, blackPoint, whitePoint int) *image.Gray {
 		srcRow := src.Pix[y*src.Stride : y*src.Stride+w]
 		dstRow := dst.Pix[y*dst.Stride : y*dst.Stride+w]
 		for x, value := range srcRow {
-			dstRow[x] = clampByte(int(float64(int(value)-blackPoint) * scale))
+			dstRow[x] = raster.ClampByte(int(float64(int(value)-blackPoint) * scale))
 		}
 	}
 	return dst
@@ -245,11 +252,11 @@ func refineDetectedCorner(point image.Point, pass cornerDetectPass, highlight, r
 // that ranks well below ordinary artwork corners, even though the curve has
 // isolated it correctly. Dark-background scans keep the established small
 // highlight share so this recovery path does not drown out their detail.
-func highlightRecoveryBudget(maxCorners int, perimeter perimeterBackground) int {
+func highlightRecoveryBudget(maxCorners int, perimeter cornerdetect.PerimeterBackground) int {
 	if maxCorners < 1 {
 		return 1
 	}
-	if perimeter.dark {
+	if perimeter.Dark {
 		return maxCorners
 	}
 	budget := maxCorners * 3 / 4
@@ -288,12 +295,12 @@ type ClickCornerResult struct {
 // warpFromCorners sorts 4 corner points and applies a perspective transform,
 // storing the result in warpedImage and resetting crop offsets.
 func (a *App) warpFromCorners(corners []image.Point) (*image.NRGBA, int, int, error) {
-	sorted := sortVertices(corners[:4])
+	sorted := geometry.SortVertices(corners[:4])
 
-	w1 := dist(sorted[0], sorted[1])
-	h1 := dist(sorted[0], sorted[2])
-	w2 := dist(sorted[2], sorted[3])
-	h2 := dist(sorted[1], sorted[3])
+	w1 := geometry.Distance(sorted[0], sorted[1])
+	h1 := geometry.Distance(sorted[0], sorted[2])
+	w2 := geometry.Distance(sorted[2], sorted[3])
+	h2 := geometry.Distance(sorted[1], sorted[3])
 	width := int(math.Max(w1, w2))
 	height := int(math.Max(h1, h2))
 	if width < 10 || height < 10 {
@@ -307,10 +314,10 @@ func (a *App) warpFromCorners(corners []image.Point) (*image.NRGBA, int, int, er
 
 	var warped *image.NRGBA
 	if a.warpFillMode == "clamp" {
-		warped = perspectiveTransform(a.currentImage, srcPts, dst, width, height)
+		warped = imageops.PerspectiveTransform(a.currentImage, srcPts, dst, width, height)
 	} else {
 		var oobMask *image.Alpha
-		warped, oobMask = perspectiveTransformWithMask(a.currentImage, srcPts, dst, width, height)
+		warped, oobMask = imageops.PerspectiveTransformWithMask(a.currentImage, srcPts, dst, width, height)
 		warped = a.applyWarpFill(warped, oobMask)
 	}
 
@@ -335,7 +342,7 @@ func (a *App) applyWarpFill(img *image.NRGBA, oobMask *image.Alpha) *image.NRGBA
 	}
 
 	if a.warpFillMode == "outpaint" {
-		out, _ := PatchMatchFill(context.Background(), img, oobMask, 9, 5)
+		out, _ := patchmatch.Fill(context.Background(), img, oobMask, 9, 5)
 		if out == nil {
 			out = img
 		}
@@ -412,15 +419,15 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	a.logf("DetectCorners: image %dx%d, working at %dx%d (scale=%.3f)", imgW, imgH, workW, workH, scaleFactor)
 
 	// When downsampling (the common case for large scans), collapse
-	// applyAccentAdjustment + toGrayscale + resizeGray into a single
+	// accent adjustment, grayscale conversion, and resizing into a single
 	// parallelized pass over the source pixels to avoid the large
 	// intermediate NRGBA clone and full-resolution gray buffer.
 	var workGray, rawGray *image.Gray
 	if scaleFactor < 1.0 {
-		workGray, rawGray = resizeNRGBAToGrayPair(a.currentImage, workW, workH, req.AccentValue)
+		workGray, rawGray = raster.ResizeNRGBAToGrayPair(a.currentImage, workW, workH, req.AccentValue)
 	} else {
-		workGray = toGrayscaleAccent(a.currentImage, req.AccentValue)
-		rawGray = toGrayscale(a.currentImage)
+		workGray = raster.ToGrayscaleAccent(a.currentImage, req.AccentValue)
+		rawGray = raster.ToGrayscale(a.currentImage)
 	}
 	highlightGray240 := stretchGrayRange(rawGray, 240, 255)
 	highlightGray230 := stretchGrayRange(rawGray, 230, 255)
@@ -428,17 +435,17 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	a.logf("DetectCorners: adaptive perimeter highlight range %d-%d", adaptiveBlack, adaptiveWhite)
 	workColor := a.currentImage
 	if workW != imgW || workH != imgH {
-		workColor = resizeNRGBA(a.currentImage, workW, workH)
+		workColor = raster.ResizeNRGBA(a.currentImage, workW, workH)
 	}
-	backgroundSilhouette, perimeter := backgroundDistanceSilhouette(workColor)
+	backgroundSilhouette, perimeter := cornerdetect.BackgroundDistanceSilhouette(workColor)
 	a.logf("DetectCorners: perimeter RGB=(%d,%d,%d) noise=%d silhouette=%d-%d dark=%v",
-		perimeter.r, perimeter.g, perimeter.b, perimeter.noise, perimeter.blackPoint, perimeter.whitePoint, perimeter.dark)
+		perimeter.R, perimeter.G, perimeter.B, perimeter.Noise, perimeter.BlackPoint, perimeter.WhitePoint, perimeter.Dark)
 	// Keep each source map's line proposals independent. A strong but
 	// distracting line in one map can otherwise consume the shared proposal
 	// budget before a partial document edge from another map is considered.
 	var lineCorners []image.Point
 	for _, lineSource := range []*image.Gray{rawGray, highlightGray240, highlightGray230, adaptiveHighlightGray, backgroundSilhouette} {
-		proposals, lineErr := lineDerivedCornerProposals(ctx, []*image.Gray{lineSource}, req.MaxCorners, int(float64(req.MinDistance)*scaleFactor))
+		proposals, lineErr := cornerdetect.LineDerivedCornerProposals(ctx, []*image.Gray{lineSource}, req.MaxCorners, int(float64(req.MinDistance)*scaleFactor))
 		if lineErr != nil {
 			return nil, lineErr
 		}
@@ -458,8 +465,8 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 		if high <= 0 || high > 1 {
 			high = 0.99
 		}
-		stretched := stretchGrayPercentiles(workGray, low, high)
-		workGray = applyCLAHE(stretched, 2.0, 8)
+		stretched := imageops.StretchGrayPercentiles(workGray, low, high)
+		workGray = imageops.ApplyCLAHE(stretched, 2.0, 8)
 	} else {
 		// Auto-detect dark images and apply contrast stretch automatically.
 		// Dark scans produce low-magnitude gradients that cause the Shi-Tomasi
@@ -478,8 +485,8 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 			meanLuma := lumaSum / int64(ww*wh)
 			if meanLuma < autoStretchThreshold {
 				a.logf("DetectCorners: auto-applying contrast stretch (mean luma %d < %d)", meanLuma, autoStretchThreshold)
-				stretched := stretchGrayPercentiles(workGray, 0.01, 0.99)
-				workGray = applyCLAHE(stretched, 2.0, 8)
+				stretched := imageops.StretchGrayPercentiles(workGray, 0.01, 0.99)
+				workGray = imageops.ApplyCLAHE(stretched, 2.0, 8)
 			}
 		}
 	}
@@ -494,7 +501,7 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 		workMinDist = 1
 	}
 
-	a.logf("DetectCorners: running multi-scale goodFeaturesToTrack on %dx%d", workW, workH)
+	a.logf("DetectCorners: running multi-scale Shi-Tomasi detection on %dx%d", workW, workH)
 
 	// Build a private set of localizers from the unmodified grayscale. Accent,
 	// CLAHE, and large tensor windows improve discovery but can pull the peak
@@ -504,11 +511,11 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	if refinementMax < 1 {
 		refinementMax = 1
 	}
-	rawBroadRefinementCorners, err := goodFeaturesToTrack(ctx, rawGray, refinementMax, quality, workMinDist, 11)
+	rawBroadRefinementCorners, err := cornerdetect.Detect(ctx, rawGray, cornerdetect.Options{MaxCorners: refinementMax, QualityLevel: quality, MinDistance: workMinDist, BlockSize: 11})
 	if err != nil {
 		return nil, err
 	}
-	rawFineRefinementCorners, err := goodFeaturesToTrack(ctx, rawGray, refinementMax, quality, workMinDist, 5)
+	rawFineRefinementCorners, err := cornerdetect.Detect(ctx, rawGray, cornerdetect.Options{MaxCorners: refinementMax, QualityLevel: quality, MinDistance: workMinDist, BlockSize: 5})
 	if err != nil {
 		return nil, err
 	}
@@ -519,7 +526,7 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	if silhouetteMax > 64 {
 		silhouetteMax = 64
 	}
-	backgroundCorners, err := goodFeaturesToTrack(ctx, backgroundSilhouette, silhouetteMax, quality, workMinDist, 7)
+	backgroundCorners, err := cornerdetect.Detect(ctx, backgroundSilhouette, cornerdetect.Options{MaxCorners: silhouetteMax, QualityLevel: quality, MinDistance: workMinDist, BlockSize: 7})
 	if err != nil {
 		return nil, err
 	}
@@ -551,7 +558,7 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 			if sh < 1 {
 				sh = 1
 			}
-			srcGray = resizeGray(passGray, sw, sh)
+			srcGray = cornerdetect.ResizeGray(passGray, sw, sh)
 		} else {
 			srcGray = passGray
 		}
@@ -575,7 +582,7 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 		if detectMax < 1 {
 			detectMax = 1
 		}
-		pts, err := goodFeaturesToTrack(ctx, srcGray, detectMax, quality, thisMinDist, blockSize)
+		pts, err := cornerdetect.Detect(ctx, srcGray, cornerdetect.Options{MaxCorners: detectMax, QualityLevel: quality, MinDistance: thisMinDist, BlockSize: blockSize})
 		if err != nil {
 			return nil, err
 		}
@@ -601,7 +608,7 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 			allCorners = append(allCorners, workPoint)
 		}
 	}
-	if !perimeter.dark {
+	if !perimeter.Dark {
 		allCorners = append(allCorners, backgroundCorners...)
 	}
 	// Preserve the established point detector's localization when it already
@@ -614,7 +621,7 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	// Remove only near-identical cross-scale results. A broader radius can
 	// discard the better localization of a large, low-contrast corner.
 	uniq := dedupeCornerPoints(allCorners, workMinDist)
-	if perimeter.dark {
+	if perimeter.Dark {
 		// Retain both established point localizations and colour-silhouette
 		// localizations on dark backgrounds. The two sources may differ by only
 		// a few working pixels, but either can be the more accurate side of a
@@ -692,7 +699,7 @@ func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
 		bestDist := math.MaxFloat64
 		bestPt := pt
 		for _, c := range a.detectedCorners {
-			d := dist(pt, c)
+			d := geometry.Distance(pt, c)
 			if d < bestDist {
 				bestDist = d
 				bestPt = c
@@ -824,7 +831,7 @@ func (a *App) SkipCrop() (*ProcessResult, error) {
 		return nil, fmt.Errorf("no image loaded")
 	}
 	descreenReset := a.descreenResultImage != nil
-	a.warpedImage = cloneImage(a.currentImage)
+	a.warpedImage = raster.CloneNRGBA(a.currentImage)
 	a.selectedCorners = nil
 
 	b := a.warpedImage.Bounds()

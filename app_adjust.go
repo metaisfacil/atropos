@@ -4,6 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"image"
+
+	"atropos/internal/descreen"
+	"atropos/internal/imageops"
+	"atropos/internal/raster"
 )
 
 // undoEntry stores a single undo snapshot. rotationAngle is non-nil for
@@ -87,9 +91,9 @@ func (a *App) saveUndo() {
 	preWarp := a.warpedImage == nil
 	var img *image.NRGBA
 	if a.warpedImage != nil {
-		img = cloneImage(a.warpedImage)
+		img = raster.CloneNRGBA(a.warpedImage)
 	} else if a.currentImage != nil {
-		img = cloneImage(a.currentImage)
+		img = raster.CloneNRGBA(a.currentImage)
 	}
 	a.undoStack = append(a.undoStack, undoEntry{image: img, preWarp: preWarp})
 	// Any committing operation invalidates both adjustment baselines so that
@@ -110,9 +114,9 @@ func (a *App) saveDiscRotationUndo() {
 	preWarp := a.warpedImage == nil
 	var img *image.NRGBA
 	if a.warpedImage != nil {
-		img = cloneImage(a.warpedImage)
+		img = raster.CloneNRGBA(a.warpedImage)
 	} else if a.currentImage != nil {
-		img = cloneImage(a.currentImage)
+		img = raster.CloneNRGBA(a.currentImage)
 	}
 	angle := a.rotationAngle
 	a.undoStack = append(a.undoStack, undoEntry{image: img, rotationAngle: &angle, preWarp: preWarp})
@@ -258,7 +262,7 @@ func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
 		}
 	}
 
-	a.warpedImage = subImage(a.warpedImage, r)
+	a.warpedImage = raster.CropNRGBA(a.warpedImage, r)
 
 	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
@@ -279,7 +283,7 @@ func (a *App) Rotate(req RotateRequest) (*ProcessResult, error) {
 	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
 
-	a.warpedImage = rotate90(a.warpedImage, req.FlipCode)
+	a.warpedImage = imageops.Rotate90(a.warpedImage, req.FlipCode)
 
 	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
@@ -306,7 +310,7 @@ func (a *App) ResizeImage(req ResizeRequest) (*ProcessResult, error) {
 
 	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
-	resized := resizeNRGBA(src, req.Width, req.Height)
+	resized := raster.ResizeNRGBA(src, req.Width, req.Height)
 	a.setWorkingImage(resized)
 
 	preview, err := a.imagePreviewURL(resized)
@@ -363,14 +367,14 @@ func (a *App) AutoContrast(req AutoContrastRequest) (*ProcessResult, error) {
 	// call saveUndo() to push the previous state onto the undo stack (which
 	// clears levelsBaseImage), and then restore our captured snapshot into
 	// levelsBaseImage so the sliders can revert back to the original image.
-	preLevelsBase := cloneImage(img)
+	preLevelsBase := raster.CloneNRGBA(img)
 	a.saveUndo()
 
 	contrastSource := img
 	if selectionKey.Active {
-		contrastSource = subImage(img, selectionRect)
+		contrastSource = raster.CropNRGBA(img, selectionRect)
 	}
-	bp, wp := computeAutoContrastPoints(contrastSource)
+	bp, wp := imageops.AutoContrastPoints(contrastSource)
 	a.logf("AutoContrast: blackPt=%d whitePt=%d", bp, wp)
 	adjusted := applyLevelsInSelection(img, bp, wp, selectionKey)
 
@@ -507,7 +511,7 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 
 	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
-	a.warpedImage = subImage(img, image.Rect(left, top, right, bottom))
+	a.warpedImage = raster.CropNRGBA(img, image.Rect(left, top, right, bottom))
 
 	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
@@ -560,20 +564,20 @@ func (a *App) Descreen(req DescreenRequest) (*ProcessResult, error) {
 	//       Descreen call (pointer differs from descreenResultImage).
 	if a.descreenBaseImage == nil || src != a.descreenResultImage || a.descreenSelection != selectionKey {
 		a.saveUndo() // pushes undo entry and clears both baselines
-		a.descreenBaseImage = cloneImage(src)
+		a.descreenBaseImage = raster.CloneNRGBA(src)
 		a.descreenSelection = selectionKey
 		a.logf("Descreen: captured descreenBaseImage")
 	}
 
 	filterSource := a.descreenBaseImage
 	if selectionKey.Active {
-		filterSource = subImage(a.descreenBaseImage, selectionRect)
+		filterSource = raster.CropNRGBA(a.descreenBaseImage, selectionRect)
 	}
 	var filteredRegion *image.NRGBA
 	if req.Fast {
-		filteredRegion = applyDescreenLuminance(filterSource, req.Thresh, req.Radius, req.Middle, req.Highlight, a.logf)
+		filteredRegion = descreen.ApplyLuminance(filterSource, req.Thresh, req.Radius, req.Middle, req.Highlight, a.logf)
 	} else {
-		filteredRegion = applyDescreen(filterSource, req.Thresh, req.Radius, req.Middle, req.Highlight, a.logf)
+		filteredRegion = descreen.Apply(filterSource, req.Thresh, req.Radius, req.Middle, req.Highlight, a.logf)
 	}
 	filtered := filteredRegion
 	if selectionKey.Active {
@@ -629,7 +633,7 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 
 	// Snapshot the base on first touch; reuse on every subsequent drag.
 	if a.levelsBaseImage == nil || a.levelsSelection != selectionKey {
-		a.levelsBaseImage = cloneImage(working)
+		a.levelsBaseImage = raster.CloneNRGBA(working)
 		a.levelsSelection = selectionKey
 		a.logf("SetLevels: captured levelsBaseImage (preWarp=%v)", preWarp)
 	}

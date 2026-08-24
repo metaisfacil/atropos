@@ -118,13 +118,14 @@ Key files:
 - `app_disc.go` — disc rendering
 - `app_normal.go` — normal rectangle crop
 - `app_line.go` — line mode / quadrilateral crop
-- `app_touchup.go`, `app_iopaint.go`, `patchmatch.go` — touch-up pipeline
-- `app_compositor.go`, `compositor.go` — stitching feature
-- `imgproc.go` — miscellaneous image processing routines
-- `imgproc_fft.go` — pure-Go mixed-radix complex/real FFT core
-- `imgproc_descreen.go`, `imgproc_descreen_mask.go` — production descreen pipeline and mask kernels
-- `patchmatch.go` — PatchMatch touch-up backend implementation
-- `preview_assets.go` — immutable preview revisions plus bounded viewport raster encoding; viewport JPEGs are returned by `RenderPreviewViewport`, while the HTTP asset handler remains for compatibility
+- `app_touchup.go`, `app_iopaint.go`, `internal/patchmatch/` — touch-up pipeline
+- `app_compositor.go`, `internal/compositor/` — stitching feature
+- `internal/imageops/`, `internal/raster/` — state-free image transforms, conversion, resizing, and pixel SIMD kernels
+- `internal/cornerdetect/` — Shi-Tomasi and boundary-line corner detection plus scalar/SIMD kernels
+- `internal/descreen/` — production descreen pipeline, mixed-radix FFT core, and mask kernels
+- `internal/dust/` — software dust-removal engine
+- `internal/geometry/` — shared point, homography, and interpolation math
+- `internal/preview/`, `app_preview.go` — immutable preview storage/rendering/HTTP core plus the stable Wails adapter
 - `frontend/src/hooks/*` — all frontend interaction logic
 - `frontend/wailsjs/go/main/App.js` — bridge surface that must stay in sync with Go exports
 

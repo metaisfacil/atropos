@@ -5,6 +5,9 @@ import (
 	"image/color"
 	"strings"
 	"testing"
+
+	"atropos/internal/cornerdetect"
+	"atropos/internal/raster"
 )
 
 // newLoadedTestApp is like newTestApp but also sets imageLoaded=true so that
@@ -124,15 +127,15 @@ func TestCornerDetectPassesHandleSmallBudget(t *testing.T) {
 }
 
 func TestHighlightRecoveryBudgetFavorsBrightPerimeterScans(t *testing.T) {
-	bright := highlightRecoveryBudget(500, perimeterBackground{dark: false})
+	bright := highlightRecoveryBudget(500, cornerdetect.PerimeterBackground{Dark: false})
 	if bright != 375 {
 		t.Fatalf("bright perimeter budget: got %d, want 375", bright)
 	}
-	dark := highlightRecoveryBudget(500, perimeterBackground{dark: true})
+	dark := highlightRecoveryBudget(500, cornerdetect.PerimeterBackground{Dark: true})
 	if dark != 500 {
 		t.Fatalf("dark perimeter budget: got %d, want 500", dark)
 	}
-	if got := highlightRecoveryBudget(1, perimeterBackground{dark: false}); got != 1 {
+	if got := highlightRecoveryBudget(1, cornerdetect.PerimeterBackground{Dark: false}); got != 1 {
 		t.Fatalf("small bright budget: got %d, want 1", got)
 	}
 }
@@ -341,7 +344,7 @@ func TestClickCorner_FourthClickReturnsNonZeroDims(t *testing.T) {
 
 func TestClickCorner_FourthClickSetsDescreenReset(t *testing.T) {
 	a := newLoadedTestApp(200, 200)
-	a.descreenResultImage = cloneImage(a.currentImage)
+	a.descreenResultImage = raster.CloneNRGBA(a.currentImage)
 	res := clickFourCorners(t, a)
 	if !res.DescreenReset {
 		t.Fatal("expected DescreenReset=true after perspective warp when descreenResultImage was present")
@@ -364,7 +367,7 @@ func TestResetCorners_ClearsSelectedCorners(t *testing.T) {
 
 func TestResetCorners_ClearsWarpedImage(t *testing.T) {
 	a := newLoadedTestApp(200, 200)
-	a.warpedImage = cloneImage(a.currentImage)
+	a.warpedImage = raster.CloneNRGBA(a.currentImage)
 	_, err := a.ResetCorners()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

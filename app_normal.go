@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"image"
+
+	"atropos/internal/raster"
 )
 
 // Normal mode notes:
@@ -28,7 +30,7 @@ import (
 //   clamp to img.Bounds()
 //   if region is empty → error
 //   saveUndo()
-//   warpedImage = subImage(img, rect)
+//   warpedImage = raster.CropNRGBA(img, rect)
 //   return preview + width + height + "Cropped to W×H"
 //
 // ResetNormal clears `warpedImage` so that GetCleanPreview returns `currentImage`.
@@ -81,7 +83,7 @@ func (a *App) NormalCrop(req NormalCropRequest) (*ProcessResult, error) {
 	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
 	r := image.Rect(x1, y1, x2, y2)
-	a.setWorkingImage(subImage(img, r))
+	a.setWorkingImage(raster.CropNRGBA(img, r))
 
 	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {

@@ -518,7 +518,7 @@ retained so radius semantics stay compatible; square dilation uses running
 binary counts in O(width×height), then the existing separable Gaussian is
 applied. Inverse rows write each channel directly into the destination image,
 avoiding three full-size float result planes. The test-only
-`imgproc_fft_legacy_test.go` keeps `applyDescreenLegacy` as
+`internal/descreen/legacy_test.go` keeps `applyDescreenLegacy` as
 a test oracle for same-padding numerical comparisons and is not called by the
 application.
 
@@ -576,7 +576,7 @@ Undo()
 
 Undo is blocked in the frontend while any drag operation is active (disc shift, rotation, etc.) to prevent undo from firing mid-drag and corrupting disc state.
 
-### Dust Removal (`app_dust.go`, `imgproc_dust.go`)
+### Dust Removal (`app_dust.go`, `internal/dust/`)
 
 `DustRemoval({level, dpi})` is exposed in the Adjustments accordion after crop/skip.
 It reads `workingImage()`, applies a calibration profile, calls `saveUndo()`
@@ -600,7 +600,7 @@ to the working image.
 
 ---
 
-## Touch-Up (`app_touchup.go`, `app_iopaint.go`, `patchmatch.go`)
+## Touch-Up (`app_touchup.go`, `app_iopaint.go`, `internal/patchmatch/`)
 
 ### Availability
 
@@ -653,27 +653,27 @@ re-encoded or swapped. The busy indicator remains active until the patch
 element fires `onLoad`. Any later non-touch-up preview revision contains the
 committed pixels and clears the temporary patch stack.
 
-### PatchMatch (`patchmatch.go`, `patchcost.go`, `patchreconstruct.go`, `patchstructure.go`, `patchtexture.go`; used via `patchMatchChunkedFill`)
+### PatchMatch (`internal/patchmatch/`; used via `patchMatchChunkedFill`)
 
 The built-in touch-up backend is a deterministic, translation-only, coarse-to-fine PatchMatch synthesizer tuned for small repairs on scanned print material. The implementation is deliberately ROI-first: a brush stroke is solved inside a bounded working neighbourhood rather than preprocessing the full scan, while the source search domain inside that neighbourhood remains much larger than the painted region. 
 
 **Public solver entry points:**
 
 ```go
-PatchMatchFill(ctx, src, mask, patchSize, iterations)
-    // Compatibility API. Discovers mask bounds if necessary and returns a
+patchmatch.Fill(ctx, src, mask, patchSize, iterations)
+    // Discovers mask bounds if necessary and returns a
     // full-size image.
 
-PatchMatchFillBounds(ctx, src, mask, dirtyBounds, patchSize, iterations)
+patchmatch.FillBounds(ctx, src, mask, dirtyBounds, patchSize, iterations)
     // Same full-size result, but accepts the already-known brush bounds and
     // avoids scanning the full mask to rediscover them.
 
-PatchMatchFillROI(ctx, src, mask, dirtyBounds, patchSize, iterations)
+patchmatch.FillROI(ctx, src, mask, dirtyBounds, patchSize, iterations)
     // Lowest-latency API. Returns a zero-origin local image plus workBounds;
     // the caller may composite that ROI directly into a document/tile buffer.
 ```
 
-`dirtyBounds` is expressed relative to the top-left of `src` and must contain every non-zero mask pixel. `PatchMatchFillROI` computes a working rectangle from the painted bounds plus the random-search radius, patch support, and descriptor halo. The nominal search radius is `max(48, brushSpan*6 + patchSize*2)`; the working ROI keeps additional search and filter padding so random search can move away from the target without forcing full-document analysis. All expensive pyramids, packed planes, validity maps, structure descriptors, texture fields, NNF state, and reconstruction buffers are built in this local coordinate system.
+`dirtyBounds` is expressed relative to the top-left of `src` and must contain every non-zero mask pixel. `patchmatch.FillROI` computes a working rectangle from the painted bounds plus the random-search radius, patch support, and descriptor halo. The nominal search radius is `max(48, brushSpan*6 + patchSize*2)`; the working ROI keeps additional search and filter padding so random search can move away from the target without forcing full-document analysis. All expensive pyramids, packed planes, validity maps, structure descriptors, texture fields, NNF state, and reconstruction buffers are built in this local coordinate system.
 
 Within each level, the **active NNF rectangle is smaller still**: only patch centres whose patches can overlap a painted output pixel are solved. It is approximately the mask bounds expanded by `patchRadius + 1`. Source candidates may come from anywhere in the much larger working ROI.
 
@@ -741,7 +741,7 @@ Each requested PatchMatch pass contains two different execution modes:
 
 `iterations` is a maximum, not guaranteed work. At least one forward and one reverse pass are performed; after that, the level stops when fewer than about 0.4% of active centres improve. Random-search radius is adaptive: an uncertain first pass keeps the broad search, while seeded later passes and EM rounds start from progressively smaller radii.
 
-**Patch cost (`patchcost.go`)**
+**Patch cost (`internal/patchmatch/cost.go`)**
 
 The appearance term uses the same raw source appearance that reconstruction will render. Pixels are packed as premultiplied RGBA structure-of-arrays planes; alpha is deliberately downweighted relative to RGB. The hot patch SSD is confidence-weighted and dispatched to the retained AVX2/FMA or NEON assembly kernel when available, with a scalar fallback. The kernel receives an early-exit limit derived from the current best candidate so obviously worse matches can stop before finishing the patch.
 
@@ -756,7 +756,7 @@ confidence-normalized premultiplied RGBA SSD
 
 There is deliberately no mean subtraction and no search-only gain/bias model: search and reconstruction must agree about what source appearance will actually be copied. The locality prior falls away as a target patch gains observed or reconstructed evidence.
 
-**Fine-level structure model (`patchstructure.go`)**
+**Fine-level structure model (`internal/patchmatch/structure.go`)**
 
 Low-frequency structure is computed only at native resolution; coarse levels are responsible for large displacement, not exact colour-edge placement.
 
@@ -772,13 +772,13 @@ orientY  = 2*Jxy / (Jxx + Jyy)
 
 `orientX/orientY` are coherence-weighted double-angle edge orientation, so an undirected edge has the same representation in either tangent direction. The PatchMatch structure penalty samples the centre, axial points, and diagonals; it penalizes both missing/extra structure and orientation disagreement. Expensive tensor normalization is performed once during descriptor construction, not per candidate.
 
-**Fine-level texture model (`patchtexture.go`)**
+**Fine-level texture model (`internal/patchmatch/texture.go`)**
 
 Texture is modeled independently of provisional reconstructed RGB. The source texture field is local RMS gradient energy computed only from legal, unpainted source pixels. Integral images make the neighbourhood energy query cheap. It responds to scanner noise, plastic or paper speckle, fibres, and halftone microtexture while staying low on genuinely smooth colour fields.
 
 A scalar texture guide is propagated from known pixels through the brush region and harmonically relaxed. The E-step compares source texture energy with this guide, so ordinary patch averaging cannot make a smooth first-pass result self-validate and progressively erase native grain.
 
-**Reconstruction (`patchreconstruct.go`)**
+**Reconstruction (`internal/patchmatch/reconstruct.go`)**
 
 The M-step deliberately treats flat appearance, structural edges, and stochastic detail differently.
 
@@ -809,7 +809,7 @@ The performance model is intentionally local:
 * row-parallel work has a size threshold, so tiny dabs stay serial instead of paying goroutine/`WaitGroup` overhead;
 * independent initialization, descriptor passes, random search, voting, and reconstruction are parallelized where useful, while directional propagation remains sequential for correctness.
 
-`PatchMatchFillBounds` should be preferred when the caller already knows the stroke bounds; `PatchMatchFillROI` is the preferred integration point when the editor can composite the returned rectangle itself, because it also avoids the final full-document clone. `ctx.Err()` is checked at entry and throughout pyramid/search/reconstruction work so an in-flight touch-up can be cancelled.
+`patchmatch.FillBounds` should be preferred when the caller already knows the stroke bounds; `patchmatch.FillROI` is the preferred integration point when the editor can composite the returned rectangle itself, because it also avoids the final full-document clone. `ctx.Err()` is checked at entry and throughout pyramid/search/reconstruction work so an in-flight touch-up can be cancelled.
 
 The normal scanned-print setting is `patchSize=7`, `iterations=4`; iterations are a maximum because stable levels terminate early. Regression coverage includes displacement-preserving pyramid seeding, strict whole-patch source validity, separate target/source mask semantics, local working-ROI behavior, supplied-bounds equivalence, basic defect completion, stochastic texture retention, texture beside a crossing edge, and sharp slanted colour-edge preservation. Architecture-specific tests additionally verify AVX2/NEON SSD equivalence, early-exit behavior, dispatch, and the `pmKernelArgs` assembly layout. 
 
@@ -865,7 +865,14 @@ Suggested Max Corners and Min Distance values are load-time defaults only. Press
 
 ---
 
-## Image Processing Kernels (`imgproc.go`)
+## Internal Image Processing Packages
+
+State-free processing code lives below `internal/` and is grouped by domain:
+`imageops` owns adjustments and geometric transforms; `raster` owns conversion,
+resizing, and pixel SIMD kernels; `cornerdetect` owns point/line feature
+detection and its scalar/SIMD kernels; `geometry` owns shared math; `descreen`
+and `dust` own their respective processing engines. Architecture variants use
+the conventional `<feature>_<arch>.go` / `.s` suffixes within their package.
 
 ### applyWarpFill (`app_corner.go`)
 
@@ -873,7 +880,7 @@ Suggested Max Corners and Min Distance values are load-time defaults only. Press
 applyWarpFill(img, oobMask)
     if no OOB pixels → return img unchanged (fast path)
     if warpFillMode == "outpaint":
-        PatchMatchFill(img, oobMask, patchSize=9, iterations=5)
+        patchmatch.Fill(img, oobMask, patchSize=9, iterations=5)
         return out
     // warpFillMode == "fill":
     for each OOB pixel: img.SetNRGBA(x, y, warpFillColor)
@@ -1108,9 +1115,9 @@ Settings are persisted to `%AppData%\atropos\settings.json` (Windows) / `~/.conf
 
 ---
 
-## Image Compositor (`compositor.go`, `app_compositor.go`)
+## Image Compositor (`internal/compositor/`, `app_compositor.go`)
 
-A standalone planar image stitching feature. `compositor.go` has no dependency on app state.
+A standalone planar image stitching feature. `internal/compositor` has no dependency on app state.
 
 ### App struct fields
 
@@ -1127,7 +1134,7 @@ A standalone planar image stitching feature. `compositor.go` has no dependency o
 - **`CompositorSave(req)`** — encodes cached result to disk
 - **`CompositorOpenSaveDialog()`** — save-file dialog
 
-### Stitching pipeline (`compositor.go`)
+### Stitching pipeline (`internal/compositor/stitch.go`)
 
 `stitchImages(imgs)`: detect Shi-Tomasi features on each image → match with SSD + Lowe's ratio test (threshold 0.75) → estimate homography via RANSAC (2000 iterations, 15 px inlier threshold) with DLT + Hartley normalisation → compose homographies so image[0] is the reference frame → render all images into a single canvas with distance-to-border feathering and bilinear interpolation (parallelised by row).
 

@@ -5,6 +5,8 @@ import (
 	"image/color"
 	"strings"
 	"testing"
+
+	"atropos/internal/raster"
 )
 
 // newTestApp returns an App with a w×h solid-colour image pre-loaded into
@@ -19,7 +21,7 @@ func newTestApp(w, h int) *App {
 		}
 	}
 	a.currentImage = img
-	a.originalImage = cloneImage(img)
+	a.originalImage = raster.CloneNRGBA(img)
 	return a
 }
 
@@ -184,7 +186,7 @@ func TestNormalCrop_SequentialCropsEachSaveUndo(t *testing.T) {
 
 func TestNormalCrop_SetsDescreenReset(t *testing.T) {
 	a := newTestApp(100, 80)
-	a.descreenResultImage = cloneImage(a.currentImage)
+	a.descreenResultImage = raster.CloneNRGBA(a.currentImage)
 	res, err := a.NormalCrop(NormalCropRequest{X1: 0, Y1: 0, X2: 50, Y2: 50})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -5,6 +5,9 @@ import (
 	"image"
 	"image/color"
 	"math"
+
+	"atropos/internal/imageops"
+	"atropos/internal/raster"
 )
 
 // DiscDrawRequest specifies the centre point and radius for a circular disc crop.
@@ -61,7 +64,7 @@ func (a *App) refreshDiscWorkingCrop() {
 		clamp(a.discCenter.X+pad, ob.Min.X, ob.Max.X),
 		clamp(a.discCenter.Y+pad, ob.Min.Y, ob.Max.Y),
 	)
-	a.discWorkingCrop = subImage(a.discBaseImage, r)
+	a.discWorkingCrop = raster.CropNRGBA(a.discBaseImage, r)
 	a.discWorkingCropRect = r
 }
 
@@ -85,7 +88,7 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 	// Snapshot the adjusted working image as the immutable source for all
 	// disc renders. Using currentImage (not originalImage) means any levels
 	// or auto-contrast applied before the disc is drawn are preserved.
-	a.discBaseImage = cloneImage(a.currentImage)
+	a.discBaseImage = raster.CloneNRGBA(a.currentImage)
 
 	// Reset post-disc levels to neutral — nothing has been applied on top yet.
 	a.postDiscBlack = 0
@@ -165,11 +168,11 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 		wcY1 := reqY1 - off.Y
 		wcX2 := reqX2 - off.X
 		wcY2 := reqY2 - off.Y
-		cropped = subImage(a.discWorkingCrop, image.Rect(wcX1, wcY1, wcX2, wcY2))
+		cropped = raster.CropNRGBA(a.discWorkingCrop, image.Rect(wcX1, wcY1, wcX2, wcY2))
 		localCenter = image.Pt(a.discCenter.X-reqX1, a.discCenter.Y-reqY1)
 	} else {
 		// Fall back to the full base image (e.g. discWorkingCrop not yet built).
-		cropped = subImage(base, reqRect)
+		cropped = raster.CropNRGBA(base, reqRect)
 		localCenter = image.Pt(a.discCenter.X-reqX1, a.discCenter.Y-reqY1)
 	}
 
@@ -182,27 +185,27 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 	// Prepare the unmasked disc preview (used during live drag operations).
 	unmasked := cropped
 	if a.rotationAngle != 0 {
-		unmasked = rotateArbitrary(unmasked, a.rotationAngle, a.bgColor)
+		unmasked = imageops.Rotate(unmasked, a.rotationAngle, a.bgColor)
 	}
 	if a.postDiscBlack != 0 || a.postDiscWhite != 255 {
-		unmasked = applyLevels(unmasked, a.postDiscBlack, a.postDiscWhite)
+		unmasked = imageops.ApplyLevels(unmasked, a.postDiscBlack, a.postDiscWhite)
 	}
 	if p, err := a.imagePreviewURL(unmasked); err == nil {
 		a.discNoMaskPreview = p
 	}
 
-	feathered := applyCircularMaskWithFeather(cropped, localCenter, a.discRadius, a.featherSize, centerCutoutRadius, a.bgColor)
+	feathered := imageops.ApplyCircularMask(cropped, localCenter, a.discRadius, a.featherSize, centerCutoutRadius, a.bgColor)
 
 	// Re-apply accumulated rotation so that ShiftDisc / SetFeatherSize / etc.
 	// don't discard a rotation the user already applied.
 	if a.rotationAngle != 0 {
-		feathered = rotateArbitrary(feathered, a.rotationAngle, a.bgColor)
+		feathered = imageops.Rotate(feathered, a.rotationAngle, a.bgColor)
 	}
 
 	// Re-apply any post-disc levels so that shift / rotate / feather operations
 	// never silently strip a tonal adjustment the user already committed.
 	if a.postDiscBlack != 0 || a.postDiscWhite != 255 {
-		feathered = applyLevels(feathered, a.postDiscBlack, a.postDiscWhite)
+		feathered = imageops.ApplyLevels(feathered, a.postDiscBlack, a.postDiscWhite)
 	}
 
 	a.warpedImage = feathered
@@ -306,7 +309,7 @@ func (a *App) ShiftDisc(req ShiftDiscRequest) (*ProcessResult, error) {
 		return nil, fmt.Errorf("no disc defined")
 	}
 	if a.discBaseImage == nil && a.currentImage != nil {
-		a.discBaseImage = cloneImage(a.currentImage)
+		a.discBaseImage = raster.CloneNRGBA(a.currentImage)
 	}
 	imgBounds := image.Rect(0, 0, 0, 0)
 	if a.discBaseImage != nil {

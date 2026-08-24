@@ -6,6 +6,8 @@ import (
 	"image/color"
 	"log"
 	"sync"
+
+	"atropos/internal/preview"
 )
 
 // App struct holds all application state.
@@ -16,7 +18,7 @@ type App struct {
 
 	// previewAssets serves immutable, versioned full-resolution previews
 	// directly to the WebView without carrying image bytes through Wails IPC.
-	previewAssets *previewAssetStore
+	previewAssets *preview.Store
 
 	// Image state
 	// ----------------
@@ -59,7 +61,7 @@ type App struct {
 	descreenBaseImage *image.NRGBA
 
 	// `descreenResultImage`:
-	//   Pointer to the *image.NRGBA last written by applyDescreen. Used to
+	//   Pointer to the *image.NRGBA last written by descreen.Apply. Used to
 	//   detect when warpedImage has been modified by a non-descreen operation
 	//   (e.g. SetLevels, which does not call saveUndo) so that a re-snapshot
 	//   is taken before the next descreen call rather than silently discarding
@@ -164,8 +166,7 @@ type App struct {
 
 // NewApp creates a new App application struct.
 func NewApp() *App {
-	return &App{
-		previewAssets:     newPreviewAssetStore(previewAssetCacheSize),
+	app := &App{
 		undoLimit:         10,
 		featherSize:       15,
 		cropAmount:        3,
@@ -181,6 +182,8 @@ func NewApp() *App {
 		discCenterCutout:  true,
 		discCutoutPercent: 11,
 	}
+	app.previewAssets = preview.NewStore(preview.DefaultCacheSize, app.logf)
+	return app
 }
 
 // logf writes a formatted message to the debug log if enabled.

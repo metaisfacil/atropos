@@ -5,6 +5,9 @@ import (
 	"image"
 	"image/draw"
 	"math"
+
+	"atropos/internal/imageops"
+	"atropos/internal/raster"
 )
 
 // AdjustmentSelection is an optional image-space rectangle used to limit a
@@ -70,13 +73,13 @@ func (a *App) CopySelectionToClipboard(selection AdjustmentSelection) (string, e
 
 func applyLevelsInSelection(src *image.NRGBA, black, white int, key adjustmentSelectionKey) *image.NRGBA {
 	if !key.Active {
-		return applyLevels(src, black, white)
+		return imageops.ApplyLevels(src, black, white)
 	}
-	return compositeAdjustmentSelection(src, applyLevels(subImage(src, key.Rect), black, white), key.Rect)
+	return compositeAdjustmentSelection(src, imageops.ApplyLevels(raster.CropNRGBA(src, key.Rect), black, white), key.Rect)
 }
 
 func compositeAdjustmentSelection(base, adjusted *image.NRGBA, rect image.Rectangle) *image.NRGBA {
-	out := cloneImage(base)
+	out := raster.CloneNRGBA(base)
 	draw.Draw(out, rect, adjusted, adjusted.Bounds().Min, draw.Src)
 	return out
 }

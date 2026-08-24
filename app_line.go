@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"image"
 	"math"
+
+	"atropos/internal/geometry"
+	"atropos/internal/imageops"
 )
 
 // Line mode overview:
@@ -55,7 +58,7 @@ func (a *App) ProcessLines() (*ProcessResult, error) {
 	var intersections []image.Point
 	for i := 0; i < 4; i++ {
 		for j := i + 1; j < 4; j++ {
-			if pt := lineIntersection(a.lines[i], a.lines[j]); pt != nil {
+			if pt := geometry.LineIntersection(a.lines[i], a.lines[j]); pt != nil {
 				intersections = append(intersections, *pt)
 			}
 		}
@@ -113,14 +116,14 @@ func (a *App) ProcessLines() (*ProcessResult, error) {
 		valid = []image.Point{scored[0].pt, scored[1].pt, scored[2].pt, scored[3].pt}
 	}
 
-	sorted := orderPoints(valid[:4])
+	sorted := geometry.OrderPoints(valid[:4])
 	tl, tr, br, bl := sorted[0], sorted[1], sorted[2], sorted[3]
 
 	// Compute output dimensions from the quadrilateral edge lengths
-	widthTop := dist(tl, tr)
-	widthBot := dist(bl, br)
-	heightLeft := dist(tl, bl)
-	heightRight := dist(tr, br)
+	widthTop := geometry.Distance(tl, tr)
+	widthBot := geometry.Distance(bl, br)
+	heightLeft := geometry.Distance(tl, bl)
+	heightRight := geometry.Distance(tr, br)
 	outW := int(math.Max(widthTop, widthBot))
 	outH := int(math.Max(heightLeft, heightRight))
 	if outW < 10 {
@@ -141,10 +144,10 @@ func (a *App) ProcessLines() (*ProcessResult, error) {
 
 	var warped *image.NRGBA
 	if a.warpFillMode == "clamp" {
-		warped = perspectiveTransform(a.originalImage, src, dst, outW, outH)
+		warped = imageops.PerspectiveTransform(a.originalImage, src, dst, outW, outH)
 	} else {
 		var oobMask *image.Alpha
-		warped, oobMask = perspectiveTransformWithMask(a.originalImage, src, dst, outW, outH)
+		warped, oobMask = imageops.PerspectiveTransformWithMask(a.originalImage, src, dst, outW, outH)
 		warped = a.applyWarpFill(warped, oobMask)
 	}
 	a.warpedImage = warped

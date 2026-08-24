@@ -4,6 +4,8 @@ import (
 	"image/color"
 	"strings"
 	"testing"
+
+	"atropos/internal/raster"
 )
 
 // linesForRect returns 4 LineAddRequests that trace the edges of a rectangle
@@ -237,7 +239,7 @@ func TestClearLines_ClearsLinesSlice(t *testing.T) {
 
 func TestClearLines_ClearsWarpedImage(t *testing.T) {
 	a := newTestApp(200, 200)
-	a.warpedImage = cloneImage(a.currentImage)
+	a.warpedImage = raster.CloneNRGBA(a.currentImage)
 	_, err := a.ClearLines()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

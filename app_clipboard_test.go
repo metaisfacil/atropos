@@ -5,6 +5,8 @@ import (
 	"image"
 	"image/color"
 	"testing"
+
+	"atropos/internal/raster"
 )
 
 func TestLoadImageFromClipboardReplacesDocumentAndResetsPipeline(t *testing.T) {
@@ -57,7 +59,7 @@ func TestLoadImageFromClipboardReadFailurePreservesDocument(t *testing.T) {
 	a := NewApp()
 	before := solidSelectionTestImage(2, 2, 70)
 	a.originalImage = before
-	a.currentImage = cloneImage(before)
+	a.currentImage = raster.CloneNRGBA(before)
 	a.imageLoaded = true
 	a.clipboardReader = func() (*image.NRGBA, string, error) {
 		return nil, "", fmt.Errorf("no image")

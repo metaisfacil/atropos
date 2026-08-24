@@ -11,6 +11,11 @@ import (
 	"math"
 	"time"
 
+	"atropos/internal/raster"
+
+	"atropos/internal/cornerdetect"
+	"atropos/internal/patchmatch"
+
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -143,19 +148,19 @@ func patchMatchChunkedFill(ctx context.Context, src *image.NRGBA, mask *image.Al
 		return nil, err
 	}
 	if len(crops) == 0 {
-		return toNRGBA(src), nil
+		return raster.ToNRGBA(src), nil
 	}
 
-	result := toNRGBA(src)
+	result := raster.ToNRGBA(src)
 	for _, crop := range crops {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 
-		// Re-origin both inputs for PatchMatchFill. The crop mask includes every
+		// Re-origin both inputs for patchmatch.Fill. The crop mask includes every
 		// marked pixel in the context window, not just the seed component, so a
 		// second damaged region can never be selected as valid source material.
-		cropSrc := toNRGBA(src.SubImage(crop))
+		cropSrc := raster.ToNRGBA(src.SubImage(crop))
 		cropMask := image.NewAlpha(image.Rect(0, 0, crop.Dx(), crop.Dy()))
 		for y := crop.Min.Y; y < crop.Max.Y; y++ {
 			for x := crop.Min.X; x < crop.Max.X; x++ {
@@ -163,7 +168,7 @@ func patchMatchChunkedFill(ctx context.Context, src *image.NRGBA, mask *image.Al
 			}
 		}
 
-		filled, fillErr := PatchMatchFill(ctx, cropSrc, cropMask, patchSize, iterations)
+		filled, fillErr := patchmatch.Fill(ctx, cropSrc, cropMask, patchSize, iterations)
 		if fillErr != nil {
 			return nil, fillErr
 		}
@@ -225,8 +230,8 @@ func patchMatchRegions(ctx context.Context, mask *image.Alpha, margin int, bound
 			id := queue[len(queue)-1]
 			queue = queue[:len(queue)-1]
 			tx, ty := id%tilesX, id/tilesX
-			minTX, minTY = minInt(minTX, tx), minInt(minTY, ty)
-			maxTX, maxTY = maxInt(maxTX, tx), maxInt(maxTY, ty)
+			minTX, minTY = min(minTX, tx), min(minTY, ty)
+			maxTX, maxTY = max(maxTX, tx), max(maxTY, ty)
 			for dy := -1; dy <= 1; dy++ {
 				for dx := -1; dx <= 1; dx++ {
 					nx, ny := tx+dx, ty+dy
@@ -272,10 +277,10 @@ func rectanglesOverlap(a, b image.Rectangle) bool {
 
 func unionRectangle(a, b image.Rectangle) image.Rectangle {
 	return image.Rect(
-		minInt(a.Min.X, b.Min.X),
-		minInt(a.Min.Y, b.Min.Y),
-		maxInt(a.Max.X, b.Max.X),
-		maxInt(a.Max.Y, b.Max.Y),
+		min(a.Min.X, b.Min.X),
+		min(a.Min.Y, b.Min.Y),
+		max(a.Max.X, b.Max.X),
+		max(a.Max.Y, b.Max.Y),
 	)
 }
 
@@ -325,7 +330,7 @@ func (a *App) buildMask(maskB64 string) (*image.Alpha, error) {
 			gray.Pix[(y-mask.Bounds().Min.Y)*gray.Stride+(x-mask.Bounds().Min.X)] = v
 		}
 	}
-	resized := resizeGray(gray, tgtBounds.Dx(), tgtBounds.Dy())
+	resized := cornerdetect.ResizeGray(gray, tgtBounds.Dx(), tgtBounds.Dy())
 	newMask := image.NewAlpha(tgtBounds)
 	for y := 0; y < tgtBounds.Dy(); y++ {
 		for x := 0; x < tgtBounds.Dx(); x++ {
@@ -399,7 +404,7 @@ func (a *App) commitTouchupResult(ctx context.Context, generation uint64, srcImg
 // TouchUpApply accepts the legacy full-size PNG mask. New brush callers should
 // use TouchUpApplyStrokes to avoid the full-image encode/decode path.
 func (a *App) TouchUpApply(maskB64 string, patchSize int, iterations int) (*ProcessResult, error) {
-	a.logf("TouchUpApply: backend=%q patchSize=%d iterations=%d patchKernel=%s", a.touchupBackend, patchSize, iterations, pmActivePatchKernel())
+	a.logf("TouchUpApply: backend=%q patchSize=%d iterations=%d patchKernel=%s", a.touchupBackend, patchSize, iterations, patchmatch.ActiveKernel())
 	if a.currentImage == nil && a.warpedImage == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
@@ -422,7 +427,7 @@ func (a *App) TouchUpApply(maskB64 string, patchSize int, iterations int) (*Proc
 func (a *App) TouchUpApplyStrokes(request TouchUpStrokeRequest) (*ProcessResult, error) {
 	started := time.Now()
 	a.logf("TouchUpApplyStrokes: backend=%q points=%d brushSize=%.1f patchSize=%d iterations=%d patchKernel=%s",
-		a.touchupBackend, len(request.Points), request.BrushSize, request.PatchSize, request.Iterations, pmActivePatchKernel())
+		a.touchupBackend, len(request.Points), request.BrushSize, request.PatchSize, request.Iterations, patchmatch.ActiveKernel())
 	if a.currentImage == nil && a.warpedImage == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
