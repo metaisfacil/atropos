@@ -98,6 +98,8 @@ export function SetBackgroundColor(arg1:number,arg2:number,arg3:number):Promise<
 
 export function SetDiscSettings(arg1:main.DiscSettings):Promise<main.ProcessResult>;
 
+export function SetFeatherRadius(arg1:main.FeatherRadiusRequest):Promise<main.ProcessResult>;
+
 export function SetFeatherSize(arg1:main.FeatherSizeRequest):Promise<main.ProcessResult>;
 
 export function SetLevels(arg1:main.SetLevelsRequest):Promise<main.ProcessResult>;

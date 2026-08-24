@@ -428,13 +428,14 @@ DrawDisc(req)
 ```
 redrawDisc()
     1. src = discBaseImage (or originalImage as emergency fallback)
-    2. bbox = [discCenter ± (discRadius + featherSize)]
+    2. bbox = [discCenter ± discRadius]
     3. cropped = subImage(src, bbox)
     4. localCenter = discCenter − bbox.Min
     5. applyCircularMaskWithFeather(cropped, localCenter, discRadius, featherSize, bgColor)
          for each pixel: distance d to center
-           d <= radius:              alpha = 1.0 (opaque)
-           d >= radius+featherSize:  alpha = 0.0 (transparent, filled with bgColor)
+           effectiveFeather = min(featherSize, radius)
+           d <= radius-effectiveFeather: alpha = 1.0 (opaque)
+           d >= radius:              alpha = 0.0 (transparent, filled with bgColor)
            in between:               cosine interpolation
     6. if rotationAngle != 0:
            rotateArbitrary(feathered, rotationAngle, bgColor)
@@ -449,6 +450,7 @@ redrawDisc()
 
 - `RotateDisc(angle)` — adds angle to rotationAngle, calls redrawDisc
 - `ShiftDisc(dx, dy)` — adjusts discCenter, calls redrawDisc
+- `SetFeatherRadius(radius)` — updates discRadius and crop dimensions, calls redrawDisc
 - `SetFeatherSize(size)` — updates featherSize, calls redrawDisc if discRadius > 0
 - `GetPixelColor(x, y)` — sets bgColor from discBaseImage pixel, calls redrawDisc
 - `SetLevels(...)` — stores values in postDiscBlack/White, calls redrawDisc

@@ -34,13 +34,18 @@ type ShiftDiscRequest struct {
 	DY int `json:"dy"`
 }
 
-// FeatherSizeRequest holds the new feather radius.
+// FeatherSizeRequest holds the new feather width.
 type FeatherSizeRequest struct {
 	Size int `json:"size"`
 }
 
+// FeatherRadiusRequest holds the new outer radius for an active disc crop.
+type FeatherRadiusRequest struct {
+	Radius int `json:"radius"`
+}
+
 // discWorkingCropShiftPadding is the extra margin (in pixels) added on each
-// side of the disc+feather bounding box when pre-cropping discBaseImage into
+// side of the disc bounding box when pre-cropping discBaseImage into
 // discWorkingCrop. It defines how far the user can shift the disc before a
 // re-crop from the full discBaseImage is needed.
 const discWorkingCropShiftPadding = 500
@@ -56,7 +61,7 @@ func (a *App) refreshDiscWorkingCrop() {
 		a.discWorkingCrop = nil
 		return
 	}
-	pad := a.discRadius + a.featherSize + discWorkingCropShiftPadding
+	pad := a.discRadius + discWorkingCropShiftPadding
 	ob := a.discBaseImage.Bounds()
 	r := image.Rect(
 		clamp(a.discCenter.X-pad, ob.Min.X, ob.Max.X),
@@ -139,14 +144,14 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 		return nil, fmt.Errorf("no disc defined")
 	}
 
-	margin := a.featherSize
-
 	// Determine the required crop rect in discBaseImage coords.
+	// discRadius is the fixed outer edge of the selection. Feathering is drawn
+	// inward from that edge, so changing featherSize must not resize the crop.
 	ob := base.Bounds()
-	reqX1 := clamp(a.discCenter.X-a.discRadius-margin, ob.Min.X, ob.Max.X)
-	reqY1 := clamp(a.discCenter.Y-a.discRadius-margin, ob.Min.Y, ob.Max.Y)
-	reqX2 := clamp(a.discCenter.X+a.discRadius+margin, ob.Min.X, ob.Max.X)
-	reqY2 := clamp(a.discCenter.Y+a.discRadius+margin, ob.Min.Y, ob.Max.Y)
+	reqX1 := clamp(a.discCenter.X-a.discRadius, ob.Min.X, ob.Max.X)
+	reqY1 := clamp(a.discCenter.Y-a.discRadius, ob.Min.Y, ob.Max.Y)
+	reqX2 := clamp(a.discCenter.X+a.discRadius, ob.Min.X, ob.Max.X)
+	reqY2 := clamp(a.discCenter.Y+a.discRadius, ob.Min.Y, ob.Max.Y)
 	reqRect := image.Rect(reqX1, reqY1, reqX2, reqY2)
 
 	// Use the pre-cropped working region when it covers the required rect.
@@ -339,7 +344,21 @@ func (a *App) ShiftDisc(req ShiftDiscRequest) (*ProcessResult, error) {
 	return a.redrawDisc()
 }
 
-// SetFeatherSize updates the feather radius and re-renders the disc.
+// SetFeatherRadius updates the fixed outer radius and re-renders the disc.
+// Unlike SetFeatherSize, this intentionally changes the crop dimensions.
+func (a *App) SetFeatherRadius(req FeatherRadiusRequest) (*ProcessResult, error) {
+	a.logf("SetFeatherRadius: %d", req.Radius)
+	if a.discRadius <= 0 {
+		return nil, fmt.Errorf("no disc defined")
+	}
+	if req.Radius < 1 {
+		req.Radius = 1
+	}
+	a.discRadius = req.Radius
+	return a.redrawDisc()
+}
+
+// SetFeatherSize updates the inward feather width and re-renders the disc.
 func (a *App) SetFeatherSize(req FeatherSizeRequest) (*ProcessResult, error) {
 	a.logf("SetFeatherSize: %d", req.Size)
 	if req.Size < 0 {

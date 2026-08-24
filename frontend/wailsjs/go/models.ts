@@ -357,6 +357,18 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class FeatherRadiusRequest {
+	    radius: number;
+
+	    static createFrom(source: any = {}) {
+	        return new FeatherRadiusRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.radius = source["radius"];
+	    }
+	}
 	export class FeatherSizeRequest {
 	    size: number;
 	
@@ -832,4 +844,3 @@ export namespace main {
 	}
 
 }
-

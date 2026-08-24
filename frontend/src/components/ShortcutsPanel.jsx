@@ -47,8 +47,8 @@ export default function ShortcutsPanel({ shortcutsOpen, setShortcutsOpen, mode, 
               <div className="shortcut-item"><div className="keys"><kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd></div><div className="caption">Shift disc</div></div>
               <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>+<kbd>Drag</kbd></div><div className="caption">Shift disc</div></div>
               <div className="shortcut-item"><div className="keys"><kbd>Shift</kbd>+<kbd>Drag</kbd></div><div className="caption">Rotate disc</div></div>
-              <div className="shortcut-item"><div className="keys"><kbd>+</kbd>/<kbd>-</kbd></div><div className="caption">Feather radius</div></div>
-              <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>+<kbd>Scroll</kbd></div><div className="caption">Feather radius</div></div>
+              <div className="shortcut-item"><div className="keys"><kbd>+</kbd>/<kbd>-</kbd></div><div className="caption">Feather size</div></div>
+              <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>+<kbd>Scroll</kbd></div><div className="caption">Feather size</div></div>
             </>
           )}
         </div>

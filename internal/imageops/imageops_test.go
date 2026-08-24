@@ -500,10 +500,53 @@ func TestApplyCircularMask_FarPixel(t *testing.T) {
 
 	dst := ApplyCircularMask(src, center, 10, 3, 0, bg)
 
-	// Corner pixel (0,0) is far outside radius+feather → should be bg
+	// Corner pixel (0,0) is far outside the fixed radius → should be bg
 	c := dst.NRGBAAt(0, 0)
 	if c.R != 0 || c.G != 0 || c.B != 0 {
 		t.Fatalf("far pixel should be background, got %v", c)
+	}
+}
+
+func TestApplyCircularMask_FeathersInwardFromFixedRadius(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 50, 50))
+	for y := 0; y < 50; y++ {
+		for x := 0; x < 50; x++ {
+			src.SetNRGBA(x, y, color.NRGBA{R: 200, G: 100, B: 50, A: 255})
+		}
+	}
+	bg := color.NRGBA{A: 255}
+	center := image.Pt(25, 25)
+	dst := ApplyCircularMask(src, center, 10, 4, 0, bg)
+
+	// The image remains opaque through radius-featherSize.
+	if got := dst.NRGBAAt(31, 25); got.R != 200 {
+		t.Fatalf("pixel at inner feather edge should remain source colour, got %v", got)
+	}
+	// A point inside the fixed radius is partially blended.
+	if got := dst.NRGBAAt(33, 25); got.R <= 0 || got.R >= 200 {
+		t.Fatalf("pixel within feather should be blended, got %v", got)
+	}
+	// The fixed radius is the outer boundary regardless of feather size.
+	if got := dst.NRGBAAt(35, 25); got.R != 0 || got.G != 0 || got.B != 0 {
+		t.Fatalf("pixel at fixed radius should be background, got %v", got)
+	}
+}
+
+func TestApplyCircularMask_FeatherWiderThanRadiusUsesAvailableRadius(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 30, 30))
+	for y := 0; y < 30; y++ {
+		for x := 0; x < 30; x++ {
+			src.SetNRGBA(x, y, color.NRGBA{R: 200, A: 255})
+		}
+	}
+	bg := color.NRGBA{A: 255}
+	dst := ApplyCircularMask(src, image.Pt(15, 15), 5, 100, 0, bg)
+
+	if got := dst.NRGBAAt(17, 15); got.R <= 0 || got.R >= 200 {
+		t.Fatalf("oversized feather should transition across the available radius, got %v", got)
+	}
+	if got := dst.NRGBAAt(20, 15); got.R != 0 {
+		t.Fatalf("oversized feather must not extend beyond the fixed radius, got %v", got)
 	}
 }
 

@@ -91,10 +91,10 @@ Ctrl/⌘ + S or the **Save image** button. Output format is determined by the fi
 | Ctrl/⌘ + W | Quit |
 | Y | Eyedropper — set background colour (disc mode) |
 | Arrow keys | Shift disc 5 px (20 px with Shift) |
-| + / − | Feather radius ±1 (disc mode) |
+| + / − | Feather size ±1 (disc mode) |
 | Ctrl+Drag | Live-shift disc centre |
 | Shift+Drag | Live-rotate disc |
-| Ctrl+Scroll | Feather radius (disc mode) |
+| Ctrl+Scroll | Feather size (disc mode) |
 | Scroll | Zoom in/out (cursor-anchored) |
 | Space+Drag | Pan canvas |
 

@@ -368,6 +368,47 @@ func TestShiftDisc_AccumulatesOffset(t *testing.T) {
 	}
 }
 
+// ---- SetFeatherRadius ----
+
+func TestSetFeatherRadius_NoDiscReturnsError(t *testing.T) {
+	a := newTestApp(200, 200)
+	_, err := a.SetFeatherRadius(FeatherRadiusRequest{Radius: 60})
+	if err == nil {
+		t.Fatal("expected error when no disc is defined")
+	}
+}
+
+func TestSetFeatherRadius_UpdatesRadiusAndCropDimensions(t *testing.T) {
+	a := newTestApp(300, 300)
+	_, err := a.DrawDisc(DiscDrawRequest{CenterX: 150, CenterY: 150, Radius: 50})
+	if err != nil {
+		t.Fatalf("DrawDisc failed: %v", err)
+	}
+
+	res, err := a.SetFeatherRadius(FeatherRadiusRequest{Radius: 75})
+	if err != nil {
+		t.Fatalf("SetFeatherRadius failed: %v", err)
+	}
+	if a.discRadius != 75 || res.DiscRadius != 75 {
+		t.Fatalf("radius = app:%d result:%d, want 75", a.discRadius, res.DiscRadius)
+	}
+	if res.Width != 150 || res.Height != 150 {
+		t.Fatalf("crop dimensions = %dx%d, want 150x150", res.Width, res.Height)
+	}
+}
+
+func TestSetFeatherRadius_ClampsToOne(t *testing.T) {
+	a := newTestApp(200, 200)
+	drawTestDisc(t, a)
+	res, err := a.SetFeatherRadius(FeatherRadiusRequest{Radius: 0})
+	if err != nil {
+		t.Fatalf("SetFeatherRadius failed: %v", err)
+	}
+	if a.discRadius != 1 || res.DiscRadius != 1 {
+		t.Fatalf("clamped radius = app:%d result:%d, want 1", a.discRadius, res.DiscRadius)
+	}
+}
+
 // ---- SetFeatherSize ----
 
 func TestSetFeatherSize_NegativeClampsToZero(t *testing.T) {
@@ -410,6 +451,24 @@ func TestSetFeatherSize_WithDiscRedrawsDisc(t *testing.T) {
 	}
 	if a.warpedImage == before {
 		t.Fatal("warpedImage should be updated after SetFeatherSize with active disc")
+	}
+}
+
+func TestSetFeatherSize_DoesNotResizeDiscCrop(t *testing.T) {
+	a := newTestApp(200, 200)
+	a.featherSize = 0
+	res, err := a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 50})
+	if err != nil {
+		t.Fatalf("DrawDisc failed: %v", err)
+	}
+	wantWidth, wantHeight := res.Width, res.Height
+
+	res, err = a.SetFeatherSize(FeatherSizeRequest{Size: 25})
+	if err != nil {
+		t.Fatalf("SetFeatherSize failed: %v", err)
+	}
+	if res.Width != wantWidth || res.Height != wantHeight {
+		t.Fatalf("feather size changed crop from %dx%d to %dx%d", wantWidth, wantHeight, res.Width, res.Height)
 	}
 }
 

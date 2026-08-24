@@ -400,6 +400,8 @@ export default function App() {
             <div className={`mode-panel ${mode === 'disc' ? 'active' : ''}`}>
               <DiscPanel
                 discActive={discActive}
+                discRadius={discRadius}
+                setDiscRadius={setDiscRadius}
                 featherSize={featherSize}
                 setFeatherSize={setFeatherSize}
                 discCenterCutout={discCenterCutout}
@@ -407,6 +409,7 @@ export default function App() {
                 setDiscCutoutPercent={setDiscCutoutPercent}
                 setPreview={setPreview}
                 setRealImageDims={setRealImageDims}
+                setDiscNoMaskPreview={setDiscNoMaskPreview}
                 disabled={cropSkipped}
               />
             </div>

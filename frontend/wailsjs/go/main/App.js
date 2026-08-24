@@ -194,6 +194,10 @@ export function SetDiscSettings(arg1) {
   return window['go']['main']['App']['SetDiscSettings'](arg1);
 }
 
+export function SetFeatherRadius(arg1) {
+  return window['go']['main']['App']['SetFeatherRadius'](arg1);
+}
+
 export function SetFeatherSize(arg1) {
   return window['go']['main']['App']['SetFeatherSize'](arg1);
 }
