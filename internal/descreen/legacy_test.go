@@ -128,14 +128,14 @@ func nextPow2FFT(n int) int {
 // Parameters:
 //
 //	thresh           — threshold for the distance-weighted log-magnitude spectrum
-//	                   (0–200; higher = less aggressive filtering; default 92)
-//	radius           — dilation/blur radius for the peak mask (1–20; default 6)
-//	middle           — DC neighbourhood preservation ratio (1–10; default 4)
+//	                   (0–200; higher = less aggressive filtering; default 93)
+//	radius           — dilation/blur radius for the peak mask (1–20; default 18)
+//	middle           — DC neighbourhood preservation ratio (1–10; default 6)
 //	                   larger = larger protected region around DC
 //	highlightRestore — highlight restoration (0–100; 0 = pure descreen output;
 //	                   higher values blend original highlights back over the
 //	                   descreened result to hide screen-pattern artifacts in
-//	                   near-white areas; default 0)
+//	                   near-white areas)
 //	logf             — optional logger (may be nil); receives per-phase timing lines
 func applyDescreenLegacy(src *image.NRGBA, thresh, radius, middle, highlightRestore int, logf func(string, ...interface{})) *image.NRGBA {
 	totalStart := time.Now()

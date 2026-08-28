@@ -102,10 +102,10 @@ describe('AdjustmentsPanel descreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply descreen' }))
 
     await waitFor(() => expect(Descreen).toHaveBeenCalledWith({
-      thresh: 92,
-      radius: 6,
-      middle: 4,
-      highlight: 50,
+      thresh: 93,
+      radius: 18,
+      middle: 6,
+      highlight: 16,
       fast: true,
       selection: null,
     }))
