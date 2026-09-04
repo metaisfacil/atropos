@@ -105,7 +105,7 @@ describe('AdjustmentsPanel descreen', () => {
       thresh: 93,
       radius: 18,
       middle: 6,
-      highlight: 16,
+      highlight: 50,
       fast: true,
       selection: null,
     }))

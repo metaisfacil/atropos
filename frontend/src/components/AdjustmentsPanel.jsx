@@ -99,7 +99,7 @@ export default function AdjustmentsPanel({
   const [descreenThresh, setDescreenThresh] = useState(93)
   const [descreenRadius, setDescreenRadius] = useState(18)
   const [descreenMiddle, setDescreenMiddle] = useState(6)
-  const [descreenHighlight, setDescreenHighlight] = useState(16)
+  const [descreenHighlight, setDescreenHighlight] = useState(50)
   const [descreenFast, setDescreenFast] = useState(false)
   const [descreenPending, setDescreenPending] = useState(false)
 
