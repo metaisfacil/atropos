@@ -737,20 +737,23 @@ patchmatch.FillROI(ctx, src, mask, dirtyBounds, patchSize, iterations)
     // the caller may composite that ROI directly into a document/tile buffer.
 ```
 
-`dirtyBounds` is expressed relative to the top-left of `src` and must contain every non-zero mask pixel. `patchmatch.FillROI` computes a working rectangle from the painted bounds plus the random-search radius, patch support, and descriptor halo. The nominal search radius is `max(48, brushSpan*6 + patchSize*2)`; the working ROI keeps additional search and filter padding so random search can move away from the target without forcing full-document analysis. All expensive pyramids, packed planes, validity maps, structure descriptors, texture fields, NNF state, and reconstruction buffers are built in this local coordinate system.
+`dirtyBounds` is expressed relative to the top-left of `src` and must contain every non-zero mask pixel. `patchmatch.FillROI` budgets a roughly square source region with nominal side `ceil(4 * sqrt(max(50, maskWidth) * max(50, maskHeight)))`, expanded if necessary to contain the mask plus `patchSize + 8` pixels of support on each side. The window shifts inward at document edges to retain context, then clips to the image dimensions. All expensive pyramids, packed planes, validity maps, structure descriptors, texture fields, NNF state, and reconstruction buffers use these local coordinates. The initial search radius spans the working ROI. The app's `patchMatchChunkedFill` also applies its existing outer crop and connected-region grouping before entering this solver.
 
-Within each level, the **active NNF rectangle is smaller still**: only patch centres whose patches can overlap a painted output pixel are solved. It is approximately the mask bounds expanded by `patchRadius + 1`. Source candidates may come from anywhere in the much larger working ROI.
+Within each level, the active NNF rectangle is smaller: only patch centres whose patches can overlap a painted output pixel are solved. It is approximately the mask bounds expanded by `patchRadius + 1`. Source candidates may come from anywhere in the working ROI.
 
 **Pyramid and mask semantics**
 
 `buildPatchPyramid` keeps image appearance, target coverage, and source exclusion separate:
 
-* The image pyramid uses a separable `[1 4 6 4 1]` binomial low-pass in premultiplied-alpha space before each approximately 2× reduction. This avoids aliasing halftone dots, fine type, line art, scanner grain, and other print texture into misleading coarse structures.
-* `targetMasks` preserve fractional/antialiased coverage by area averaging. They control confidence and the final soft compositing edge.
-* `sourceMasks` are conservative binary masks: if any represented fine pixel is painted, the coarse source pixel is excluded.
-* A source centre is valid only when the **entire search/vote patch** avoids the source-exclusion mask. There is no centre-only validity fallback, so damaged content cannot re-enter the fill merely because a coarse patch centre lies outside the brush.
+* The image pyramid uses a separable `[1 4 6 4 1]` binomial low-pass in premultiplied-alpha space before each approximately 2× reduction. This prevents halftone dots, fine type, line art, scanner grain, and other print texture from aliasing into misleading coarse structures.
 
-Patch size is normalized to an odd value in the range 3–15. The normal touch-up setting is 7×7. The pyramid has at most seven levels and stops when its shortest side reaches `max(32, patchSize*4)`. If a level has no legal source patches or no active target centres, that level is skipped rather than weakening source validity.
+* `targetMasks` preserve fractional/antialiased coverage by area averaging. They control confidence and the final soft compositing edge.
+
+* `sourceMasks` are conservative binary masks: if any represented fine pixel is painted, the coarse source pixel is excluded.
+
+* A source centre is valid only when the entire search/vote patch avoids the source-exclusion mask. There is no centre-only validity fallback, so damaged content cannot re-enter the fill when a coarse patch centre lies outside the brush but part of its patch does not.
+
+Patch size is normalized to an odd value in the range 3–15. The normal touch-up setting is 7×7. The pyramid has at most seven levels and stops when its shortest side reaches `max(32, patchSize*4)`. Levels with no legal source patches or no active target centres are skipped; source validity is not relaxed.
 
 **Per-level solve and EM loop**
 
@@ -767,7 +770,7 @@ for level = coarse -> fine
         +-- seed working image from source / bilinear parent result
         +-- at finest level only: build structure + texture models
         |
-        +-- EM round (maximum 3 on the first solved level, 2 thereafter)
+        +-- EM round (maximum 30 first/penultimate, 25 intermediate, 3 final)
         |      |
         |      +-- update target confidence
         |      +-- initialize/reuse NNF
@@ -779,15 +782,27 @@ for level = coarse -> fine
         +-- carry working image + NNF to next finer level
 ```
 
-The first/coarsest working image is simply the local source clone. Covered pixels are harmless at this point because their round-zero confidence is zero; the original dust or damage therefore cannot contribute to target SSD. Finer levels bilinearly upsample the previous reconstruction only inside the target mask, leaving known source pixels untouched.
+The first/coarsest working image is the local source clone. Covered pixels have zero confidence in round zero, so the original dust or damage does not contribute to target SSD. Finer levels bilinearly upsample the previous reconstruction only inside the target mask, leaving known source pixels untouched.
 
-Known pixels always keep their true confidence from the antialiased target mask. Reconstructed pixels acquire only provisional confidence in later EM rounds. That confidence is attenuated by distance into the hole, local texture strength, and structural-edge strength. This prevents a smooth or blurred first reconstruction from becoming authoritative evidence and self-validating on the next E-step.
+Known pixels retain their confidence from the antialiased target mask. Reconstructed pixels acquire provisional confidence in later EM rounds. That confidence is attenuated by distance into the hole, local texture strength, and structural-edge strength. This limits the influence of a smooth or blurred initial reconstruction in the next E-step.
 
-The NNF and cost buffers are allocated once per level and reused across EM rounds. On a same-level EM round, the previous NNF is retained and only its costs are recomputed against the updated working image.
+The NNF and cost buffers are allocated once per level and reused across EM rounds. On a same-level EM round, the previous NNF is retained and only its costs are recomputed against the updated working image. The first solved level receives the 30-round budget even when coarser levels were skipped. These synthesis rounds are separate from the public `iterations` search-pass limit.
+
+The painted mask bounding box is scanned once in `preparePMLevel` and cached as `level.painted`. The level mask does not change, and voting, texture warping, structure blending, seeding, and convergence measurement all use that rectangle on every round.
+
+The 30/25 schedule follows observed Content-Aware Spot Healing calls. Atropos retains three native-resolution rounds because using Photoshop's final single round reduced quality in repeated-printing and edge regressions with Atropos's wider pyramid spacing and native-only detail models.
+
+These counts are maxima. After round two, once provisional confidence has reached its plateau, `pmReconstructionChange` measures the change in covered pixels. A level may terminate under either of two conditions:
+
+* **Settled.** No masked channel moved by more than one code value, and the coverage-weighted mean change is at most 0.05 code values. One such round ends the level if the NNF also converged. Two consecutive settled rounds end it regardless, because equivalent donor assignments can continue changing on flat paper after the reconstructed appearance has stopped changing.
+
+* **Insufficient progress.** `pmEMProgress` records the smallest mean change so far. A round counts as progress only if it improves on that value by 10%. Two consecutive rounds that fail to do so terminate the level when the remaining movement is below 0.25 code values. One stalled round is tolerated because mean change can oscillate while a level is still converging.
+
+The second condition handles levels that do not reach the settled threshold. In the traced 43px stroke, the penultimate level ran its full 28-round allowance while mean change remained between 0.045 and 0.115 code values without falling further. It now terminates after seven rounds, with an identical change series through that point. Repeated-printing and colour-edge regression outputs are bit-identical, and masked error against the real scan pixels hidden by the replay mask changes by less than 0.1%.
 
 **NNF initialization and PatchMatch search**
 
-The NNF stores an absolute source centre, but coarse-to-fine seeding explicitly upsamples the **displacement** `source - target`, not the absolute source coordinate. This preserves a constant translation field across odd/even child pixels and avoids the one-pixel phase/checkerboard error caused by scaling absolute source coordinates.
+The NNF stores an absolute source centre, but coarse-to-fine seeding upsamples the displacement `source - target`, not the absolute source coordinate. This preserves a constant translation field across odd/even child pixels and avoids the one-pixel phase/checkerboard error caused by scaling absolute source coordinates.
 
 Initialization is deterministic:
 
@@ -798,37 +813,39 @@ Initialization is deterministic:
 
 There is no full-ROI nearest-source/Voronoi preprocessing in the active path.
 
-Each requested PatchMatch pass contains two different execution modes:
+Each requested PatchMatch pass uses two execution modes:
 
-* **Propagation is classic in-place directional PatchMatch.** Even passes scan top-left → bottom-right and test transported left/up matches; odd passes scan bottom-right → top-left and test right/down. The sweep is intentionally sequential so a good displacement can cascade through a coherent region in a single pass.
-* **Random search is row-parallel.** Each target centre samples successively smaller windows around its current winner. The PRNG is a deterministic coordinate/pass hash, so parallel scheduling does not change the result.
+* Propagation uses classic in-place directional PatchMatch. Even passes scan top-left → bottom-right and test transported left/up matches; odd passes scan bottom-right → top-left and test right/down. Propagation is sequential so a good displacement can cascade through a coherent region within a single pass.
 
-`iterations` is a maximum, not guaranteed work. At least one forward and one reverse pass are performed; after that, the level stops when fewer than about 0.4% of active centres improve. Random-search radius is adaptive: an uncertain first pass keeps the broad search, while seeded later passes and EM rounds start from progressively smaller radii.
+* Random search is row-parallel. Each target centre samples successively smaller windows around its current winner. The PRNG uses a deterministic coordinate/pass hash, so parallel scheduling does not change the result.
+
+`iterations` is a maximum rather than guaranteed work. At least one forward and one reverse pass are performed. After that, the level stops when fewer than about 0.4% of active centres improve. The random-search radius is adaptive: an uncertain first pass retains the broad search, while seeded later passes and EM rounds start from progressively smaller radii.
 
 **Patch cost (`internal/patchmatch/cost.go`)**
 
-Pixels are packed as premultiplied RGBA structure-of-arrays planes; alpha is deliberately downweighted relative to RGB. The hot patch SSD is confidence-weighted and dispatched to the retained AVX2/FMA or NEON assembly kernel when available, with a scalar fallback. On the two finest levels, a bounded gain/bias model estimates a low-frequency appearance correction, and reconstruction applies the corresponding transform to source samples. The kernel receives an early-exit limit that accounts for the maximum permitted photometric discount, so pruning cannot discard a rescuable candidate.
+Pixels are packed as premultiplied RGBA structure-of-arrays planes, with alpha downweighted relative to RGB. The confidence-weighted patch SSD hot path dispatches to the retained AVX2/FMA or NEON assembly kernel when available, with a scalar fallback.
+
+Production fills use raw translation matching and untransformed source colours at every level. Runtime Spot Healing traces consistently disabled gain/bias despite retaining populated transform bounds, so source and target photometric statistics and transform arrays are not allocated in the production solve.
 
 The complete candidate cost is:
 
 ```text
 confidence-normalized premultiplied RGBA SSD
-    - bounded photometric mismatch reduction + transform regularization
     + weak locality prior where target evidence is missing
     + source-occurrence penalty on the two finest levels
     + fine-texture energy mismatch penalty
     + low-frequency structure mismatch penalty
 ```
 
-Photometric correction uses patch means and luminance standard deviations from float64 integral statistics. One shared gain is constrained to 0.90–1.10, with per-channel bias limited to ±12.75 code values. Confidence limits how strongly the transform can adapt. The appearance discount estimates only the reduction produced by that bounded transform, with a floor of 38% of raw SSD; an identity transform earns no discount. This remains a moment-based approximation, not exact transformed-pixel SSD. Every accepted candidate gets the complete objective, independent of the current best-cost threshold. Fractional reconstruction votes are clamped without adding a rounding offset; rounding occurs when the final byte is written. The locality prior falls away
-as a target patch gains observed or reconstructed evidence. The source-occurrence field is
-frozen during each search pass to preserve deterministic parallel evaluation. After a pass, incumbent costs are adjusted to the refreshed field.
+The internal, separately tested photometric model remains available for investigation but is not enabled by the public fill path. It uses float64 integral statistics and bounded moment-based gain/bias corrections with consistent candidate scoring and reconstruction.
+
+Fractional reconstruction votes are clamped without a rounding offset; rounding occurs when the final byte is written. The locality prior decreases as a target patch gains observed or reconstructed evidence. The source-occurrence field is fixed during each search pass to preserve deterministic parallel evaluation. After each pass, incumbent costs are adjusted to the refreshed field.
 
 **Fine-level structure model (`internal/patchmatch/structure.go`)**
 
-Low-frequency structure is computed only at native resolution; coarse levels are responsible for large displacement, not exact colour-edge placement.
+Low-frequency structure is computed only at native resolution. Coarse levels handle large displacement rather than exact colour-edge placement.
 
-`pmStructureGuideImage` builds a guide through the painted region from observed pixels only. Mask-boundary colours seed the hole, onion-peel propagation provides a stable initial value throughout it, and bounded relaxation continues the surrounding low-frequency colour field while known pixels remain fixed constraints.
+`pmStructureGuideImage` builds a guide through the painted region using observed pixels only. Mask-boundary colours seed the hole, onion-peel propagation provides an initial value throughout it, and bounded relaxation continues the surrounding low-frequency colour field while known pixels remain fixed constraints.
 
 The source image and guide image are then low-passed with repeated separable 5-tap binomial filtering and converted to a compact three-plane structure field:
 
@@ -838,19 +855,19 @@ orientX  = (Jxx - Jyy) / (Jxx + Jyy)
 orientY  = 2*Jxy / (Jxx + Jyy)
 ```
 
-`orientX/orientY` are coherence-weighted double-angle edge orientation, so an undirected edge has the same representation in either tangent direction. The PatchMatch structure penalty samples the centre, axial points, and diagonals; it penalizes both missing/extra structure and orientation disagreement. Expensive tensor normalization is performed once during descriptor construction, not per candidate.
+`orientX/orientY` are coherence-weighted double-angle edge orientation, so an undirected edge has the same representation in either tangent direction. The PatchMatch structure penalty samples the centre, axial points, and diagonals and penalizes both missing/extra structure and orientation disagreement. Tensor normalization is performed once during descriptor construction rather than once per candidate.
 
 **Fine-level texture model (`internal/patchmatch/texture.go`)**
 
-Texture is modeled independently of provisional reconstructed RGB. The source texture field is local RMS gradient energy computed only from legal, unpainted source pixels. Integral images make the neighbourhood energy query cheap. It responds to scanner noise, plastic or paper speckle, fibres, and halftone microtexture while staying low on genuinely smooth colour fields.
+Texture is modeled independently of provisional reconstructed RGB. The source texture field is local RMS gradient energy computed only from legal, unpainted source pixels. Integral images make the neighbourhood energy query inexpensive. The field responds to scanner noise, plastic or paper speckle, fibres, and halftone microtexture while remaining low on smooth colour fields.
 
-A scalar texture guide is propagated from known pixels through the brush region and harmonically relaxed. The E-step compares source texture energy with this guide, so ordinary patch averaging cannot make a smooth first-pass result self-validate and progressively erase native grain.
+A scalar texture guide is propagated from known pixels through the brush region and harmonically relaxed. The E-step compares source texture energy with this guide, preventing ordinary patch averaging from causing a smooth first-pass reconstruction to validate itself and progressively remove native grain.
 
 **Reconstruction (`internal/patchmatch/reconstruct.go`)**
 
-The M-step deliberately treats flat appearance, structural edges, and stochastic detail differently.
+The M-step handles flat appearance, structural edges, and stochastic detail separately.
 
-First, `pmNNFCoherenceWeights` scores each NNF centre by local agreement of its translation with the four neighbouring centres, allowing ±1 px drift. Ordinary overlapping-patch voting uses the **same patch support as search** and weights each contribution by:
+First, `pmNNFCoherenceWeights` scores each NNF centre by local agreement between its translation and those of its four neighbouring centres, allowing ±1 px drift. Ordinary overlapping-patch voting uses the same patch support as search and weights each contribution by:
 
 ```text
 Gaussian spatial patch weight
@@ -859,27 +876,33 @@ Gaussian spatial patch weight
     * inverse match cost
 ```
 
-This weighted average is retained in flat and texture regions, where combining plausible patches gives stable low-frequency colour. At a structural edge, however, averaging equally sharp but one-pixel-misaligned source edges would manufacture blur. Reconstruction therefore hashes overlapping votes into **exact displacement clusters**. Nearby ±1 px buckets may support selection of the dominant family, but the rendered structural sample comes from one exact winning displacement. Strong, well-supported structure progressively switches from the ordinary average to that direct source sample, preserving colour-edge position and sharpness.
+This weighted average is retained in flat and texture regions, where combining plausible patches provides stable low-frequency colour. At a structural edge, averaging sharp source edges that are misaligned by one pixel would produce blur. Reconstruction therefore hashes overlapping votes into exact displacement clusters.
 
-Texture detail is restored afterward from a separate coherent displacement field stored only over the painted rectangle. Overlapping NNF hypotheses are clustered by displacement, the dominant texture warp is smoothed only across compatible colour/structure neighbourhoods, and the high-frequency source residual is transferred onto the voted low-frequency result. Flat stochastic areas use a linear low-pass residual decomposition so the full texture phase is available; near colour edges the base becomes edge-aware. Texture mixing falls continuously with structure strength and is completely disabled at very strong structural pixels, so the detail pass cannot re-soften an edge that the structure-aware vote just preserved.
+Nearby ±1 px buckets may contribute to selection of the dominant family, but the rendered structural sample comes from a single exact winning displacement. As structural strength and support increase, reconstruction progressively switches from the ordinary average to that direct source sample, preserving colour-edge position and sharpness.
 
-Finally, only target-mask pixels are replaced. Antialiased/partial mask coverage soft-composites the synthesized result with the original source, while known pixels remain byte-for-byte source content.
+Texture detail is restored afterward from a separate coherent displacement field stored only over the painted rectangle. Overlapping NNF hypotheses are clustered by displacement, the dominant texture warp is smoothed only across compatible colour/structure neighbourhoods, and the high-frequency source residual is transferred onto the voted low-frequency result.
+
+Flat stochastic areas use a linear low-pass residual decomposition so the full texture phase remains available; near colour edges, the base becomes edge-aware. Texture mixing decreases continuously with structure strength and is disabled at very strong structural pixels, so the detail pass does not re-soften an edge preserved by the structure-aware vote.
+
+Only target-mask pixels are replaced. Antialiased or partial mask coverage soft-composites the synthesized result with the original source, while known pixels remain byte-for-byte source content.
 
 **Performance and cancellation invariants**
 
-The performance model is intentionally local:
+Processing is local:
 
-* all expensive processing is performed on the working ROI, not the full scan;
+* all expensive processing operates on the working ROI rather than the full scan;
 * the active NNF exists only around patch centres capable of affecting the painted output;
 * NNF/cost/coherence storage is reused within a level;
 * texture-warp storage is mask-bounds-sized rather than working-image-sized;
-* structure/texture relaxation updates only covered pixels and does not copy known ROI pixels every iteration;
-* row-parallel work has a size threshold, so tiny dabs stay serial instead of paying goroutine/`WaitGroup` overhead;
+* structure/texture relaxation updates only covered pixels and does not copy known ROI pixels on every iteration;
+* row-parallel work has a size threshold, so small dabs remain serial to avoid goroutine/`WaitGroup` overhead;
 * independent initialization, descriptor passes, random search, voting, and reconstruction are parallelized where useful, while directional propagation remains sequential for correctness.
 
-`patchmatch.FillBounds` should be preferred when the caller already knows the stroke bounds; `patchmatch.FillROI` is the preferred integration point when the editor can composite the returned rectangle itself, because it also avoids the final full-document clone. `ctx.Err()` is checked at entry and throughout pyramid/search/reconstruction work so an in-flight touch-up can be cancelled.
+`patchmatch.FillBounds` is preferred when the caller already knows the stroke bounds. `patchmatch.FillROI` is preferred when the editor can composite the returned rectangle itself, because it also avoids the final full-document clone. `ctx.Err()` is checked at entry and throughout pyramid, search, and reconstruction work so an in-flight touch-up can be cancelled.
 
-The normal scanned-print setting is `patchSize=7`, `iterations=4`; iterations are a maximum because stable levels terminate early. Regression coverage includes displacement-preserving pyramid seeding, strict whole-patch source validity, separate target/source mask semantics, local working-ROI behavior, supplied-bounds equivalence, basic defect completion, stochastic texture retention, texture beside a crossing edge, and sharp slanted colour-edge preservation. Architecture-specific tests additionally verify AVX2/NEON SSD equivalence, early-exit behavior, dispatch, and the `pmKernelArgs` assembly layout. 
+The normal scanned-print setting is `patchSize=7`, `iterations=4`; iterations are a maximum because stable levels terminate early. Regression coverage includes displacement-preserving pyramid seeding, strict whole-patch source validity, separate target/source mask semantics, local working-ROI behavior, supplied-bounds equivalence, basic defect completion, repeated printing through thin scratches and larger dabs, reconstruction convergence, slow-decay round termination, transparent edge outpainting with nonzero image origins, stochastic texture retention, texture beside a crossing edge, and sharp slanted colour-edge preservation.
+
+Architecture-specific tests additionally verify AVX2/NEON SSD equivalence, early-exit behavior, dispatch, and the `pmKernelArgs` assembly layout.
 
 ### iopaintFill (`app_iopaint.go`)
 

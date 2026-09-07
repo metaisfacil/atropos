@@ -93,24 +93,19 @@ func patchMatchFillLocal(ctx context.Context, source *image.NRGBA, targetMask *i
 		}
 
 		level := preparePMLevel(images[levelIndex], targetMasks[levelIndex], sourceMasks[levelIndex], patchSize)
-		// Level ranges for several regularizers. The expensive ambiguity-resolving
-		// features matter most at the two finest levels; coarse levels are
-		// intentionally kept close to the fast geometric solver.
+		// The expensive regularizers only pay off at the two finest levels. Coarse
+		// levels stay close to the plain geometric solver.
 		switch levelIndex {
 		case 0:
 			level.uniformityStrength = 1
-			level.photoEnabled = true
 			level.regionEnabled = true
 		case 1:
 			level.uniformityStrength = 0.55
-			level.photoEnabled = true
 			level.regionEnabled = true
 		}
-		if level.photoEnabled {
-			pmPreparePhotoSourceStats(level)
-		}
-		// Fine texture and exact colour-edge structure are only useful at native
-		// resolution. Coarse levels solve large displacement cheaply.
+		// Search and reconstruction use source colours unmodified.
+		// Fine texture and exact colour edges only matter at full resolution.
+		// Coarse levels exist to find large displacements cheaply.
 		if levelIndex == 0 {
 			if err := pmPrepareStructureModel(ctx, level); err != nil {
 				return nil, err
@@ -122,30 +117,49 @@ func patchMatchFillLocal(ctx context.Context, source *image.NRGBA, targetMask *i
 		}
 
 		working := seedPMWorking(level, parent)
-		rounds := 2
-		if parent == nil {
-			rounds = 3
-		}
+		rounds := pmEMRounds(levelIndex, parent == nil)
 
 		var nnf []pmPoint
 		var costs []float32
 		var err error
 		seed := parent
+		settledRounds := 0
+		progress := newPMEMProgress()
 		for round := 0; round < rounds; round++ {
 			var stats pmSolveStats
 			nnf, costs, stats, err = solvePMLevel(ctx, level, working, seed, iterations, round)
 			if err != nil {
 				return nil, err
 			}
+			previous := working
 			working, err = reconstructPMLevel(ctx, level, working, nnf, costs)
 			if err != nil {
 				return nil, err
 			}
 			seed = &pmSolution{level: level, working: working, nnf: nnf}
 
-			// A well-seeded fine level frequently converges after one EM round. Keep
-			// the configured counts as maxima, not mandatory work.
-			if stats.stable && (parent != nil || round > 0) {
+			change := pmReconstructionChange(previous, working, level.mask, level.painted)
+			exhausted := progress.observe(change.mean)
+			if round < 2 {
+				// A converged search is not enough on its own, because repainting
+				// changes what the next search matches against. Ignore both stop
+				// conditions for two rounds while confidence is still ramping up.
+				continue
+			}
+			if change.settled() {
+				settledRounds++
+				// On flat areas the search keeps swapping between source patches
+				// that score the same, so it may never call itself converged. Two
+				// unchanged repaints in a row are enough on their own.
+				if stats.stable || settledRounds >= 2 {
+					break
+				}
+			} else {
+				settledRounds = 0
+			}
+			// Some levels never get that quiet, so also stop once the rounds have
+			// stopped improving the result.
+			if exhausted {
 				break
 			}
 		}
@@ -159,22 +173,116 @@ func patchMatchFillLocal(ctx context.Context, source *image.NRGBA, targetMask *i
 	return parent.working, nil
 }
 
-// pmWorkingROI contains every target center used by voting plus a generous
-// random-search/source halo. It mirrors the solver's search-radius policy, so
-// small touch-ups do not accidentally trigger full-document preprocessing.
+// pmEMRounds is the maximum number of search-and-repaint rounds for one level.
+// These are not the search passes controlled by the iterations argument.
+// Atropos keeps three rounds at full resolution instead of one, because its
+// pyramid steps are wider and only the finest level models texture and edges:
+// with a single round the result would be whatever the first repaint produced.
+func pmEMRounds(levelIndex int, firstSolved bool) int {
+	if firstSolved || levelIndex == 1 {
+		return 30
+	}
+	if levelIndex == 0 {
+		return 3
+	}
+	return 25
+}
+
+const (
+	// The level has settled: the last round changed the filled pixels by less
+	// than this on average, in 0-255 units, and moved no channel by more than
+	// one unit.
+	pmEMSettledMean = 0.05
+	// Some levels never settle. They keep changing by a small amount that stops
+	// getting smaller, because the search swaps between source patches that
+	// score the same. A round counts as an improvement only if it beats the
+	// smallest change so far by this factor; after this many rounds without
+	// one, and with less than pmEMResidualCeiling still moving, the level stops.
+	// On the 43px stroke that cut the second-finest level from 28 rounds to 7
+	// and left the repeated-printing and colour-edge test outputs unchanged.
+	pmEMProgressFactor  = 0.9
+	pmEMStalledRounds   = 2
+	pmEMResidualCeiling = 0.25
+)
+
+// pmRoundChange is how far one round moved the filled pixels, in 0-255 units:
+// mean is the coverage-weighted average per channel, peak the largest single
+// change. Whether that counts as finished is decided by settled and
+// pmEMProgress; this type only measures.
+type pmRoundChange struct {
+	mean float64
+	peak int
+}
+
+// settled reports that the reconstruction has stopped moving. Both limits are
+// needed: a one-unit drift across the whole hole still changes what the next
+// search matches against, and a single pixel jumping on its own barely moves
+// the mean.
+func (c pmRoundChange) settled() bool {
+	return c.peak <= 1 && c.mean <= pmEMSettledMean
+}
+
+// pmEMProgress tracks whether a level's rounds are still improving the result.
+// It tolerates one round that fails to improve, because the change per round
+// bounces around while a level is still converging.
+type pmEMProgress struct {
+	best    float64
+	stalled int
+}
+
+func newPMEMProgress() pmEMProgress {
+	return pmEMProgress{best: math.Inf(1)}
+}
+
+// observe records one round's mean change and reports whether the level has
+// stopped improving.
+func (p *pmEMProgress) observe(mean float64) bool {
+	if mean < p.best*pmEMProgressFactor {
+		p.best = mean
+		p.stalled = 0
+	} else {
+		p.stalled++
+	}
+	return mean <= pmEMResidualCeiling && p.stalled >= pmEMStalledRounds
+}
+
+func pmReconstructionChange(previous, next *image.NRGBA, mask *image.Alpha, bounds image.Rectangle) pmRoundChange {
+	var difference, weight int64
+	peak := 0
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			coverage := int64(mask.Pix[y*mask.Stride+x])
+			if coverage == 0 {
+				continue
+			}
+			for c := 0; c < 4; c++ {
+				d := absInt(int(previous.Pix[y*previous.Stride+x*4+c]) - int(next.Pix[y*next.Stride+x*4+c]))
+				difference += coverage * int64(d)
+				weight += coverage
+				peak = maxInt(peak, d)
+			}
+		}
+	}
+	if weight == 0 {
+		return pmRoundChange{}
+	}
+	return pmRoundChange{mean: float64(difference) / float64(weight), peak: peak}
+}
+
+// pmWorkingROI chooses the part of the source image to work in. Its size comes
+// from the mask's area rather than its longest side, so a long thin scratch
+// gets a roughly square region of nearby material instead of a wide one
+// reaching far away. The region always covers the mask plus full patch and
+// filter support, and shifts inward at the image edges rather than being
+// clipped short.
 func pmWorkingROI(maskBounds, imageBounds image.Rectangle, patchSize int) image.Rectangle {
-	brushSpan := maxInt(maskBounds.Dx(), maskBounds.Dy())
-	searchRadius := maxInt(48, brushSpan*6+patchSize*2)
-	// Random search is centred on the current winner, so retain an additional
-	// half-radius beyond the nominal target-centred search domain. The descriptor
-	// and patch filters need only a few more pixels.
-	halo := searchRadius + searchRadius/2 + patchSize + 8
-	return image.Rect(
-		maskBounds.Min.X-halo,
-		maskBounds.Min.Y-halo,
-		maskBounds.Max.X+halo,
-		maskBounds.Max.Y+halo,
-	).Intersect(imageBounds)
+	span := int(math.Ceil(4 * math.Sqrt(float64(maxInt(50, maskBounds.Dx()))*float64(maxInt(50, maskBounds.Dy())))))
+	halo := patchSize + 8
+	w := minInt(imageBounds.Dx(), maxInt(span, maskBounds.Dx()+2*halo))
+	h := minInt(imageBounds.Dy(), maxInt(span, maskBounds.Dy()+2*halo))
+	x := clampInt(maskBounds.Min.X+(maskBounds.Dx()-w)/2, imageBounds.Min.X, imageBounds.Max.X-w)
+	y := clampInt(maskBounds.Min.Y+(maskBounds.Dy()-h)/2, imageBounds.Min.Y, imageBounds.Max.Y-h)
+	return image.Rect(x, y, x+w, y+h)
 }
 
 func cropNRGBA(src *image.NRGBA, bounds image.Rectangle) *image.NRGBA {
@@ -234,12 +342,16 @@ type pmLevel struct {
 	patchSize  int
 	half       int
 	active     image.Rectangle
+	// painted is the bounding box of the non-zero target mask. The mask never
+	// changes once the level is built, and several steps need this rectangle on
+	// every round, so it is computed here once instead of rescanned each time.
+	painted image.Rectangle
 
 	valid   []bool
 	sources []pmPoint
 
-	// NNF/cost storage is retained for every EM round at this level. v3
-	// reallocated these full arrays for each round.
+	// NNF and cost storage is allocated once and reused by every round at this
+	// level.
 	nnf        []pmPoint
 	costs      []float32
 	rowChanges []int
@@ -265,6 +377,7 @@ type pmLevel struct {
 
 	searchRadius int
 	coherence    []float32
+	voteFactors  []pmVoteFactor
 
 	// Bounded gain/bias is estimated per active correspondence and cached for
 	// reconstruction. The PatchMatch cost uses the same transform model.
@@ -283,7 +396,7 @@ type pmLevel struct {
 	occurrenceReady    bool
 	maskIntegral       []int
 
-	// Connected coherent-region state used after each E-step.
+	// Connected coherent-region state, rebuilt after each search step.
 	regionIDs        []int32
 	regionConfidence []float32
 	regionQueue      []int
@@ -351,6 +464,7 @@ func preparePMLevel(src *image.NRGBA, targetMask, sourceMask *image.Alpha, reque
 		}
 	}
 	bounds := maskBounds(targetMask)
+	level.painted = bounds
 	if !bounds.Empty() {
 		// Only centers whose patches can overlap a painted output pixel need an
 		// NNF. One extra cell keeps the coherence neighborhood available.
@@ -361,8 +475,7 @@ func preparePMLevel(src *image.NRGBA, targetMask, sourceMask *image.Alpha, reque
 			minInt(w-half, bounds.Max.X+padding),
 			minInt(h-half, bounds.Max.Y+padding),
 		)
-		brushSpan := maxInt(bounds.Dx(), bounds.Dy())
-		level.searchRadius = minInt(maxInt(w, h), maxInt(48, brushSpan*6+patchSize*2))
+		level.searchRadius = maxInt(w, h)
 	}
 	return level
 }
@@ -403,7 +516,7 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, see
 		// Keep the exact NNF from the previous EM round, but recompute its cost
 		// against the newly reconstructed target. No reinitialization or copy is
 		// required because seed.nnf and level.nnf intentionally alias.
-		if err := parallelRowsSized(ctx, level.active.Min.Y, level.active.Max.Y, activeWidth, func(y int) {
+		if err := parallelRowsSized(ctx, level.active.Min.Y, level.active.Max.Y, activeWidth*level.patchSize, func(y int) {
 			for x := level.active.Min.X; x < level.active.Max.X; x++ {
 				id := y*level.w + x
 				if !validPMPoint(level, nnf[id]) {
@@ -417,7 +530,7 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, see
 		}
 	} else {
 		// Initialization is independent per center and therefore parallel.
-		if err := parallelRowsSized(ctx, level.active.Min.Y, level.active.Max.Y, activeWidth, func(y int) {
+		if err := parallelRowsSized(ctx, level.active.Min.Y, level.active.Max.Y, activeWidth*level.patchSize, func(y int) {
 			for x := level.active.Min.X; x < level.active.Max.X; x++ {
 				id := y*level.w + x
 				nnf[id] = pmPoint{x: -1, y: -1}
@@ -428,8 +541,8 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, see
 				}
 				bestCost := pmPatchCost(level, &level.targetPlanes, x, y, best, float32(math.Inf(1)))
 
-				// One deterministic local alternative prevents an ambiguous interior
-				// from starting entirely from the same boundary-side hypothesis.
+				// A second, deterministic nearby guess stops an ambiguous interior
+				// from starting every center off towards the same side of the hole.
 				state := pmHash(uint32(x), uint32(y), uint32(round+1))
 				altRadius := level.searchRadius
 				if seed != nil {
@@ -448,9 +561,9 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, see
 		}
 	}
 
-	// Uniformity is evaluated against a frozen occurrence field for each search
-	// pass. Build it from the initialized NNF and then make stored incumbent costs
-	// use exactly the same objective candidates will see.
+	// Each search pass scores uniformity against a frozen source-occurrence
+	// field. Build it from the freshly initialized NNF, then rescore the stored
+	// best costs so they use the same objective the candidates will see.
 	pmCaptureOccurrenceCosts(level, nnf)
 	pmUpdateOccurrence(level, nnf)
 	pmRefreshOccurrenceCosts(level, nnf, costs)
@@ -467,9 +580,9 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, see
 		}
 		changes := 0
 
-		// Classic in-place directional propagation. This stays sequential because
-		// propagating a good displacement through a sweep is central to PatchMatch
-		// quality. The more expensive random-search phase remains parallel.
+		// In-place directional propagation, as in the original PatchMatch paper. It
+		// stays sequential because carrying a good displacement along the sweep is
+		// the whole point; the costlier random-search phase below is parallel.
 		if pass&1 == 0 {
 			for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
 				for x := level.active.Min.X; x < level.active.Max.X; x++ {
@@ -510,7 +623,7 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, see
 
 		startRadius := pmRandomSearchStartRadius(level.searchRadius, pass, round, seed != nil)
 		clear(level.rowChanges)
-		if err := parallelRowsSized(ctx, level.active.Min.Y, level.active.Max.Y, activeWidth, func(y int) {
+		if err := parallelRowsSized(ctx, level.active.Min.Y, level.active.Max.Y, activeWidth*level.patchSize, func(y int) {
 			rowChanges := 0
 			for x := level.active.Min.X; x < level.active.Max.X; x++ {
 				id := y*level.w + x
@@ -540,9 +653,10 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, see
 			changes += n
 		}
 
-		// Freeze a fresh source-occurrence field for the next pass and ensure the
-		// incumbent cost array reflects it. This avoids races/order dependence in
-		// parallel random search while still steering later passes away from reuse.
+		// Freeze a fresh source-occurrence field for the next pass and rescore the
+		// stored costs against it. Freezing keeps parallel random search free of
+		// races and order dependence, while later passes still get steered away
+		// from source material that is already heavily reused.
 		pmUpdateOccurrence(level, nnf)
 		pmRefreshOccurrenceCosts(level, nnf, costs)
 
@@ -561,8 +675,8 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, see
 			}
 		}
 	}
-	// Winning candidates already carry the complete photometric objective;
-	// occurrence refresh above keeps the remaining dynamic term synchronized.
+	// Winning candidates were scored against the full objective; the occurrence
+	// refresh above keeps the one term that changes between passes in sync.
 	return nnf, costs, stats, nil
 }
 
@@ -583,7 +697,7 @@ func pmRandomSearchStartRadius(searchRadius, pass, round int, haveSeed bool) int
 
 func pmInitialCandidate(level *pmLevel, seed *pmSolution, x, y int) (pmPoint, bool) {
 	id := y*level.w + x
-	// Clean target/source patches are already their own perfect local mapping.
+	// An unpainted pixel that is a legal source is its own best match.
 	if level.valid[id] && level.mask.Pix[y*level.mask.Stride+x] == 0 {
 		return pmPoint{x: int32(x), y: int32(y)}, true
 	}
@@ -663,6 +777,11 @@ func pmSeedFromSolution(level *pmLevel, seed *pmSolution, x, y int) (pmPoint, bo
 }
 
 func pmTryCandidate(level *pmLevel, target *pmPackedPlanes, tx, ty int, candidate pmPoint, best *pmPoint, bestCost *float32) bool {
+	// In a coherent field, propagation keeps proposing the current best. Its
+	// score is already up to date, so rescoring it would be wasted work.
+	if candidate == *best {
+		return false
+	}
 	if !validPMPoint(level, candidate) {
 		return false
 	}
@@ -700,12 +819,12 @@ func validPMPoint(level *pmLevel, p pmPoint) bool {
 
 func seedPMWorking(level *pmLevel, parent *pmSolution) *image.NRGBA {
 	if parent == nil {
-		// Masked content is ignored by round-zero confidence, so retaining source
-		// bytes here is harmless and avoids inventing a second fill algorithm.
+		// The first round's confidence ignores masked pixels, so leaving the
+		// original source bytes in place here is harmless.
 		return cloneNRGBA(level.src)
 	}
 	out := cloneNRGBA(level.src)
-	bounds := maskBounds(level.mask)
+	bounds := level.painted
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			alpha := level.mask.Pix[y*level.mask.Stride+x]
@@ -943,8 +1062,8 @@ func pmMaskInteriorDistance(mask *image.Alpha) []int {
 	}
 	queue := make([]int, 0, bounds.Dx()*bounds.Dy())
 
-	// Only covered pixels participate. v3 enqueued every known pixel in the ROI,
-	// making this tiny brush-distance calculation O(working-image area).
+	// Only covered pixels are enqueued, so the cost scales with the brush rather
+	// than with the whole working image.
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			if mask.Pix[y*mask.Stride+x] == 0 {

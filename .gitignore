@@ -15,4 +15,7 @@ Thumbs.db
 # Claude
 .claude/
 
+# Research apparatus
+tools/
+
 *.exe

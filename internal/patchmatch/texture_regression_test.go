@@ -48,6 +48,7 @@ func TestPatchMatchFillPreservesFineStochasticTexture(t *testing.T) {
 	gotEnergy := pmTestHighFrequencyEnergy(out, inner)
 	wantDeviation := pmTestLumaDeviation(original, inner)
 	gotDeviation := pmTestLumaDeviation(out, inner)
+	t.Logf("texture energy retention %.3f, deviation retention %.3f", gotEnergy/wantEnergy, gotDeviation/wantDeviation)
 	if gotEnergy < wantEnergy*0.80 {
 		t.Fatalf("fine texture energy collapsed: got %.3f, want at least 80%% of %.3f", gotEnergy, wantEnergy)
 	}
@@ -98,6 +99,7 @@ func TestPatchMatchFillPreservesTextureBesideCrossingEdge(t *testing.T) {
 	darkRegion := image.Rect(70, 44, 90, 52)
 	wantEnergy := pmTestHighFrequencyEnergy(original, darkRegion)
 	gotEnergy := pmTestHighFrequencyEnergy(out, darkRegion)
+	t.Logf("crossing-edge texture energy retention %.3f", gotEnergy/wantEnergy)
 	if gotEnergy < wantEnergy*0.78 {
 		t.Fatalf("texture beside edge collapsed: got %.3f, want at least 78%% of %.3f", gotEnergy, wantEnergy)
 	}

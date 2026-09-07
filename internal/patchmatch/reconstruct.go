@@ -6,15 +6,15 @@ import (
 	"math"
 )
 
-// reconstructPMLevel performs a structure-aware, texture-preserving M-step.
+// reconstructPMLevel is the repaint step. It keeps the sharp edges and the fine
+// texture that plain patch voting would smear:
 //
-//  1. Ordinary overlapping-patch voting supplies a stable appearance estimate.
-//  2. On low-frequency structural boundaries, a dominant exact displacement
-//     hypothesis replaces the incompatible multi-offset average. Equal
-//     displacement means every contributing patch addresses the same source
-//     pixel, so a sharp source edge cannot be blurred by the M-step.
-//  3. Away from structure, a coherent source residual restores stochastic
-//     texture that ordinary voting would attenuate.
+//  1. Overlapping matched patches vote to give a stable colour estimate.
+//  2. On a low-frequency edge, one dominant displacement replaces that average.
+//     Because every contributing patch then reads the same source pixel, a
+//     sharp source edge stays sharp instead of being averaged into a ramp.
+//  3. Away from edges, a coherent source residual puts back the fine texture
+//     that averaging flattens.
 func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf []pmPoint, costs []float32) (*image.NRGBA, error) {
 	pmPreparePhotoTransforms(level, nnf)
 	coherence := pmNNFCoherenceWeights(level, nnf)
@@ -28,7 +28,7 @@ func reconstructPMLevel(ctx context.Context, level *pmLevel, previous *image.NRG
 	}
 
 	out := cloneNRGBA(level.src)
-	bounds := maskBounds(level.mask)
+	bounds := level.painted
 	err = parallelRowsSized(ctx, bounds.Min.Y, bounds.Max.Y, bounds.Dx(), func(y int) {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			maskAlpha := level.mask.Pix[y*level.mask.Stride+x]
@@ -58,6 +58,38 @@ type pmStructureVoteCluster struct {
 	bestID     int
 }
 
+type pmVoteFactor struct {
+	evidence float32
+	cost     float32
+}
+
+// Both weights depend only on the matched patch, not on which output pixel it
+// votes for, so they are computed once per patch instead of once per vote: up
+// to 225 times over for a 15x15 patch. Multiply them in the same order at the
+// use sites, or the results shift in the last bits.
+func pmPrepareVoteFactors(level *pmLevel, costs []float32) []pmVoteFactor {
+	size := level.w * level.h
+	if cap(level.voteFactors) < size {
+		level.voteFactors = make([]pmVoteFactor, size)
+	} else {
+		level.voteFactors = level.voteFactors[:size]
+	}
+	half := level.half
+	area := float32(level.patchSize * level.patchSize)
+	for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
+		for x := level.active.Min.X; x < level.active.Max.X; x++ {
+			id := y*level.w + x
+			evidence := pmConfidenceRectSum(level, x-half, y-half, x+half+1, y+half+1) / area
+			cost := float32(1)
+			if id < len(costs) && !float32IsInf(costs[id]) {
+				cost = 1 / (1 + costs[id]/384)
+			}
+			level.voteFactors[id] = pmVoteFactor{0.20 + 0.80*minFloat32(1, evidence), cost}
+		}
+	}
+	return level.voteFactors
+}
+
 func pmFindStructureVoteCluster(clusters *[256]pmStructureVoteCluster, dx, dy int32) *pmStructureVoteCluster {
 	hash := uint32(dx)*0x9e3779b1 ^ uint32(dy)*0x85ebca77
 	for probe := 0; probe < len(clusters); probe++ {
@@ -75,10 +107,10 @@ func pmFindStructureVoteCluster(clusters *[256]pmStructureVoteCluster, dx, dy in
 	return nil
 }
 
-// pmBestStructureVote selects one exact displacement, while giving nearby
-// +/-1-pixel hypotheses partial support when deciding which exact bucket is the
-// coherent family. Rendering still uses only the winning exact displacement;
-// the neighboring buckets are never averaged into the output edge.
+// pmBestStructureVote picks a single displacement. Displacements within one
+// pixel of a candidate lend it partial support when deciding which one wins,
+// because they are usually the same edge sampled slightly differently. Only the
+// winner is rendered: neighbouring displacements never reach the output.
 func pmBestStructureVote(clusters *[256]pmStructureVoteCluster, totalSupport float32) (dx, dy int32, bestID int, dominance float32, ok bool) {
 	bestID = -1
 	if totalSupport <= 1e-7 {
@@ -101,9 +133,9 @@ func pmBestStructureVote(clusters *[256]pmStructureVoteCluster, totalSupport flo
 			if !other.used || absInt(int(other.dx-candidate.dx)) > 1 || absInt(int(other.dy-candidate.dy)) > 1 {
 				continue
 			}
-			// Neighboring one-pixel buckets help identify the correct family, but
-			// exact support remains the strongest term and the rendered pixel comes
-			// only from candidate.dx/candidate.dy.
+			// Near-miss displacements help identify the right winner, but they count
+			// for less than exact agreement and the rendered pixel still comes only
+			// from candidate.dx/candidate.dy.
 			score += 0.34 * other.support
 			neighborhood += 0.58 * other.support
 		}
@@ -121,18 +153,18 @@ func pmBestStructureVote(clusters *[256]pmStructureVoteCluster, totalSupport flo
 	return
 }
 
-// pmPatchVote reconstructs each pixel from overlapping matched patches using
-// the same patch support as search. Flat/texture regions retain the robust
-// weighted average. Structural regions progressively switch to a single exact
-// coherent warp so differently aligned sharp edges are never averaged into a
-// soft transition.
+// pmPatchVote rebuilds each pixel from the overlapping matched patches that
+// cover it, using the same patch size as the search. Flat and textured areas
+// keep the weighted average. The stronger the edge, the more the pixel comes
+// instead from a single displacement, so two sharp edges at different offsets
+// are never averaged into a soft ramp.
 func pmPatchVote(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf []pmPoint, costs, coherence []float32) (*image.NRGBA, error) {
 	warped := cloneNRGBA(previous)
 	half := level.half
 	spatial := pmVoteSpatialWeights(level.patchSize)
-	patchArea := float32(level.patchSize * level.patchSize)
+	factors := pmPrepareVoteFactors(level, costs)
 
-	voteBounds := maskBounds(level.mask)
+	voteBounds := level.painted
 	if voteBounds.Empty() {
 		return warped, nil
 	}
@@ -143,7 +175,7 @@ func pmPatchVote(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf
 		minInt(level.h, voteBounds.Max.Y+half),
 	)
 
-	err := parallelRowsSized(ctx, voteBounds.Min.Y, voteBounds.Max.Y, voteBounds.Dx(), func(y int) {
+	err := parallelRowsSized(ctx, voteBounds.Min.Y, voteBounds.Max.Y, voteBounds.Dx()*level.patchSize, func(y int) {
 		for x := voteBounds.Min.X; x < voteBounds.Max.X; x++ {
 			if level.mask.Pix[y*level.mask.Stride+x] == 0 {
 				continue
@@ -176,14 +208,8 @@ func pmPatchVote(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf
 						continue
 					}
 
-					x0, y0 := cx-half, cy-half
-					evidence := pmConfidenceRectSum(level, x0, y0, x0+level.patchSize, y0+level.patchSize) / patchArea
-					evidenceWeight := 0.20 + 0.80*minFloat32(1, evidence)
-					costWeight := float32(1)
-					if id < len(costs) && !float32IsInf(costs[id]) {
-						costWeight = 1 / (1 + costs[id]/384)
-					}
-					weight := spatial[x-cx+half] * wy * coherence[id] * evidenceWeight * costWeight
+					factor := factors[id]
+					weight := spatial[x-cx+half] * wy * coherence[id] * factor.evidence * factor.cost
 					if weight <= 1e-7 {
 						continue
 					}
@@ -192,8 +218,14 @@ func pmPatchVote(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf
 					if id < len(level.photo) {
 						photo = level.photo[id]
 					}
-					for c := 0; c < 3; c++ {
-						sum[c] += float64(weight) * float64(pmApplyPhotoRGBFloat(float32(level.src.Pix[si+c]), c, photo))
+					if len(level.photo) == 0 {
+						sum[0] += float64(weight) * float64(level.src.Pix[si])
+						sum[1] += float64(weight) * float64(level.src.Pix[si+1])
+						sum[2] += float64(weight) * float64(level.src.Pix[si+2])
+					} else {
+						for c := 0; c < 3; c++ {
+							sum[c] += float64(weight) * float64(pmApplyPhotoRGBFloat(float32(level.src.Pix[si+c]), c, photo))
+						}
 					}
 					sum[3] += float64(weight) * float64(level.src.Pix[si+3])
 					total += float64(weight)
@@ -259,9 +291,9 @@ func pmPatchVote(ctx context.Context, level *pmLevel, previous *image.NRGBA, nnf
 						supportGate := pmSmoothStep(0.12, 0.36, dominance)
 						sourceGate := 0.35 + 0.65*pmSmoothStep(0.06, 0.38, sourceStructure)
 						structureMix = structure * supportGate * sourceGate
-						// On a clearly structural target with a coherent displacement family,
-						// prefer one sharp source hypothesis decisively. This is the case where
-						// ordinary patch voting is most visibly wrong.
+						// Where the target is clearly an edge and the displacements agree,
+						// commit hard to the single sharp source sample. This is the case
+						// where plain patch voting looks worst.
 						if structure > 0.82 && dominance > 0.22 && sourceStructure > 0.14 {
 							floor := 0.78 + 0.20*pmSmoothStep(0.22, 0.48, dominance)
 							structureMix = maxFloat32(structureMix, floor)
@@ -341,21 +373,21 @@ func (f *pmTextureWarpField) at(x, y int) *pmTextureWarpPixel {
 	return &f.pixels[f.index(x, y)]
 }
 
-// pmDominantTextureWarp stores warp state only for the painted rectangle. v3
-// allocated four full-working-image arrays and then copied all four for the
-// smoothing pass even though only masked output pixels ever read them.
+// pmDominantTextureWarp stores warp state for the painted rectangle only. Only
+// masked output pixels ever read it, so full-working-image arrays would be
+// almost entirely wasted.
 func pmDominantTextureWarp(ctx context.Context, level *pmLevel, voted *image.NRGBA, nnf []pmPoint, costs, coherence []float32) (*pmTextureWarpField, error) {
-	bounds := maskBounds(level.mask)
+	bounds := level.painted
 	field := &pmTextureWarpField{bounds: bounds, stride: bounds.Dx()}
 	if bounds.Empty() {
 		return field, nil
 	}
 	field.pixels = make([]pmTextureWarpPixel, bounds.Dx()*bounds.Dy())
 	spatial := pmVoteSpatialWeights(level.patchSize)
-	patchArea := float32(level.patchSize * level.patchSize)
+	factors := pmPrepareVoteFactors(level, costs)
 	half := level.half
 
-	err := parallelRowsSized(ctx, bounds.Min.Y, bounds.Max.Y, bounds.Dx(), func(y int) {
+	err := parallelRowsSized(ctx, bounds.Min.Y, bounds.Max.Y, bounds.Dx()*level.patchSize, func(y int) {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			if level.mask.Pix[y*level.mask.Stride+x] == 0 {
 				continue
@@ -374,14 +406,8 @@ func pmDominantTextureWarp(ctx context.Context, level *pmLevel, voted *image.NRG
 					if !validPMPoint(level, match) {
 						continue
 					}
-					x0, y0 := cx-half, cy-half
-					evidence := pmConfidenceRectSum(level, x0, y0, x0+level.patchSize, y0+level.patchSize) / patchArea
-					evidenceWeight := 0.20 + 0.80*minFloat32(1, evidence)
-					costWeight := float32(1)
-					if id < len(costs) && !float32IsInf(costs[id]) {
-						costWeight = 1 / (1 + costs[id]/384)
-					}
-					weight := spatial[x-cx+half] * wy * coherence[id] * evidenceWeight * costWeight
+					factor := factors[id]
+					weight := spatial[x-cx+half] * wy * coherence[id] * factor.evidence * factor.cost
 					if weight <= 1e-7 {
 						continue
 					}
@@ -504,7 +530,7 @@ func pmRestoreTextureDetail(ctx context.Context, level *pmLevel, voted *image.NR
 		return nil, err
 	}
 	out := cloneNRGBA(voted)
-	bounds := maskBounds(level.mask)
+	bounds := level.painted
 	if bounds.Empty() {
 		return out, nil
 	}
@@ -526,9 +552,8 @@ func pmRestoreTextureDetail(ctx context.Context, level *pmLevel, voted *image.NR
 			if id < len(level.structureGuide.strength) {
 				structureProtection = level.structureGuide.strength[id]
 			}
-			// Structure-aware RGB voting already transfers a real sharp source
-			// sample on strong edges. Do not subsequently reintroduce a low-passed
-			// base there.
+			// On a strong edge the voting step above already copied a real sharp
+			// source sample. Do not put a blurred base back over it.
 			if structureProtection >= 0.94 {
 				continue
 			}
@@ -546,14 +571,14 @@ func pmRestoreTextureDetail(ctx context.Context, level *pmLevel, voted *image.NR
 
 			var votedBase, sourceBase [3]float32
 			if structureProtection < 0.12 {
-				// In genuinely stochastic regions a linear low-pass is important: the
-				// source residual must contain the full grain phase rather than letting a
-				// bilateral base absorb it.
+				// In genuinely noisy regions the low-pass must be plain and linear, so
+				// that the full grain ends up in the residual rather than being
+				// absorbed into an edge-aware base.
 				votedBase = pmLowPassPixel(voted, nil, x, y, blurRadius)
 				sourceBase = pmLowPassPixel(level.src, level.sourceMask, sx, sy, blurRadius)
 			} else {
-				// In the edge transition zone use a bilateral/edge-aware base so residual
-				// decomposition itself does not average across a colour boundary.
+				// Near an edge, use an edge-aware base instead, so splitting the pixel
+				// into base and residual does not itself average across the boundary.
 				votedBase = pmEdgeAwareLowPassPixel(voted, nil, x, y, blurRadius)
 				sourceBase = pmEdgeAwareLowPassPixel(level.src, level.sourceMask, sx, sy, blurRadius)
 			}
@@ -561,9 +586,9 @@ func pmRestoreTextureDetail(ctx context.Context, level *pmLevel, voted *image.NR
 			scale = minFloat32(1.55, maxFloat32(0.65, scale))
 
 			dominanceWeight := 0.84 + 0.16*float32(math.Sqrt(float64(minFloat32(1, warpPixel.dominance))))
-			// At a fully structural pixel this reaches exactly zero. v2 retained 32%
-			// of the low-pass residual path at the strongest possible edge, which was
-			// enough to visibly soften black/gold and silver/colour boundaries.
+			// This reaches exactly zero on a fully structural pixel. Leaving even a
+			// third of the residual path in place at the strongest edges was enough
+			// to visibly soften black/gold and silver/colour boundaries.
 			mix := textureMix * dominanceWeight * (1 - structureProtection)
 			mix = minFloat32(1, maxFloat32(0, mix))
 			if mix <= 0.001 {
@@ -591,9 +616,10 @@ func pmRestoreTextureDetail(ctx context.Context, level *pmLevel, voted *image.NR
 	return out, nil
 }
 
-// pmLowPassPixel returns a small masked-aware binomial low-pass sample. It is
-// intentionally linear and is used in flat stochastic regions where the full
-// high-frequency residual must remain available for texture transfer.
+// pmLowPassPixel returns a small binomial low-pass sample, skipping masked
+// pixels. It is plain and linear, not edge-aware, because the flat noisy
+// regions that use it need the whole high-frequency residual left intact for
+// texture transfer.
 func pmLowPassPixel(src *image.NRGBA, exclusion *image.Alpha, x, y, radius int) [3]float32 {
 	weights := [...]float32{1, 4, 6, 4, 1}
 	if radius <= 1 {
@@ -638,10 +664,10 @@ func pmLowPassPixel(src *image.NRGBA, exclusion *image.Alpha, x, y, radius int) 
 	return [3]float32{float32(src.Pix[i]), float32(src.Pix[i+1]), float32(src.Pix[i+2])}
 }
 
-// pmEdgeAwareLowPassPixel is a tiny bilateral/binomial low-pass used only for
-// residual decomposition. Spatially close pixels on the other side of a colour
-// edge receive very little weight, so the base itself does not manufacture a
-// cross-edge intermediate colour.
+// pmEdgeAwareLowPassPixel is a small bilateral low-pass, used only to split a
+// pixel into base and residual. Nearby pixels on the far side of a colour edge
+// get very little weight, so the base never blends a colour that exists on
+// neither side of the edge.
 func pmEdgeAwareLowPassPixel(src *image.NRGBA, exclusion *image.Alpha, x, y, radius int) [3]float32 {
 	weights := [...]float32{1, 4, 6, 4, 1}
 	if radius <= 1 {
@@ -671,7 +697,8 @@ func pmEdgeAwareLowPassPixel(src *image.NRGBA, exclusion *image.Alpha, x, y, rad
 			dg := float32(src.Pix[i+1]) - cg
 			db := float32(src.Pix[i+2]) - cb
 			distance2 := (dr*dr + dg*dg + db*db) / 3
-			// Rational bilateral conductance avoids an exp() in this hot-ish path.
+			// A rational falloff rather than a Gaussian, to avoid an exp() call in
+			// this inner loop.
 			colourWeight := 1 / (1 + distance2/(18*18))
 			alpha := float32(src.Pix[i+3]) / 255
 			weight := wx * wy * colourWeight * alpha
@@ -722,10 +749,10 @@ func pmVoteSpatialWeights(patchSize int) []float32 {
 	return weights
 }
 
-// pmNNFCoherenceWeights rewards a locally translational displacement field.
-// Incoherent centers retain a small contribution to the base vote, but they
-// cannot dominate structure or texture unless their displacement also wins the
-// corresponding coherent-cluster selection.
+// pmNNFCoherenceWeights weights each center by how well its displacement agrees
+// with its neighbours. Centers that disagree keep a small share of the base
+// vote, but cannot drive structure or texture unless their displacement also
+// wins the cluster selection above.
 func pmNNFCoherenceWeights(level *pmLevel, nnf []pmPoint) []float32 {
 	size := level.w * level.h
 	if cap(level.coherence) < size {

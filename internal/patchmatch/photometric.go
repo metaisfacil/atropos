@@ -2,9 +2,10 @@ package patchmatch
 
 import "math"
 
-// pmPhotoTransform is a deliberately restrained photometric model for one NNF
-// correspondence. A single gain preserves hue relationships while three small
-// channel biases absorb local illumination / print-density drift.
+// pmPhotoTransform is a small, tightly bounded photometric correction for one
+// NNF match. A single shared gain keeps hue relationships intact, while three
+// per-channel offsets absorb local illumination and print-density drift. The
+// bounds below are what stop it from explaining away a genuine mismatch.
 type pmPhotoTransform struct {
 	gain float32
 	bias [3]float32
@@ -127,9 +128,10 @@ func pmPhotoPatchStats(field *pmPhotoIntegral, cx, cy, half int) pmPhotoStats {
 	return stats
 }
 
-// pmEstimatePhotoTransform uses exact patch-window means and variance from
-// integral statistics, making the candidate-time cost O(1). The target moments
-// are confidence weighted, so painted pixels cannot freely invent a transform.
+// pmEstimatePhotoTransform reads exact patch means and variance from integral
+// statistics, so scoring a candidate stays O(1) regardless of patch size. The
+// target side is confidence weighted, so already-painted pixels cannot pull the
+// transform far on their own.
 func pmEstimatePhotoTransform(level *pmLevel, target *pmPackedPlanes, tx, ty int, source pmPoint) pmPhotoTransform {
 	_ = target // target is already summarized in level.photoTargetStats.
 	if level == nil || !level.photoEnabled || !validPMPoint(level, source) {
@@ -157,11 +159,12 @@ func pmEstimatePhotoTransform(level *pmLevel, target *pmPackedPlanes, tx, ty int
 	return tr
 }
 
-// pmPhotoCostAdjustment estimates the reduction in low-frequency mismatch
-// produced by the actual bounded transform, rather than crediting an unlimited
-// mean/contrast match. An identity transform receives no credit. It cannot
-// drive corrected SSD below pmPhotoMinRatio of the measured full-patch cost;
-// geometry/texture still have to match.
+// pmPhotoCostAdjustment estimates how much of the low-frequency mismatch the
+// bounded transform actually removes. Crediting a perfect mean and contrast
+// match would let any patch look cheap. A transform that does nothing earns
+// nothing, and the discount can never take the corrected cost below
+// pmPhotoMinRatio of the measured cost: geometry and texture still have to
+// match.
 func pmPhotoCostAdjustment(level *pmLevel, tx, ty int, source pmPoint, tr pmPhotoTransform) (explained, regularizer float32) {
 	if level == nil || !level.photoEnabled {
 		return 0, 0
@@ -180,8 +183,8 @@ func pmPhotoCostAdjustment(level *pmLevel, tx, ty int, source pmPoint, tr pmPhot
 	meanImprovement /= 3.1225 // same RGB + alpha normalization as patch SSD
 	beforeContrast := t.stdL - s.stdL
 	afterContrast := t.stdL - tr.gain*s.stdL
-	// Means are the dominant useful part on scans; variance correction is weaker
-	// so periodic/halftone structure cannot be made artificially cheap by gain.
+	// On scans the mean is the useful part. Variance is weighted lower so that
+	// gain cannot make periodic halftone structure look artificially cheap.
 	explained = 0.86*meanImprovement + 0.30*(beforeContrast*beforeContrast-afterContrast*afterContrast)
 
 	g := (tr.gain - 1) / 0.10
@@ -211,6 +214,10 @@ func pmApplyPhotoRGBFloat(value float32, channel int, tr pmPhotoTransform) float
 }
 
 func pmPreparePhotoTransforms(level *pmLevel, nnf []pmPoint) {
+	if !level.photoEnabled {
+		level.photo = nil // reconstruction interprets an absent transform as identity
+		return
+	}
 	size := level.w * level.h
 	if cap(level.photo) < size {
 		level.photo = make([]pmPhotoTransform, size)
