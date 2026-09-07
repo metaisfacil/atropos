@@ -561,14 +561,8 @@ func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, see
 			}
 		}
 	}
-	// Search may accept an obvious raw-SSD improvement without invoking the
-	// gain/bias rescue path. Normalize the final incumbent costs once here so
-	// coherent-region thresholds and reconstruction weights see the complete
-	// photometric objective. This is one O(active) pass, not candidate-time work.
-	if err := pmRecomputeActiveCosts(ctx, level, nnf, costs); err != nil {
-		return nil, nil, stats, err
-	}
-	pmCaptureOccurrenceCosts(level, nnf)
+	// Winning candidates already carry the complete photometric objective;
+	// occurrence refresh above keeps the remaining dynamic term synchronized.
 	return nnf, costs, stats, nil
 }
 

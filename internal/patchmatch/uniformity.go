@@ -1,10 +1,5 @@
 package patchmatch
 
-import (
-	"context"
-	"math"
-)
-
 // pmUpdateOccurrence builds a source-occurrence density from the current NNF.
 // Only target patches that actually intersect the painted mask contribute.
 // A coherent translation maps adjacent target centers to adjacent *distinct*
@@ -97,20 +92,6 @@ func pmPatchTouchesMask(level *pmLevel, x, y int) bool {
 		return false
 	}
 	return integralRectSum(level.maskIntegral, level.w+1, x0, y0, x1, y1) != 0
-}
-
-func pmRecomputeActiveCosts(ctx context.Context, level *pmLevel, nnf []pmPoint, costs []float32) error {
-	width := level.active.Dx()
-	return parallelRowsSized(ctx, level.active.Min.Y, level.active.Max.Y, width, func(y int) {
-		for x := level.active.Min.X; x < level.active.Max.X; x++ {
-			id := y*level.w + x
-			if id >= len(nnf) || !validPMPoint(level, nnf[id]) {
-				costs[id] = float32(math.Inf(1))
-				continue
-			}
-			costs[id] = pmPatchCost(level, &level.targetPlanes, x, y, nnf[id], float32(math.Inf(1)))
-		}
-	})
 }
 
 // pmOccurrencePressure reports whether meaningful source crowding remains. It

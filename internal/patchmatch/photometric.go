@@ -11,8 +11,11 @@ type pmPhotoTransform struct {
 }
 
 type pmPhotoIntegral struct {
-	stride                 int
-	weight, r, g, b, l, l2 []float32
+	stride int
+	// Prefix sums can contain millions of pixels. Float32 cancellation in a
+	// small window near the bottom/right of an ROI otherwise erases scan grain
+	// or invents contrast, changing the estimated gain with image position.
+	weight, r, g, b, l, l2 []float64
 }
 
 type pmPhotoStats struct {
@@ -57,9 +60,9 @@ func pmBuildPhotoIntegral(w, h int, sample func(x, y int) (weight, r, g, b float
 func pmBuildPhotoIntegralReuse(field pmPhotoIntegral, w, h int, sample func(x, y int) (weight, r, g, b float32)) pmPhotoIntegral {
 	stride := w + 1
 	required := stride * (h + 1)
-	ensure := func(buf []float32) []float32 {
+	ensure := func(buf []float64) []float64 {
 		if cap(buf) < required {
-			return make([]float32, required)
+			return make([]float64, required)
 		}
 		buf = buf[:required]
 		clear(buf)
@@ -73,9 +76,10 @@ func pmBuildPhotoIntegralReuse(field pmPhotoIntegral, w, h int, sample func(x, y
 	field.l = ensure(field.l)
 	field.l2 = ensure(field.l2)
 	for y := 0; y < h; y++ {
-		var rw, rr, rg, rb, rl, rl2 float32
+		var rw, rr, rg, rb, rl, rl2 float64
 		for x := 0; x < w; x++ {
-			wt, r, g, b := sample(x, y)
+			wf, rf, gf, bf := sample(x, y)
+			wt, r, g, b := float64(wf), float64(rf), float64(gf), float64(bf)
 			l := 0.299*r + 0.587*g + 0.114*b
 			rw += wt
 			rr += wt * r
@@ -96,7 +100,7 @@ func pmBuildPhotoIntegralReuse(field pmPhotoIntegral, w, h int, sample func(x, y
 	return field
 }
 
-func pmPhotoIntegralRect(buf []float32, stride, x0, y0, x1, y1 int) float32 {
+func pmPhotoIntegralRect(buf []float64, stride, x0, y0, x1, y1 int) float64 {
 	return buf[y1*stride+x1] - buf[y0*stride+x1] - buf[y1*stride+x0] + buf[y0*stride+x0]
 }
 
@@ -110,15 +114,16 @@ func pmPhotoPatchStats(field *pmPhotoIntegral, cx, cy, half int) pmPhotoStats {
 	if w <= 1e-5 {
 		return pmPhotoStats{}
 	}
-	stats := pmPhotoStats{weight: w}
-	stats.mean[0] = pmPhotoIntegralRect(field.r, field.stride, x0, y0, x1, y1) / w
-	stats.mean[1] = pmPhotoIntegralRect(field.g, field.stride, x0, y0, x1, y1) / w
-	stats.mean[2] = pmPhotoIntegralRect(field.b, field.stride, x0, y0, x1, y1) / w
+	stats := pmPhotoStats{weight: float32(w)}
+	stats.mean[0] = float32(pmPhotoIntegralRect(field.r, field.stride, x0, y0, x1, y1) / w)
+	stats.mean[1] = float32(pmPhotoIntegralRect(field.g, field.stride, x0, y0, x1, y1) / w)
+	stats.mean[2] = float32(pmPhotoIntegralRect(field.b, field.stride, x0, y0, x1, y1) / w)
 	sumL := pmPhotoIntegralRect(field.l, field.stride, x0, y0, x1, y1)
 	sumL2 := pmPhotoIntegralRect(field.l2, field.stride, x0, y0, x1, y1)
-	stats.meanL = sumL / w
-	variance := maxFloat32(0, sumL2/w-stats.meanL*stats.meanL)
-	stats.stdL = float32(math.Sqrt(float64(variance)))
+	meanL := sumL / w
+	stats.meanL = float32(meanL)
+	variance := math.Max(0, sumL2/w-meanL*meanL)
+	stats.stdL = float32(math.Sqrt(variance))
 	return stats
 }
 
@@ -152,8 +157,9 @@ func pmEstimatePhotoTransform(level *pmLevel, target *pmPackedPlanes, tx, ty int
 	return tr
 }
 
-// pmPhotoCostAdjustment estimates the low-frequency portion of raw patch SSD
-// that the bounded transform can legitimately explain. It intentionally cannot
+// pmPhotoCostAdjustment estimates the reduction in low-frequency mismatch
+// produced by the actual bounded transform, rather than crediting an unlimited
+// mean/contrast match. An identity transform receives no credit. It cannot
 // drive corrected SSD below pmPhotoMinRatio of the measured full-patch cost;
 // geometry/texture still have to match.
 func pmPhotoCostAdjustment(level *pmLevel, tx, ty int, source pmPoint, tr pmPhotoTransform) (explained, regularizer float32) {
@@ -165,16 +171,18 @@ func pmPhotoCostAdjustment(level *pmLevel, tx, ty int, source pmPoint, tr pmPhot
 	if t.weight <= 1e-5 || s.weight <= 1e-5 {
 		return 0, 0
 	}
-	var meanEnergy float32
+	var meanImprovement float32
 	for c := 0; c < 3; c++ {
-		d := t.mean[c] - s.mean[c]
-		meanEnergy += d * d
+		before := t.mean[c] - s.mean[c]
+		after := t.mean[c] - pmApplyPhotoRGBFloat(s.mean[c], c, tr)
+		meanImprovement += before*before - after*after
 	}
-	meanEnergy /= 3
-	contrast := t.stdL - s.stdL
+	meanImprovement /= 3.1225 // same RGB + alpha normalization as patch SSD
+	beforeContrast := t.stdL - s.stdL
+	afterContrast := t.stdL - tr.gain*s.stdL
 	// Means are the dominant useful part on scans; variance correction is weaker
 	// so periodic/halftone structure cannot be made artificially cheap by gain.
-	explained = 0.86*meanEnergy + 0.30*contrast*contrast
+	explained = 0.86*meanImprovement + 0.30*(beforeContrast*beforeContrast-afterContrast*afterContrast)
 
 	g := (tr.gain - 1) / 0.10
 	regularizer = 1.25 * g * g
@@ -196,7 +204,10 @@ func pmApplyPhotoRGBFloat(value float32, channel int, tr pmPhotoTransform) float
 	if channel < 0 || channel >= 3 {
 		return value
 	}
-	return clampFloat32(tr.gain*value + tr.bias[channel])
+	// Voting accumulates fractional samples and rounds once at byte output.
+	// clampFloat32 includes a +0.5 byte-rounding bias, so it must not be used
+	// here: even an identity transform would brighten every overlapping vote.
+	return minFloat32(255, maxFloat32(0, tr.gain*value+tr.bias[channel]))
 }
 
 func pmPreparePhotoTransforms(level *pmLevel, nnf []pmPoint) {

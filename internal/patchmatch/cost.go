@@ -146,11 +146,10 @@ func updatePMConfidence(level *pmLevel, round int, haveSeed bool) {
 	}
 }
 
-// pmPatchCost combines full-patch SIMD SSD with three bounded priors that are
-// also represented in reconstruction: photometric gain/bias, source occurrence
-// uniformity, and structure/texture guidance. Gain/bias is estimated from nine
-// confident samples and only reweights the vectorized full-patch SSD; the hot
-// pixel loop therefore remains in the existing architecture-specific kernel.
+// pmPatchCost combines full-patch SIMD SSD with bounded photometric correction,
+// source occurrence, locality, and structure/texture guidance. Gain/bias uses
+// patch-window moments and is also applied in reconstruction. Every winning
+// candidate receives the same score regardless of its early-exit threshold.
 func pmPatchCost(level *pmLevel, target *pmPackedPlanes, tx, ty int, source pmPoint, bestCost float32) float32 {
 	if !validPMPoint(level, source) {
 		return float32(math.Inf(1))
@@ -205,7 +204,10 @@ func pmPatchCost(level *pmLevel, target *pmPackedPlanes, tx, ty int, source pmPo
 		// We have not estimated gain/bias yet. The bounded model is not allowed
 		// to reduce full-patch SSD below pmPhotoMinRatio, so this conservative
 		// threshold is sufficient to preserve every rescuable candidate.
-		rawLimit = remaining * denominator / pmPhotoMinRatio
+		rawLimit = remaining * denominator
+		if level.photoEnabled {
+			rawLimit /= pmPhotoMinRatio
+		}
 	}
 
 	targetIndex := y0*target.stride + x0
@@ -227,13 +229,15 @@ func pmPatchCost(level *pmLevel, target *pmPackedPlanes, tx, ty int, source pmPo
 	sum := pmRunPatchKernel(&args)
 	rawAppearance := sum / denominator
 
-	// Most propagation/random-search candidates either clearly improve raw SSD or
-	// clearly lose. Only invoke the photometric model when it can change that
-	// decision (or when recomputing an incumbent with no finite threshold). This
-	// keeps gain/bias out of the dominant hot path while still rescuing the exact
-	// case it is meant for: structurally good patches with shifted illumination.
-	if !float32IsInf(bestCost) && rawAppearance+prior < bestCost*0.985 {
+	if !level.photoEnabled {
 		return rawAppearance + prior
+	}
+	// A partial SSD is a lower bound, not a complete score. Only skip the photo
+	// model when even the maximum allowed discount cannot rescue the candidate.
+	// Accepting a raw-SSD winner here would mix two objectives in the NNF and
+	// make subsequent decisions depend on the order candidates were visited.
+	if lowerBound := rawAppearance*pmPhotoMinRatio + prior; lowerBound >= bestCost {
+		return lowerBound
 	}
 	photo := pmEstimatePhotoTransform(level, target, tx, ty, source)
 	photoExplained, photoRegularizer := pmPhotoCostAdjustment(level, tx, ty, source, photo)

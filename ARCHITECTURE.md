@@ -807,18 +807,22 @@ Each requested PatchMatch pass contains two different execution modes:
 
 **Patch cost (`internal/patchmatch/cost.go`)**
 
-The appearance term uses the same raw source appearance that reconstruction will render. Pixels are packed as premultiplied RGBA structure-of-arrays planes; alpha is deliberately downweighted relative to RGB. The hot patch SSD is confidence-weighted and dispatched to the retained AVX2/FMA or NEON assembly kernel when available, with a scalar fallback. The kernel receives an early-exit limit derived from the current best candidate so obviously worse matches can stop before finishing the patch.
+Pixels are packed as premultiplied RGBA structure-of-arrays planes; alpha is deliberately downweighted relative to RGB. The hot patch SSD is confidence-weighted and dispatched to the retained AVX2/FMA or NEON assembly kernel when available, with a scalar fallback. On the two finest levels, a bounded gain/bias model estimates a low-frequency appearance correction, and reconstruction applies the corresponding transform to source samples. The kernel receives an early-exit limit that accounts for the maximum permitted photometric discount, so pruning cannot discard a rescuable candidate.
 
 The complete candidate cost is:
 
 ```text
 confidence-normalized premultiplied RGBA SSD
+    - bounded photometric mismatch reduction + transform regularization
     + weak locality prior where target evidence is missing
+    + source-occurrence penalty on the two finest levels
     + fine-texture energy mismatch penalty
     + low-frequency structure mismatch penalty
 ```
 
-There is deliberately no mean subtraction and no search-only gain/bias model: search and reconstruction must agree about what source appearance will actually be copied. The locality prior falls away as a target patch gains observed or reconstructed evidence.
+Photometric correction uses patch means and luminance standard deviations from float64 integral statistics. One shared gain is constrained to 0.90–1.10, with per-channel bias limited to ±12.75 code values. Confidence limits how strongly the transform can adapt. The appearance discount estimates only the reduction produced by that bounded transform, with a floor of 38% of raw SSD; an identity transform earns no discount. This remains a moment-based approximation, not exact transformed-pixel SSD. Every accepted candidate gets the complete objective, independent of the current best-cost threshold. Fractional reconstruction votes are clamped without adding a rounding offset; rounding occurs when the final byte is written. The locality prior falls away
+as a target patch gains observed or reconstructed evidence. The source-occurrence field is
+frozen during each search pass to preserve deterministic parallel evaluation. After a pass, incumbent costs are adjusted to the refreshed field.
 
 **Fine-level structure model (`internal/patchmatch/structure.go`)**
 
