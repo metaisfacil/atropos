@@ -827,6 +827,8 @@ Pixels are packed as premultiplied RGBA structure-of-arrays planes, with alpha d
 
 Production fills use raw translation matching and untransformed source colours at every level. Runtime Spot Healing traces consistently disabled gain/bias despite retaining populated transform bounds, so source and target photometric statistics and transform arrays are not allocated in the production solve.
 
+On AVX2/FMA machines, fully opaque source and target images use a packed-byte SSD kernel. It expands four RGBA pixels to integers, accumulates exact squared channel differences, then applies the existing float confidence weights. This preserves patch size, source validity, normalization, regularizers, and voting. Tail loads are masked because image rows do not have the padding used by float planes. Opaque EM rounds also skip the full-ROI target float repack. Translucent images, other CPU paths, and photometric target statistics retain the existing packed float planes. The new reduction order can change near-tied matches at floating-point precision; quality tests and real-scan replay comparisons cover that boundary.
+
 The complete candidate cost is:
 
 ```text

@@ -13,6 +13,21 @@ type pmPackedPlanes struct {
 	channel [4][]float32
 	data    []float32
 	stride  int
+	raw     *image.NRGBA
+	opaque  bool
+}
+
+// The opaque path compares byte RGBA directly. Alpha differences are zero and
+// RGB squared differences fit exactly in int32 before confidence weighting.
+type pmOpaqueKernelArgs struct {
+	target           *byte
+	source           *byte
+	confidence       *float32
+	targetStride     int
+	sourceStride     int
+	confidenceStride int
+	patchSize        int
+	limit            float32
 }
 
 // pmKernelArgs is shared with cost_amd64.s / cost_arm64.s.
@@ -52,6 +67,8 @@ func packPMPixelsInto(src *image.NRGBA, planes pmPackedPlanes) pmPackedPlanes {
 		clear(planes.data)
 	}
 	planes.stride = stride
+	planes.raw = src
+	planes.opaque = true
 	for channel := range planes.channel {
 		start := channel * stride * h
 		planes.channel[channel] = planes.data[start : start+stride*h]
@@ -61,6 +78,9 @@ func packPMPixelsInto(src *image.NRGBA, planes pmPackedPlanes) pmPackedPlanes {
 			si := y*src.Stride + x*4
 			di := y*stride + x
 			alpha := float32(src.Pix[si+3])
+			if alpha != 255 {
+				planes.opaque = false
+			}
 			premul := alpha / 255
 			planes.channel[0][di] = float32(src.Pix[si]) * premul
 			planes.channel[1][di] = float32(src.Pix[si+1]) * premul
@@ -210,23 +230,38 @@ func pmPatchCost(level *pmLevel, target *pmPackedPlanes, tx, ty int, source pmPo
 		}
 	}
 
-	targetIndex := y0*target.stride + x0
-	sourceIndex := (sy-half)*level.srcPlanes.stride + sx - half
-	args := pmKernelArgs{
-		targetR:    &target.channel[0][targetIndex],
-		targetG:    &target.channel[1][targetIndex],
-		targetB:    &target.channel[2][targetIndex],
-		targetA:    &target.channel[3][targetIndex],
-		sourceR:    &level.srcPlanes.channel[0][sourceIndex],
-		sourceG:    &level.srcPlanes.channel[1][sourceIndex],
-		sourceB:    &level.srcPlanes.channel[2][sourceIndex],
-		sourceA:    &level.srcPlanes.channel[3][sourceIndex],
-		confidence: &level.confidence[y0*level.confStride+x0],
-		stride:     target.stride,
-		patchSize:  level.patchSize,
-		limit:      rawLimit,
+	var sum float32
+	if target.opaque && level.srcPlanes.opaque && pmOpaqueKernelAvailable() {
+		args := pmOpaqueKernelArgs{
+			target:           &target.raw.Pix[y0*target.raw.Stride+x0*4],
+			source:           &level.src.Pix[(sy-half)*level.src.Stride+(sx-half)*4],
+			confidence:       &level.confidence[y0*level.confStride+x0],
+			targetStride:     target.raw.Stride,
+			sourceStride:     level.src.Stride,
+			confidenceStride: level.confStride,
+			patchSize:        level.patchSize,
+			limit:            rawLimit,
+		}
+		sum = pmRunOpaqueKernel(&args)
+	} else {
+		targetIndex := y0*target.stride + x0
+		sourceIndex := (sy-half)*level.srcPlanes.stride + sx - half
+		args := pmKernelArgs{
+			targetR:    &target.channel[0][targetIndex],
+			targetG:    &target.channel[1][targetIndex],
+			targetB:    &target.channel[2][targetIndex],
+			targetA:    &target.channel[3][targetIndex],
+			sourceR:    &level.srcPlanes.channel[0][sourceIndex],
+			sourceG:    &level.srcPlanes.channel[1][sourceIndex],
+			sourceB:    &level.srcPlanes.channel[2][sourceIndex],
+			sourceA:    &level.srcPlanes.channel[3][sourceIndex],
+			confidence: &level.confidence[y0*level.confStride+x0],
+			stride:     target.stride,
+			patchSize:  level.patchSize,
+			limit:      rawLimit,
+		}
+		sum = pmRunPatchKernel(&args)
 	}
-	sum := pmRunPatchKernel(&args)
 	rawAppearance := sum / denominator
 
 	if !level.photoEnabled {

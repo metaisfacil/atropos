@@ -489,7 +489,12 @@ type pmSolveStats struct {
 
 func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, seed *pmSolution, iterations, round int) ([]pmPoint, []float32, pmSolveStats, error) {
 	updatePMConfidence(level, round, seed != nil)
-	level.targetPlanes = packPMPixelsInto(working, level.targetPlanes)
+	if pmOpaqueKernelAvailable() && level.srcPlanes.opaque && !level.photoEnabled && working.Opaque() {
+		// Byte matching needs no full-ROI float repack on every EM round.
+		level.targetPlanes = pmPackedPlanes{raw: working, opaque: true}
+	} else {
+		level.targetPlanes = packPMPixelsInto(working, level.targetPlanes)
+	}
 	if level.photoEnabled {
 		pmPreparePhotoTargetStats(level, &level.targetPlanes)
 	}

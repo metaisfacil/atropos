@@ -6,6 +6,15 @@ import "golang.org/x/sys/cpu"
 
 var pmUseAVX2 = cpu.X86.HasAVX2 && cpu.X86.HasFMA
 
+func pmOpaqueKernelAvailable() bool { return pmUseAVX2 }
+
+func pmRunOpaqueKernel(args *pmOpaqueKernelArgs) float32 {
+	return pmPatchSSDOpaqueAVX2(args)
+}
+
+//go:noescape
+func pmPatchSSDOpaqueAVX2(args *pmOpaqueKernelArgs) float32
+
 func pmRunPatchKernel(args *pmKernelArgs) float32 {
 	if pmUseAVX2 {
 		return pmPatchSSDAVX2(args)
