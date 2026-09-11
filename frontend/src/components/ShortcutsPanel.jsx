@@ -10,7 +10,7 @@ import { CROP_SHORTCUT_CODES, ROTATE_SHORTCUT_CODES } from '../utils/keyboardSho
 //   discActive  — bool (show disc-specific shortcuts only when a disc is live)
 //   canSave     — bool (a crop result exists; gates crop/rotate/undo/save shortcuts)
 //   imageLoaded — bool (an image is loaded; gates pan shortcut)
-//   canCopySelection — bool (an adjustment or uncommitted Normal selection exists)
+//   canCopySelection — bool (an image is available to copy)
 export default function ShortcutsPanel({ shortcutsOpen, setShortcutsOpen, mode, discActive, canSave, imageLoaded, canCopySelection }) {
   const cls = (active) => `shortcut-item${active ? '' : ' shortcut-item--disabled'}`
   const spatialKeyLabels = useKeyboardLayout()
@@ -42,7 +42,7 @@ export default function ShortcutsPanel({ shortcutsOpen, setShortcutsOpen, mode, 
           <div className={cls(canSave)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd></div><div className="caption">Undo</div></div>
           <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>O</kbd></div><div className="caption">Load</div></div>
           <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>V</kbd></div><div className="caption">Paste image</div></div>
-          <div className={cls(canCopySelection)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>C</kbd></div><div className="caption">Copy selection</div></div>
+          <div className={cls(canCopySelection)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>C</kbd></div><div className="caption">Copy image/selection</div></div>
           <div className={cls(canSave)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>S</kbd></div><div className="caption">Save</div></div>
           <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>W</kbd></div><div className="caption">Quit</div></div>
           <div className={cls(imageLoaded)}><div className="keys"><kbd>Space</kbd>+<kbd>Drag</kbd></div><div className="caption">Pan canvas</div></div>

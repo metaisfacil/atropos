@@ -85,6 +85,18 @@ export function useKeyboardShortcuts({
       try {
         let result
 
+        const active = document.activeElement
+        const isEditable = active && (['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable)
+
+        if ((e.ctrlKey || e.metaKey) && key === 'a' && adjustmentSelectionActive) {
+          if (isEditable) return
+          e.preventDefault()
+          if (e.repeat) return
+          setAdjustmentRect({ x1: 0, y1: 0, x2: realImageDims.w, y2: realImageDims.h })
+          showStatus('Whole image selected')
+          return
+        }
+
         if ((e.ctrlKey || e.metaKey) && key === 'd' && (adjustmentSelectionActive || adjustmentRect)) {
           e.preventDefault()
           if (e.repeat) return
@@ -94,14 +106,14 @@ export function useKeyboardShortcuts({
         }
 
         const copyRect = adjustmentRect || (mode === 'normal' ? normalRect : null)
-        if ((e.ctrlKey || e.metaKey) && key === 'c' && copyRect) {
-          const active = document.activeElement
-          if (active && (['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable)) return
+        if ((e.ctrlKey || e.metaKey) && key === 'c') {
+          if (isEditable) return
           e.preventDefault()
           if (e.repeat) return
-          showStatus('Copying selection…')
-          const message = await CopySelectionToClipboard(adjustmentSelectionPayload(copyRect))
-          showStatus(message || 'Selection copied to clipboard')
+          const rect = copyRect || { x1: 0, y1: 0, x2: realImageDims.w, y2: realImageDims.h }
+          showStatus(copyRect ? 'Copying selection…' : 'Copying image…')
+          const message = await CopySelectionToClipboard(adjustmentSelectionPayload(rect))
+          showStatus(message || (copyRect ? 'Selection copied to clipboard' : 'Image copied to clipboard'))
           return
         }
 

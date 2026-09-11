@@ -77,6 +77,18 @@ async function pressCopy(code = 'KeyC') {
   return event
 }
 
+async function pressSelectAll() {
+  const event = new KeyboardEvent('keydown', {
+    key: 'a',
+    code: 'KeyA',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  })
+  act(() => window.dispatchEvent(event))
+  return event
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   appMocks.CopySelectionToClipboard.mockResolvedValue('Copied 60×50 selection to clipboard')
@@ -119,6 +131,46 @@ describe('Ctrl+C selection copy', () => {
     await pressCopy('KeyJ')
 
     expect(appMocks.CopySelectionToClipboard).toHaveBeenCalledWith({ x1: 10, y1: 20, x2: 30, y2: 40 })
+  })
+
+  it('copies the whole image when no rectangle has been made', async () => {
+    const props = makeProps({
+      mode: 'corner',
+      realImageDims: { w: 640, h: 480 },
+    })
+    renderHook(() => useKeyboardShortcuts(props))
+
+    const event = await pressCopy()
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(appMocks.CopySelectionToClipboard).toHaveBeenCalledWith({ x1: 0, y1: 0, x2: 640, y2: 480 })
+    expect(props.showStatus).toHaveBeenCalledWith('Copying image…')
+  })
+})
+
+describe('Ctrl+A adjustment selection', () => {
+  it('selects the whole image while the rectangular selection tool is active', async () => {
+    const props = makeProps({
+      adjustmentSelectionActive: true,
+      realImageDims: { w: 640, h: 480 },
+    })
+    renderHook(() => useKeyboardShortcuts(props))
+
+    const event = await pressSelectAll()
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(props.setAdjustmentRect).toHaveBeenCalledWith({ x1: 0, y1: 0, x2: 640, y2: 480 })
+    expect(props.showStatus).toHaveBeenCalledWith('Whole image selected')
+  })
+
+  it('leaves native select-all intact when the rectangular selection tool is inactive', async () => {
+    const props = makeProps()
+    renderHook(() => useKeyboardShortcuts(props))
+
+    const event = await pressSelectAll()
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(props.setAdjustmentRect).not.toHaveBeenCalled()
   })
 })
 
