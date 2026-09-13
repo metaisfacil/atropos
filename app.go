@@ -119,11 +119,10 @@ type App struct {
 	loadedFilePath string
 
 	// Configuration
-	cropTop, cropBottom, cropLeft, cropRight int
-	featherSize                              int
-	undoLimit                                int
-	undoMemoryLimit                          int64
-	cropAmount                               int
+	featherSize     int
+	undoLimit       int
+	undoMemoryLimit int64
+	cropAmount      int
 
 	// Launch arguments (set before startup)
 	launchFilePath string
@@ -152,6 +151,7 @@ type App struct {
 	// Protected by cornerDetectMu; nil when no operation is running.
 	cornerDetectMu     sync.Mutex
 	cornerDetectCancel context.CancelFunc
+	cornerDetectGen    uint64
 
 	// Warp out-of-bounds fill settings
 	warpFillMode  string      // "clamp", "fill", or "outpaint"

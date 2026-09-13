@@ -28,6 +28,10 @@ import (
 // loaded. It does NOT touch originalImage, currentImage, imageLoaded, or
 // loadedFilePath — the caller is responsible for those.
 func (a *App) resetPipelineState() {
+	a.cancelTouchup()
+	a.CancelCornerDetect()
+	a.levelsSelection = adjustmentSelectionKey{}
+	a.descreenSelection = adjustmentSelectionKey{}
 	a.previewAssets.Reset()
 	a.warpedImage = nil
 	a.levelsBaseImage = nil
@@ -80,6 +84,7 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	}
 	defer a.loadMu.Unlock()
 	a.cancelTouchup()
+	a.CancelCornerDetect()
 
 	a.logf("LoadImage: filePath=%q", req.FilePath)
 
@@ -312,6 +317,7 @@ func (a *App) LoadImageBytes(req LoadImageBytesRequest) (*ImageInfo, error) {
 	}
 	defer a.loadMu.Unlock()
 	a.cancelTouchup()
+	a.CancelCornerDetect()
 
 	a.logf("LoadImageBytes: name=%q size=%d", req.Name, len(req.Data))
 
@@ -372,6 +378,7 @@ func (a *App) LoadImageBytes(req LoadImageBytesRequest) (*ImageInfo, error) {
 func (a *App) RecropImage() (*ImageInfo, error) {
 	a.logf("RecropImage: called")
 	a.cancelTouchup()
+	a.CancelCornerDetect()
 	if a.warpedImage == nil {
 		return nil, fmt.Errorf("no processed image to re-crop from")
 	}

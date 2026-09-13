@@ -321,8 +321,6 @@ func (a *App) warpFromCorners(corners []image.Point) (*image.NRGBA, int, int, er
 		warped = a.applyWarpFill(warped, oobMask)
 	}
 
-	a.warpedImage = warped
-	a.cropTop, a.cropBottom, a.cropLeft, a.cropRight = 0, 0, 0, 0
 	return warped, width, height, nil
 }
 
@@ -369,6 +367,7 @@ func (a *App) CancelCornerDetect() {
 	a.cornerDetectMu.Lock()
 	fn := a.cornerDetectCancel
 	a.cornerDetectCancel = nil
+	a.cornerDetectGen++
 	a.cornerDetectMu.Unlock()
 	if fn != nil {
 		a.logf("CancelCornerDetect: cancelling in-flight detection")
@@ -388,19 +387,11 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 		return nil, errors.New(msg)
 	}
 
-	// Register a cancellable context so CancelCornerDetect() can abort this call.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	a.cornerDetectMu.Lock()
-	a.cornerDetectCancel = cancel
-	a.cornerDetectMu.Unlock()
-	defer func() {
-		a.cornerDetectMu.Lock()
-		a.cornerDetectCancel = nil
-		a.cornerDetectMu.Unlock()
-	}()
+	ctx, generation, finish := a.beginCornerDetection()
+	defer finish()
+	source := a.currentImage
 
-	b := a.currentImage.Bounds()
+	b := source.Bounds()
 	imgW, imgH := b.Dx(), b.Dy()
 
 	// Downsample to max ~1500px on longest side for fast detection
@@ -424,18 +415,18 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 	// intermediate NRGBA clone and full-resolution gray buffer.
 	var workGray, rawGray *image.Gray
 	if scaleFactor < 1.0 {
-		workGray, rawGray = raster.ResizeNRGBAToGrayPair(a.currentImage, workW, workH, req.AccentValue)
+		workGray, rawGray = raster.ResizeNRGBAToGrayPair(source, workW, workH, req.AccentValue)
 	} else {
-		workGray = raster.ToGrayscaleAccent(a.currentImage, req.AccentValue)
-		rawGray = raster.ToGrayscale(a.currentImage)
+		workGray = raster.ToGrayscaleAccent(source, req.AccentValue)
+		rawGray = raster.ToGrayscale(source)
 	}
 	highlightGray240 := stretchGrayRange(rawGray, 240, 255)
 	highlightGray230 := stretchGrayRange(rawGray, 230, 255)
 	adaptiveHighlightGray, adaptiveBlack, adaptiveWhite := adaptiveHighlightStretch(rawGray)
 	a.logf("DetectCorners: adaptive perimeter highlight range %d-%d", adaptiveBlack, adaptiveWhite)
-	workColor := a.currentImage
+	workColor := source
 	if workW != imgW || workH != imgH {
-		workColor = raster.ResizeNRGBA(a.currentImage, workW, workH)
+		workColor = raster.ResizeNRGBA(source, workW, workH)
 	}
 	backgroundSilhouette, perimeter := cornerdetect.BackgroundDistanceSilhouette(workColor)
 	a.logf("DetectCorners: perimeter RGB=(%d,%d,%d) noise=%d silhouette=%d-%d dark=%v",
@@ -650,21 +641,7 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 			int(float64(c.Y)/scaleFactor),
 		))
 	}
-	a.detectedCorners = fullCorners
-	a.logf("DetectCorners: %d corners mapped to full resolution", len(a.detectedCorners))
-
-	// Return the clean (unmodified) image; the frontend renders dots via SVG.
-	preview, err := a.imagePreviewURL(a.currentImage)
-	if err != nil {
-		return nil, err
-	}
-	return &ProcessResult{
-		Preview: preview,
-		Width:   imgW,
-		Height:  imgH,
-		Message: fmt.Sprintf("Detected %d corners", len(a.detectedCorners)),
-		Corners: a.detectedCorners,
-	}, nil
+	return a.finishCornerDetection(ctx, generation, source, fullCorners)
 }
 
 // cornerSnapRadius bounds automatic snapping so a click cannot jump to an
@@ -731,19 +708,17 @@ func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
 		}, nil
 	}
 
-	// 4 corners selected → perform perspective warp
-	a.saveUndo()
-	// Patch the freshly-pushed undo entry to remember the 3 in-progress corner
-	// clicks so that Undo() can restore them instead of starting from scratch.
-	if n := len(a.undoStack); n > 0 && len(a.selectedCorners) >= 4 {
-		prev := make([]image.Point, 3)
-		copy(prev, a.selectedCorners[:3])
-		a.undoStack[n-1].selectedCorners = prev
-	}
-	_, width, height, warpErr := a.warpFromCorners(a.selectedCorners[:4])
+	// Compute before committing so an invalid fourth pick leaves history intact.
+	warped, width, height, warpErr := a.warpFromCorners(a.selectedCorners[:4])
 	if warpErr != nil {
+		a.selectedCorners = a.selectedCorners[:3]
 		return nil, warpErr
 	}
+	a.saveUndo()
+	if n := len(a.undoStack); n > 0 {
+		a.undoStack[n-1].selectedCorners = append([]image.Point(nil), a.selectedCorners[:3]...)
+	}
+	a.warpedImage = warped
 	a.selectedCorners = nil
 
 	preview, err := a.imagePreviewURL(a.warpedImage)
@@ -804,6 +779,7 @@ func (a *App) UndoLastCorner() int {
 // ResetCorners clears any in-progress corner selection. The detected corners
 // are preserved and returned so the frontend can restore its SVG overlay.
 func (a *App) ResetCorners() (*ProcessResult, error) {
+	a.CancelCornerDetect()
 	a.cancelTouchup()
 	a.redoStack = nil
 	a.undoStack = nil
@@ -838,7 +814,14 @@ func (a *App) SkipCrop() (*ProcessResult, error) {
 	if a.currentImage == nil {
 		return nil, fmt.Errorf("no image loaded")
 	}
+	a.cancelTouchup()
+	a.CancelCornerDetect()
 	descreenReset := a.descreenResultImage != nil
+	a.levelsBaseImage = nil
+	a.levelsSelection = adjustmentSelectionKey{}
+	a.descreenBaseImage = nil
+	a.descreenResultImage = nil
+	a.descreenSelection = adjustmentSelectionKey{}
 	a.warpedImage = raster.CloneNRGBA(a.currentImage)
 	a.selectedCorners = nil
 

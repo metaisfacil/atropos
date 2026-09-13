@@ -290,3 +290,88 @@ it('resets backend disc history when switching modes after undoing the disc crop
   await act(async () => result.current.handleModeSwitch('normal'))
   expect(appMocks.ResetDisc).toHaveBeenCalledOnce()
 })
+
+
+describe('State transition ownership', () => {
+  it('serializes rapid mode resets and only presents the newest response', async () => {
+    let finishFirst
+    appMocks.ResetNormal.mockReturnValue(new Promise(resolve => { finishFirst = resolve }))
+    appMocks.ResetDisc.mockResolvedValue({ preview: '/latest', width: 100, height: 80 })
+    const props = makeProps()
+    const { result } = renderHook(() => useImageActions(props))
+    let first, second
+    await act(async () => { first = result.current.handleModeSwitch('disc') })
+    await act(async () => { second = result.current.handleModeSwitch('line') })
+    expect(props.setMode).toHaveBeenLastCalledWith('line')
+    expect(appMocks.ResetDisc).not.toHaveBeenCalled()
+    await act(async () => { finishFirst({ preview: '/stale', width: 7, height: 9 }); await first; await second })
+    expect(appMocks.ResetDisc).toHaveBeenCalledOnce()
+    expect(props.setPreview).not.toHaveBeenCalledWith('/stale')
+    expect(props.setPreview).toHaveBeenLastCalledWith('/latest')
+    expect(props.setFitWidth).not.toHaveBeenCalledWith(0)
+  })
+
+  it('does not let cancelled detection replace a reset preview or clear its busy state', async () => {
+    let finishDetect, finishReset
+    appMocks.DetectCorners.mockReturnValue(new Promise(resolve => { finishDetect = resolve }))
+    appMocks.ResetCorners.mockReturnValue(new Promise(resolve => { finishReset = resolve }))
+    const props = { ...makeProps(), mode: 'corner' }
+    const { result } = renderHook(() => useImageActions(props))
+    let detection, transition
+    act(() => { detection = result.current.handleDetectCorners() })
+    await act(async () => { transition = result.current.handleModeSwitch('normal') })
+    props.setLoading.mockClear()
+    await act(async () => { finishDetect({ preview: '/stale', width: 7, height: 9, corners: [] }); await detection })
+    expect(props.setLoading).not.toHaveBeenCalledWith(false)
+    expect(props.setPreview).not.toHaveBeenCalledWith('/stale')
+    await act(async () => { finishReset({ preview: '/clean', width: 100, height: 80 }); await transition })
+    expect(props.setPreview).toHaveBeenLastCalledWith('/clean')
+  })
+
+  it('ignores an old history response after a mode change', async () => {
+    let finishUndo
+    appMocks.Undo.mockReturnValue(new Promise(resolve => { finishUndo = resolve }))
+    appMocks.ResetNormal.mockResolvedValue({ preview: '/clean', width: 100, height: 80 })
+    const props = makeProps()
+    const { result } = renderHook(() => useImageActions(props))
+    let undo
+    act(() => { undo = result.current.handleUndo() })
+    await act(async () => result.current.handleModeSwitch('line'))
+    await act(async () => { finishUndo({ changed: true, preview: '/old-history', width: 8, height: 6 }); await undo })
+    expect(props.setPreview).not.toHaveBeenCalledWith('/old-history')
+  })
+
+  it('clears transient tools and preserves fit when loading another image', async () => {
+    appMocks.LoadImageFromClipboard.mockResolvedValue({ preview: '/new-image', width: 120, height: 90 })
+    const props = makeProps()
+    props.touchupDraggingRef.current = true
+    const { result } = renderHook(() => useImageActions(props))
+    await act(async () => result.current.handlePasteImage())
+    expect(props.setUseDescreenTool).toHaveBeenCalledWith(false)
+    expect(props.setAdjustmentRect).toHaveBeenCalledWith(null)
+    expect(props.touchupDraggingRef.current).toBe(false)
+    expect(props.setFitWidth).not.toHaveBeenCalledWith(0)
+    expect(props.setPreview).toHaveBeenLastCalledWith('/new-image')
+  })
+})
+
+
+it('queues overlapping drops and presents only the last loaded image', async () => {
+  let firstResolve, secondResolve
+  appMocks.LoadImage.mockImplementationOnce(() => new Promise(resolve => { firstResolve = resolve }))
+    .mockImplementationOnce(() => new Promise(resolve => { secondResolve = resolve }))
+  const props = makeProps()
+  renderHook(() => useImageActions(props))
+  const drop = runtimeMocks.OnFileDrop.mock.calls.at(-1)[0]
+  let first, second
+  await act(async () => { first = drop(0, 0, ['first.png']) })
+  await act(async () => { second = drop(0, 0, ['second.png']) })
+  expect(appMocks.LoadImage).toHaveBeenCalledOnce()
+  props.setLoading.mockClear()
+  await act(async () => { firstResolve({ preview: '/first', width: 10, height: 10 }); await first })
+  expect(appMocks.LoadImage).toHaveBeenCalledTimes(2)
+  expect(props.setPreview).not.toHaveBeenCalledWith('/first')
+  expect(props.setLoading).not.toHaveBeenCalledWith(false)
+  await act(async () => { secondResolve({ preview: '/second', width: 20, height: 20 }); await second })
+  expect(props.setPreview).toHaveBeenLastCalledWith('/second')
+})

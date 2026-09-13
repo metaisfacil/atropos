@@ -50,6 +50,9 @@ export function useImageActions({
   const lastDetectSettings      = useRef(null)
   const suggestedCornerParamsRef = useRef({})
   const detectGenRef            = useRef(0)
+  const transitionRef           = useRef(0)
+  const modeQueueRef            = useRef(Promise.resolve())
+  const backendModeRef          = useRef(mode)
   const cornerEntryRef          = useRef(null) // { preview, width, height } captured on corner mode entry
 
   const markUnsavedChanges = () => {
@@ -65,6 +68,34 @@ export function useImageActions({
   useEffect(() => { modeRef.current = mode }, [mode])
   useEffect(() => { loadingRef.current = loading }, [loading])
 
+  const beginTransition = () => {
+    const generation = ++transitionRef.current
+    detectGenRef.current++
+    CancelCornerDetect()
+    CancelTouchup()
+    cornerEntryRef.current = null
+    setUseDescreenTool(false)
+    setUseTouchupTool(false)
+    setUseStraightEdgeTool(false)
+    setTouchupStrokes([])
+    touchupDraggingRef.current = false
+    setDragging(false)
+    setDragStart(null)
+    setDragCurrent(null)
+    setAdjustmentSelectionActive(false)
+    setAdjustmentRect(null)
+    return generation
+  }
+
+  // Loads share the mode-reset queue: overlapping drops must not make the
+  // backend reject the newer load while the frontend ignores the older one.
+  const queueLoad = (generation, request) => {
+    const task = () => transitionRef.current === generation ? request() : null
+    const pending = modeQueueRef.current.then(task, task)
+    modeQueueRef.current = pending.then(() => {}, () => {})
+    return pending
+  }
+
   // ── Shared mode/image state reset (used by loadFile and handleRecrop) ────────
   const resetImageState = () => {
     setCornerState(s => ({ ...s, cornerCount: 0 }))
@@ -79,6 +110,7 @@ export function useImageActions({
     cornerEntryRef.current = null
     setLines([])
     setTouchupStrokes([])
+    setUseDescreenTool(false)
     setUseTouchupTool(false)
     setUseStraightEdgeTool(false)
     setDragging(false)
@@ -117,10 +149,10 @@ export function useImageActions({
         stretchHigh:     0.99,
       })
     } catch (err) {
-      if (detectGenRef.current !== gen) { showStatus(''); return }  // cancelled by mode switch — discard silently
+      if (detectGenRef.current !== gen) return  // cancelled by mode switch — discard silently
       throw err
     }
-    if (detectGenRef.current !== gen) { showStatus(''); return }
+    if (detectGenRef.current !== gen) return
     cornerEntryRef.current = { preview: result.preview, width: result.width, height: result.height }
     setPreview(result.preview)
     showStatus(result.message + ' — click 4 corners')
@@ -139,9 +171,8 @@ export function useImageActions({
   }
 
   // ── Core image result applier (shared for LoadImage/LoadImageBytes) ─
-  const applyLoadedImage = async (result, autoDetect = true) => {
+  const applyLoadedImage = async (result, autoDetect = true, generation = transitionRef.current) => {
     showStatus(`Loaded: ${result.width}x${result.height}`)
-    setFitWidth(0)
     setPreview(result.preview)
     setImageLoaded(true)
     setRealImageDims({ w: result.width, h: result.height })
@@ -150,6 +181,7 @@ export function useImageActions({
     if (setInputImageDims) setInputImageDims({ w: result.width, h: result.height })
     setImageMeta({ format: result.format || '', dpiX: result.dpiX || 0, dpiY: result.dpiY || 0 })
     resetImageState()
+    backendModeRef.current = modeRef.current
 
     suggestedCornerParamsRef.current = result.suggestedCornerParams || {}
 
@@ -160,72 +192,74 @@ export function useImageActions({
       await runDetectCorners(autoCornerParams ? suggestedCornerParamsRef.current : {})
     }
 
-    setLoading(false)
+    if (transitionRef.current === generation) setLoading(false)
   }
 
   // ── Core file loader (private — used by dialog, drag-drop, and launch args) ─
   const loadFile = async (filePath, autoDetect = true) => {
-    CancelTouchup()
-    detectGenRef.current++   // invalidate any in-flight corner detection
-    CancelCornerDetect()
+    const generation = beginTransition()
     setLoading(true)
     setLoadingFull(true)
     setZoom(1)
     const name = filePath.split(/[/\\]/).pop()
     showStatus(`Loading ${name}…`)
 
-    const result = await LoadImage({ filePath })
-    await applyLoadedImage(result, autoDetect)
+    const result = await queueLoad(generation, () => LoadImage({ filePath }))
+    if (transitionRef.current !== generation) return
+    await applyLoadedImage(result, autoDetect, generation)
   }
 
   const loadImageFromBytes = async (arrayBuffer, sourceName = '[Clipboard Data]') => {
-    CancelTouchup()
-    detectGenRef.current++
-    CancelCornerDetect()
+    const generation = beginTransition()
     setLoading(true)
     setLoadingFull(true)
     setZoom(1)
     showStatus(`Loading ${sourceName}…`)
 
     const bytes = Array.from(new Uint8Array(arrayBuffer))
-    const result = await LoadImageBytes({ data: bytes, name: sourceName })
-    await applyLoadedImage(result, true)
+    const result = await queueLoad(generation, () => LoadImageBytes({ data: bytes, name: sourceName }))
+    if (transitionRef.current !== generation) return
+    await applyLoadedImage(result, true, generation)
   }
 
   const loadImageFromClipboard = async () => {
-    CancelTouchup()
-    detectGenRef.current++
-    CancelCornerDetect()
+    const generation = beginTransition()
     setLoading(true)
 
-    const result = await LoadImageFromClipboard()
+    const result = await queueLoad(generation, () => LoadImageFromClipboard())
+    if (transitionRef.current !== generation) return
     setLoadingFull(true)
     setZoom(1)
     showStatus('Loading clipboard image…')
-    await applyLoadedImage(result, true)
+    await applyLoadedImage(result, true, generation)
   }
 
   const handlePasteImage = async () => {
     if (loadingRef.current || savingRef.current) return
+    const generation = transitionRef.current + 1
     loadingRef.current = true
     try {
       await loadImageFromClipboard()
     } catch (err) {
+      if (transitionRef.current !== generation) return
       console.error('Clipboard image load error:', err)
       const message = err?.message || String(err)
       if (!message.includes('clipboard does not contain an image')) {
         showError(err)
       }
     } finally {
-      loadingRef.current = false
-      setLoading(false)
-      setLoadingFull(false)
+      if (transitionRef.current === generation) {
+        loadingRef.current = false
+        setLoading(false)
+        setLoadingFull(false)
+      }
     }
   }
 
   // ── Load image (dialog) ───────────────────────────────────────────────────
   const handleLoadImage = async () => {
     if (loading && !savingRef.current) return
+    let generation = transitionRef.current
     try {
       const filePath = await OpenImageDialog()
       if (!filePath) return
@@ -233,12 +267,14 @@ export function useImageActions({
         pendingDropRef.current = filePath
         return
       }
+      generation = transitionRef.current + 1
       await loadFile(filePath)
     } catch (err) {
+      if (transitionRef.current !== generation) return
       console.error('Load error:', err)
       showError(err)
     } finally {
-      if (!savingRef.current) {
+      if (!savingRef.current && transitionRef.current === generation) {
         setLoading(false)
         setLoadingFull(false)
       }
@@ -267,9 +303,11 @@ export function useImageActions({
         pendingDropRef.current = filePath
         return
       }
+      const generation = transitionRef.current + 1
       try {
         await loadFile(filePath, modeRef.current === 'corner')
       } catch (err) {
+        if (transitionRef.current !== generation) return
         console.error('Drop load error:', err)
         showError(err)
         setLoading(false)
@@ -327,7 +365,7 @@ export function useImageActions({
       try {
         const args = (await GetLaunchArgs()) || {}
         if (cancelled) return
-        if (args.mode) setMode(args.mode)
+        if (args.mode) { modeRef.current = args.mode; backendModeRef.current = args.mode; setMode(args.mode) }
         // CLI-provided post-save overrides persisted settings (do not force quit)
         if (args.postSaveCommand) {
           setPostSaveCommand(args.postSaveCommand)
@@ -357,9 +395,9 @@ export function useImageActions({
   // this function applies the corresponding React state reset, switches to
   // corner mode, and runs corner detection.
   const handleCompositorLoad = async (info) => {
+    const generation = beginTransition()
     setLoading(true)
     try {
-      setFitWidth(0)
       setZoom(1)
       setPreview(info.preview)
       setImageLoaded(true)
@@ -373,17 +411,21 @@ export function useImageActions({
       setImageMeta({ format: '', dpiX: 0, dpiY: 0 })
       resetImageState()
       suggestedCornerParamsRef.current = info.suggestedCornerParams || {}
+      modeRef.current = 'corner'
+      backendModeRef.current = 'corner'
       setMode('corner')
       await runDetectCorners(autoCornerParams ? suggestedCornerParamsRef.current : {})
     } catch (err) {
       showError(err)
     } finally {
-      setLoading(false)
+      if (transitionRef.current === generation) setLoading(false)
     }
   }
 
   // ── Corner detection ───────────────────────────────────────────────────────
+
   const handleDetectCorners = async () => {
+    const generation = detectGenRef.current + 1
     setLoading(true)
     try {
       // Suggested values are load-time defaults only. A manual Detect must use
@@ -392,16 +434,18 @@ export function useImageActions({
     } catch (err) {
       console.error('Detect error:', err)
     } finally {
-      setLoading(false)
+      if (detectGenRef.current === generation) setLoading(false)
     }
   }
 
   // ── Skip crop ─────────────────────────────────────────────────────────────
   const handleSkipCrop = async () => {
+    const generation = beginTransition()
     setLoading(true)
     showStatus('Skipping crop…')
     try {
       const result = await SkipCrop()
+      if (transitionRef.current !== generation) return
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
       if (mode === 'corner') {
@@ -426,15 +470,17 @@ export function useImageActions({
       console.error('SkipCrop error:', err)
       showError(err)
     } finally {
-      setLoading(false)
+      if (transitionRef.current === generation) setLoading(false)
     }
   }
 
   // ── Re-crop ───────────────────────────────────────────────────────────────
+
   const handleRecrop = () => {
     setConfirmDialog({
       message: 'Re-crop will use the current output as a new source image, resetting all crop and adjustment state. Continue?',
       onConfirm: async () => {
+        const generation = beginTransition()
         CancelTouchup()
         // End transient pointer ownership before waiting for the backend. In
         // particular, a touch-up drag must not survive until Lines is reset to
@@ -454,6 +500,7 @@ export function useImageActions({
         showStatus('Re-cropping…')
         try {
           const result = await RecropImage()
+          if (transitionRef.current !== generation) return
           setPreview(result.preview)
           setRealImageDims({ w: result.width, h: result.height })
           if (setInputImageDims) setInputImageDims({ w: result.width, h: result.height })
@@ -465,7 +512,7 @@ export function useImageActions({
           console.error('RecropImage error:', err)
           showError(err)
         } finally {
-          setLoading(false)
+          if (transitionRef.current === generation) setLoading(false)
         }
       },
     })
@@ -473,11 +520,13 @@ export function useImageActions({
 
   // ── Mode-specific reset handlers ──────────────────────────────────────────
   const handleResetCorners = async () => {
+    const generation = beginTransition()
     CancelTouchup()
     setLoading(true)
     showStatus('Resetting corners…')
     try {
       const result = await ResetCorners()
+      if (transitionRef.current !== generation) return
       setPreview(result.preview)
       showStatus(result.message)
       if (result.width && result.height) setRealImageDims({ w: result.width, h: result.height })
@@ -490,16 +539,18 @@ export function useImageActions({
     } catch (err) {
       console.error('ResetCorners error:', err)
     } finally {
-      setLoading(false)
+      if (transitionRef.current === generation) setLoading(false)
     }
   }
 
   const handleResetDisc = async () => {
+    const generation = beginTransition()
     CancelTouchup()
     setLoading(true)
     showStatus('Resetting disc…')
     try {
       const result = await ResetDisc()
+      if (transitionRef.current !== generation) return
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
       setDiscActive(false)
@@ -519,16 +570,18 @@ export function useImageActions({
     } catch (err) {
       console.error('ResetDisc error:', err)
     } finally {
-      setLoading(false)
+      if (transitionRef.current === generation) setLoading(false)
     }
   }
 
   const handleResetNormal = async () => {
+    const generation = beginTransition()
     CancelTouchup()
     setLoading(true)
     showStatus('Resetting normal crop…')
     try {
       const result = await ResetNormal()
+      if (transitionRef.current !== generation) return
       if (result?.preview) setPreview(result.preview)
       if (result?.width && result?.height) setRealImageDims({ w: result.width, h: result.height })
       setNormalRect(null)
@@ -540,7 +593,7 @@ export function useImageActions({
     } catch (err) {
       console.error('ResetNormal error:', err)
     } finally {
-      setLoading(false)
+      if (transitionRef.current === generation) setLoading(false)
     }
   }
 
@@ -565,11 +618,13 @@ export function useImageActions({
   }
 
   const handleClearLines = async () => {
+    const generation = beginTransition()
     CancelTouchup()
     setLoading(true)
     showStatus('Resetting lines…')
     try {
       const result = await ClearLines()
+      if (transitionRef.current !== generation) return
       setLinesDone(0)
       setLines([])
       setLinesProcessed(false)
@@ -582,19 +637,22 @@ export function useImageActions({
     } catch (err) {
       console.error('ClearLines error:', err)
     } finally {
-      setLoading(false)
+      if (transitionRef.current === generation) setLoading(false)
     }
   }
 
   // ── Undo ──────────────────────────────────────────────────────────────────
+
   const historyBusyRef = useRef(false)
   const handleHistory = async (redo) => {
     if (historyBusyRef.current) return
     historyBusyRef.current = true
+    const generation = transitionRef.current
     setLoading(true)
     showStatus(redo ? 'Redoing...' : 'Undoing...')
     try {
       const res = await (redo ? Redo() : Undo())
+      if (transitionRef.current !== generation) return
       if (res?.preview) setPreview(res.preview)
       if (res?.width && res?.height) setRealImageDims({ w: res.width, h: res.height })
       showStatus(res?.message || '')
@@ -671,7 +729,7 @@ export function useImageActions({
       showError(err)
     } finally {
       historyBusyRef.current = false
-      setLoading(false)
+      if (transitionRef.current === generation) setLoading(false)
     }
   }
 
@@ -773,169 +831,85 @@ export function useImageActions({
   }, [unsavedChanges, handleSaveImage])
 
   // ── Mode switch ───────────────────────────────────────────────────────────
-  // Mode switch behaviour:
-  // - Resets mode-specific frontend state and calls the corresponding
-  //   backend Reset* method (ResetCorners, ResetDisc, ClearLines, ResetNormal).
-  // - When switching to `corner`, attempts cached restoration via
-  //   `RestoreCornerOverlay` if the detection settings match; otherwise
-  //   optionally runs `DetectCorners` (when `autoDetectOnModeSwitch`), or
-  //   falls back to `GetCleanPreview` to refresh the preview and `realImageDims`.
-  // - Always cancels any in-flight touchup and disables transient tools.
-  // See the function implementation below for exact ordering and guards.
-  /*
-    Pseudocode summary — onClick (mode button):
-
-    if leaving 'corner':
-      ResetCorners()              ← clears selectedCorners + warpedImage
-      setCornersDetected(false)
-      setCornerState({...cornerCount: 0})
-      setCropSkipped(false)
-
-    if leaving 'disc' && discActive:
-      ResetDisc()                 ← clears all disc state + warpedImage
-      setDiscActive(false)
-      setCropSkipped(false)
-
-    if leaving 'line':
-      ClearLines()                ← clears lines + warpedImage
-      setLinesDone(0), setLines([]), setLinesProcessed(false)
-      setCropSkipped(false)
-
-    if leaving 'normal':
-      ResetNormal()               ← clears warpedImage
-      setNormalRect(null), setNormalCropApplied(false)
-      setCropSkipped(false)
-
-    if arriving at 'corner' && lastDetectSettings matches current settings:
-      RestoreCornerOverlay({dotRadius})   ← re-render cached corners
-      setFitWidth(min(container.w, container.h * res.w/res.h))
-      setPreview, setRealImageDims
-      setCornersDetected(true)
-      setMode('corner'); return           ← early return, skip detection / GetCleanPreview
-
-    if arriving at 'corner' && autoDetectOnModeSwitch:
-      setLoading(true)
-      DetectCorners(autoCornerParams ? suggestedCornerParams : {})
-      setLoading(false)
-      setMode('corner'); return           ← early return, skip GetCleanPreview
-
-    setFitWidth(min(container.w, container.h * res.w/res.h))
-    GetCleanPreview()                       ← returns currentImage (warpedImage now nil)
-    setPreview, setRealImageDims
+  // Serialize backend resets while updating the selected mode immediately.
+  // Generations prevent stale reset/detection responses from replacing newer UI.
+  const handleModeSwitch = (m) => {
+    if (m === modeRef.current) return Promise.resolve()
+    modeRef.current = m
     setMode(m)
-  */
-  const handleModeSwitch = async (m) => {
-    if (m === mode) return
-    setUseTouchupTool(false)
-    setUseStraightEdgeTool(false)
-    setAdjustmentSelectionActive(false)
-    setAdjustmentRect(null)
-    setMode(m)
-    if (imageLoaded) {
-      CancelTouchup()
+    const generation = beginTransition()
+    const current = () => transitionRef.current === generation
+    if (!imageLoaded) { backendModeRef.current = m; return Promise.resolve() }
+    setLoading(true)
+    const task = async () => {
+      if (!current()) return
       try {
-        let leavePreview = null
-        if (mode === 'corner') {
-          detectGenRef.current++
-          CancelCornerDetect()
-          showStatus('')
-          setLoading(false)
-          if (cornerEntryRef.current) {
-            const { preview, width, height } = cornerEntryRef.current
-            setPreview(preview)
-            if (width && height) {
-              setRealImageDims({ w: width, h: height })
-              const c = canvasRef.current
-              if (c) setFitWidth(fitWidthFor(c, { w: width, h: height }))
-            }
-            cornerEntryRef.current = null
-          }
-          setCornerState(s => ({ ...s, cornerCount: 0 }))
-          setCornersDetected(false)
-          setDetectedCornerPts([])
-          setSelectedCornerPts([])
-          setCropSkipped(false)
-          leavePreview = await ResetCorners()
-        } else if (mode === 'disc') {
-          await ResetDisc(); setDiscActive(false); setCropSkipped(false)
-        } else if (mode === 'line') {
-          await ClearLines()
-          setLinesDone(0)
-          setLines([])
-          setLinesProcessed(false)
-          setCropSkipped(false)
-        } else if (mode === 'normal') {
-          await ResetNormal()
-          setNormalRect(null)
-          setNormalCropApplied(false)
-          setCropSkipped(false)
-        }
+        const reset = { corner: ResetCorners, disc: ResetDisc, line: ClearLines, normal: ResetNormal }[backendModeRef.current]
+        const clean = await reset()
+        backendModeRef.current = m
+        if (!current()) return
+        setCornerState(s => ({ ...s, cornerCount: 0 }))
+        setSelectedCornerPts([])
+        setDetectedCornerPts([])
+        setCornersDetected(false)
+        setLinesDone(0)
+        setLines([])
+        setLinesProcessed(false)
+        setNormalRect(null)
+        setNormalCropApplied(false)
+        setDiscActive(false)
+        setDiscNoMaskPreview(null)
+        setDiscCenter(null)
+        setDiscRadius(0)
+        setDiscRotation(0)
+        setCropSkipped(false)
+        setBlackPoint(0)
+        setWhitePoint(255)
 
-        if (m === 'corner' && lastDetectSettings.current) {
-          const snap = lastDetectSettings.current
-          if (snap.maxCorners === cornerState.maxCorners &&
-              snap.qualityLevel === cornerState.qualityLevel &&
-              snap.minDistance === cornerState.minDistance &&
-              snap.accent === cornerState.accent &&
-              snap.useStretch === useStretchPreprocess) {
-            const restoreGen = detectGenRef.current
-            setLoading(true)
-            showStatus('Loading cached corners…')
-            try {
-              const res = await RestoreCornerOverlay({ dotRadius })
-              if (detectGenRef.current !== restoreGen) return
-              cornerEntryRef.current = { preview: res.preview, width: res.width, height: res.height }
-              const c = canvasRef.current
-              if (c && res.width && res.height) {
-                setFitWidth(fitWidthFor(c, { w: res.width, h: res.height }))
-              } else {
-                setFitWidth(0)
-              }
-              setPreview(res.preview)
-              if (res.width && res.height) setRealImageDims({ w: res.width, h: res.height })
-              setDetectedCornerPts(res.corners || [])
-              setSelectedCornerPts([])
-              setCornersDetected(true)
-              setCornerState(s => ({ ...s, cornerCount: 0 }))
-              showStatus(res.message || '')
-              return
-            } catch (_) {
-              // RestoreCornerOverlay failed (e.g. stale cache) — fall through to GetCleanPreview
-            } finally {
-              setLoading(false)
-            }
-          }
-        }
-
-        if (m === 'corner' && autoDetectOnModeSwitch) {
-          setLoading(true)
+        let res = clean
+        const snap = lastDetectSettings.current
+        const cached = m === 'corner' && snap &&
+          snap.maxCorners === cornerState.maxCorners && snap.qualityLevel === cornerState.qualityLevel &&
+          snap.minDistance === cornerState.minDistance && snap.accent === cornerState.accent &&
+          snap.useStretch === useStretchPreprocess
+        if (cached) {
           try {
-            // Returning to Corner mode is equivalent to pressing Detect: retain
-            // any parameter changes the user made after loading the image.
-            await runDetectCorners()
-          } finally {
-            setLoading(false)
+            res = await RestoreCornerOverlay({ dotRadius })
+            if (!current()) return
+            setDetectedCornerPts(res.corners || [])
+            setCornersDetected(true)
+          } catch (err) {
+            if (!current()) return
+            res = null
           }
+        }
+        if (m === 'corner' && (!cached || !res) && autoDetectOnModeSwitch) {
+          await runDetectCorners()
           return
         }
-
-        const res = leavePreview ?? await GetCleanPreview()
+        if (!res) res = await GetCleanPreview()
+        if (!current()) return
         if (res?.preview) {
           const c = canvasRef.current
-          if (c && res.width && res.height) {
-            setFitWidth(fitWidthFor(c, { w: res.width, h: res.height }))
-          } else {
-            setFitWidth(0)
-          }
+          if (c && res.width && res.height) setFitWidth(fitWidthFor(c, { w: res.width, h: res.height }))
           setPreview(res.preview)
           if (m === 'corner') cornerEntryRef.current = { preview: res.preview, width: res.width, height: res.height }
         }
         if (res?.width && res?.height) setRealImageDims({ w: res.width, h: res.height })
+        showStatus(res?.message || '')
       } catch (err) {
-        console.error('Mode switch error:', err)
-        showError(err)
+        if (current()) {
+          modeRef.current = backendModeRef.current
+          setMode(backendModeRef.current)
+          showError(err)
+        }
+      } finally {
+        if (current()) setLoading(false)
       }
     }
+    const pending = modeQueueRef.current.then(task, task)
+    modeQueueRef.current = pending
+    return pending
   }
 
   return {

@@ -34,7 +34,7 @@ This document contains the detailed system model, data flow, and operation order
   - [Descreen](#descreen-session-based-committing-adjustment)
   - [`SetLevels`](#setlevels-non-committing)
   - [`AutoContrast`](#autocontrast-committing)
-  - [Undo](#undo)
+  - [Undo and redo](#undo-and-redo)
   - [Dust Removal](#dust-removal-app_dustgo-internaldust)
 - [Touch-Up](#touch-up-app_touchupgo-app_iopaintgo-internalpatchmatch)
   - [Availability](#availability)
@@ -62,6 +62,7 @@ This document contains the detailed system model, data flow, and operation order
   - [Wails-facing methods](#wails-facing-methods)
   - [Stitching pipeline](#stitching-pipeline-internalcompositorstitchgo)
   - [Frontend flow](#frontend-flow)
+- [State transition ownership](#state-transition-ownership)
 
 ---
 
@@ -537,10 +538,10 @@ header icon off clears it and deactivates the tool.
 ### Crop / Rotate / Resize / TrimBorders
 
 ```
-Crop(req)          require warpedImage; saveUndo(); crop rect; return preview
+Crop(req)          validate edge; clamp to current bounds leaving at least 1 pixel; saveUndo only if changed; crop; return preview
 Rotate(req)        require warpedImage; saveUndo(); rotate90(flipCode 0=CCW,1=CW,2=180); return preview
 ResizeImage(req)   require image loaded; saveUndo(); resize workingImage; setWorkingImage(result)
-TrimBorders(req)   require warpedImage; saveUndo(); adjust crop offsets; return preview
+TrimBorders(req)   require warpedImage; saveUndo(); crop current bounds; return preview
 ```
 
 ### Descreen (session-based committing adjustment)
@@ -1249,3 +1250,27 @@ A standalone planar image stitching feature. `internal/compositor` has no depend
 ### Frontend flow
 
 `handleCompositorLoad(info)` receives the `ImageInfo` from `CompositorLoadResult`, updates all image state, calls `resetImageState()`, updates `suggestedCornerParamsRef.current`, then switches to Corner mode and runs corner detection. The `CompositorModal` `onLoad` callback closes the modal **before** calling `handleCompositorLoad`.
+
+
+## State transition ownership
+
+Document load/reset helpers cancel both touch-up and corner detection. Compositor
+loads use `resetPipelineState`, including preview-store reset, adjustment selection
+keys, descreen baselines, disc caches, and both history stacks. Corner detection
+uses a captured source pointer and generation: only the newest, uncancelled job
+may publish, and older cleanup cannot remove a newer cancellation handle.
+
+Frontend transitions cancel detection and clear transient tool/drag/selection
+state before awaiting backend work. Mode resets and file/clipboard loads share
+a queue; mode buttons update immediately, but stale responses cannot replace the
+latest preview or complete its busy state. History responses are also discarded
+if the document or mode changed while they were pending. Loading, compositor
+entry, and mode changes preserve fit geometry until replacement presentation;
+they never clear it to zero.
+
+A rejected fourth corner is removed without changing image history, leaving the
+three valid picks available for correction. Edge cropping uses current dimensions
+rather than accumulated offsets, so repeated crops and history traversal remain
+consistent; invalid directions and one-pixel no-ops do not consume history.
+Levels changes, disc redraws, and Skip Crop actually clear invalidated descreen
+sessions as well as reporting `DescreenReset`.

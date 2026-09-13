@@ -174,6 +174,7 @@ func (a *App) CompositorLoadResult(req CompositorLoadResultRequest) (*ImageInfo,
 	}
 	defer a.loadMu.Unlock()
 	a.cancelTouchup()
+	a.CancelCornerDetect()
 
 	img := raster.CloneNRGBA(result)
 	steps := ((req.RotationSteps % 4) + 4) % 4
@@ -183,23 +184,9 @@ func (a *App) CompositorLoadResult(req CompositorLoadResultRequest) (*ImageInfo,
 
 	a.originalImage = img
 	a.currentImage = raster.CloneNRGBA(img)
-	a.warpedImage = nil
-	a.levelsBaseImage = nil
 	a.imageLoaded = true
 	a.loadedFilePath = ""
-	a.selectedCorners = nil
-	a.detectedCorners = nil
-	a.lines = nil
-	a.undoStack = nil
-	a.redoStack = nil
-	a.discCenter = image.Point{}
-	a.discRadius = 0
-	a.rotationAngle = 0
-	a.discBaseImage = nil
-	a.discWorkingCrop = nil
-	a.discWorkingCropRect = image.Rectangle{}
-	a.postDiscBlack = 0
-	a.postDiscWhite = 255
+	a.resetPipelineState()
 
 	preview, err := a.imagePreviewURL(a.currentImage)
 	if err != nil {
@@ -207,7 +194,9 @@ func (a *App) CompositorLoadResult(req CompositorLoadResultRequest) (*ImageInfo,
 	}
 
 	b := img.Bounds()
-	runtime.WindowSetTitle(a.ctx, AppBaseTitle()+" — [Compositor Result]")
+	if a.ctx != nil {
+		runtime.WindowSetTitle(a.ctx, AppBaseTitle()+" — [Compositor Result]")
+	}
 	a.logf("CompositorLoadResult: loaded %dx%d stitched image into editing pipeline (rotationSteps=%d)", b.Dx(), b.Dy(), steps)
 	return &ImageInfo{
 		Width:                 b.Dx(),

@@ -214,6 +214,9 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 		feathered = imageops.ApplyLevels(feathered, a.postDiscBlack, a.postDiscWhite)
 	}
 
+	a.descreenBaseImage = nil
+	a.descreenResultImage = nil
+	a.descreenSelection = adjustmentSelectionKey{}
 	a.warpedImage = feathered
 
 	// Invalidate the levels baseline so the next SetLevels drag re-snapshots

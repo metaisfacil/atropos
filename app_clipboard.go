@@ -22,6 +22,7 @@ func (a *App) LoadImageFromClipboard() (*ImageInfo, error) {
 	}
 	defer a.loadMu.Unlock()
 	a.cancelTouchup()
+	a.CancelCornerDetect()
 
 	t0 := time.Now()
 	a.clipboardMu.Lock()

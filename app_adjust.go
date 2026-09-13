@@ -264,34 +264,30 @@ func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
 		a.logf(msg)
 		return nil, errors.New(msg)
 	}
-	descreenReset := a.descreenResultImage != nil
-	a.saveUndo()
-
 	b := a.warpedImage.Bounds()
 	r := b
-
+	amount := max(1, a.cropAmount)
 	switch req.Direction {
 	case "top":
-		if a.cropTop < b.Dy()-1 {
-			a.cropTop += a.cropAmount
-			r.Min.Y += a.cropAmount
-		}
+		r.Min.Y += min(amount, b.Dy()-1)
 	case "bottom":
-		if a.cropBottom < b.Dy()-1 {
-			a.cropBottom += a.cropAmount
-			r.Max.Y -= a.cropAmount
-		}
+		r.Max.Y -= min(amount, b.Dy()-1)
 	case "left":
-		if a.cropLeft < b.Dx()-1 {
-			a.cropLeft += a.cropAmount
-			r.Min.X += a.cropAmount
-		}
+		r.Min.X += min(amount, b.Dx()-1)
 	case "right":
-		if a.cropRight < b.Dx()-1 {
-			a.cropRight += a.cropAmount
-			r.Max.X -= a.cropAmount
-		}
+		r.Max.X -= min(amount, b.Dx()-1)
+	default:
+		return nil, fmt.Errorf("invalid crop direction: %q", req.Direction)
 	}
+	if r == b {
+		preview, err := a.imagePreviewURL(a.warpedImage)
+		if err != nil {
+			return nil, err
+		}
+		return &ProcessResult{Preview: preview, Width: b.Dx(), Height: b.Dy(), Message: "Image edge is already one pixel"}, nil
+	}
+	descreenReset := a.descreenResultImage != nil
+	a.saveUndo()
 
 	a.warpedImage = raster.CropNRGBA(a.warpedImage, r)
 
@@ -664,6 +660,9 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 	}
 
 	a.redoStack = nil
+	a.descreenBaseImage = nil
+	a.descreenResultImage = nil
+	a.descreenSelection = adjustmentSelectionKey{}
 
 	// Snapshot the base on first touch; reuse on every subsequent drag.
 	if a.levelsBaseImage == nil || a.levelsSelection != selectionKey {
