@@ -10,16 +10,18 @@ import (
 	"atropos/internal/raster"
 )
 
-// undoEntry stores a single undo snapshot. rotationAngle is non-nil for
-// operations that also need to restore the accumulated disc rotation angle
-// (e.g. StraightEdgeRotate) so that subsequent disc re-renders stay correct.
+// undoEntry stores lossless tiled pixels and disc adjustment metadata.
+// All new entries capture rotationAngle so subsequent disc re-renders use
+// the restored angle, including after undoing non-rotation adjustments.
 // preWarp is true when the entry was saved before any warp/disc/crop operation
 // had produced a warpedImage; restoring such an entry returns the app to the
 // initial cropping phase rather than a post-warp editing state.
 type undoEntry struct {
-	image           *image.NRGBA
+	image           *undoImage
 	rotationAngle   *float64
 	preWarp         bool
+	postDiscBlack   int
+	postDiscWhite   int
 	selectedCorners []image.Point // in-progress corner clicks at save time (corner mode only)
 }
 
@@ -83,19 +85,15 @@ func (a *App) setWorkingImage(img *image.NRGBA) {
 // The entry is tagged preWarp=true when warpedImage is nil at save time so
 // that Undo() can restore the pre-crop state correctly.
 func (a *App) saveUndo() {
-	if len(a.undoStack) >= a.undoLimit {
-		a.undoStack = a.undoStack[1:]
+	var previous *undoImage
+	if n := len(a.undoStack); n > 0 {
+		previous = a.undoStack[n-1].image
 	}
-	// warpedImage may be nil when a committing op runs before any warp
-	// (e.g. AutoContrast in corner mode). Store currentImage in that case.
-	preWarp := a.warpedImage == nil
-	var img *image.NRGBA
-	if a.warpedImage != nil {
-		img = raster.CloneNRGBA(a.warpedImage)
-	} else if a.currentImage != nil {
-		img = raster.CloneNRGBA(a.currentImage)
-	}
-	a.undoStack = append(a.undoStack, undoEntry{image: img, preWarp: preWarp})
+	img := snapshotUndoImage(a.workingImage(), previous)
+	angle := a.rotationAngle
+	a.undoStack = append(a.undoStack, undoEntry{image: img, preWarp: a.warpedImage == nil,
+		rotationAngle: &angle, postDiscBlack: a.postDiscBlack, postDiscWhite: a.postDiscWhite})
+	a.trimUndo()
 	// Any committing operation invalidates both adjustment baselines so that
 	// the next SetLevels / Descreen call re-snapshots from the new working image.
 	a.levelsBaseImage = nil
@@ -105,23 +103,10 @@ func (a *App) saveUndo() {
 	a.descreenSelection = adjustmentSelectionKey{}
 }
 
-// saveDiscRotationUndo is like saveUndo but also snapshots the current
-// rotationAngle so that Undo() can restore disc re-renders to the correct angle.
+// saveDiscRotationUndo preserves the rotation-operation call sites. All undo
+// entries now capture disc rotation and invalidate both adjustment sessions.
 func (a *App) saveDiscRotationUndo() {
-	if len(a.undoStack) >= a.undoLimit {
-		a.undoStack = a.undoStack[1:]
-	}
-	preWarp := a.warpedImage == nil
-	var img *image.NRGBA
-	if a.warpedImage != nil {
-		img = raster.CloneNRGBA(a.warpedImage)
-	} else if a.currentImage != nil {
-		img = raster.CloneNRGBA(a.currentImage)
-	}
-	angle := a.rotationAngle
-	a.undoStack = append(a.undoStack, undoEntry{image: img, rotationAngle: &angle, preWarp: preWarp})
-	a.levelsBaseImage = nil
-	a.levelsSelection = adjustmentSelectionKey{}
+	a.saveUndo()
 }
 
 // Undo reverts the last operation on the image.
@@ -160,13 +145,20 @@ func (a *App) Undo() (*ProcessResult, error) {
 		return &ProcessResult{Message: "Nothing to undo"}, nil
 	}
 	entry := a.undoStack[len(a.undoStack)-1]
+	a.undoStack[len(a.undoStack)-1] = undoEntry{}
 	a.undoStack = a.undoStack[:len(a.undoStack)-1]
+	restored := entry.image.restore()
+	a.levelsBaseImage = nil
+	a.levelsSelection = adjustmentSelectionKey{}
+	a.descreenSelection = adjustmentSelectionKey{}
+	a.postDiscBlack = entry.postDiscBlack
+	a.postDiscWhite = entry.postDiscWhite
 
 	if entry.preWarp {
 		// Restore the pre-warp image state: the saved image goes back into
 		// currentImage, and warpedImage is cleared so that workingImage()
 		// returns currentImage again (pre-crop state).
-		a.currentImage = entry.image
+		a.currentImage = restored
 		a.warpedImage = nil
 		// Restore any in-progress corner selection that was captured at save time.
 		if len(entry.selectedCorners) > 0 {
@@ -182,6 +174,7 @@ func (a *App) Undo() (*ProcessResult, error) {
 		a.rotationAngle = 0
 		a.discBaseImage = nil
 		a.discWorkingCrop = nil
+		a.discNoMaskPreview = ""
 		a.discWorkingCropRect = image.Rectangle{}
 		a.postDiscBlack = 0
 		a.postDiscWhite = 255
@@ -190,7 +183,7 @@ func (a *App) Undo() (*ProcessResult, error) {
 		a.descreenResultImage = nil
 		a.logf("Undo: restored pre-warp state (selectedCorners=%d)", len(a.selectedCorners))
 	} else {
-		a.warpedImage = entry.image
+		a.warpedImage = restored
 		if entry.rotationAngle != nil {
 			a.rotationAngle = *entry.rotationAngle
 			a.logf("Undo: restored rotationAngle=%.3f°", a.rotationAngle)
@@ -206,10 +199,18 @@ func (a *App) Undo() (*ProcessResult, error) {
 	}
 	b := img.Bounds()
 	res := &ProcessResult{
-		Preview:   preview,
-		Width:     b.Dx(),
-		Height:    b.Dy(),
-		Uncropped: entry.preWarp,
+		Preview:       preview,
+		Width:         b.Dx(),
+		Height:        b.Dy(),
+		Uncropped:     entry.preWarp,
+		DescreenReset: true,
+		Changed:       true,
+		White:         255,
+		Message:       fmt.Sprintf("Undone (%d steps remaining)", len(a.undoStack)),
+	}
+	if a.discRadius > 0 {
+		res.Black, res.White = a.postDiscBlack, a.postDiscWhite
+		res.DiscRotation = a.rotationAngle
 	}
 	if entry.preWarp {
 		if len(a.detectedCorners) > 0 {

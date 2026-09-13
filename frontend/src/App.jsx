@@ -242,7 +242,7 @@ export default function App() {
     setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor,
     setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
     setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
-    setUseTouchupTool, setUseStraightEdgeTool, setDragging, setDragStart, setDragCurrent,
+    setUseTouchupTool, setUseDescreenTool, setUseStraightEdgeTool, setDragging, setDragStart, setDragCurrent,
     setConfirmDialog, setTouchupStrokes,
     setAdjustmentSelectionActive, setAdjustmentRect,
     touchupDraggingRef, canvasRef,

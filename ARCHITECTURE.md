@@ -134,7 +134,7 @@ originalImage  ── immutable after LoadImage; never modified
 | `discWorkingCropRect` | `image.Rectangle` | Records the rect of `discBaseImage` that `discWorkingCrop` covers (in `discBaseImage` coordinates). Used to detect when a shift has moved the disc outside the working crop. |
 | `discCenterCutout` | `bool` | When true, `redrawDisc` punches a circular hole at the disc centre to expose `bgColor`. Default: `true`. |
 | `discCutoutPercent` | `int` | Diameter of the centre cutout as a percentage of the disc diameter (1–50). Cutout radius = `discRadius * discCutoutPercent / 100`. Default: `11`. |
-| `undoStack` | `[]undoEntry` | LIFO stack capped at `undoLimit` (10). Each entry stores image pixels plus optional rotation metadata (`rotationAngle`), pre-warp flag (`preWarp`), and optional in-progress corner picks (`selectedCorners`) for undoing back into corner-selection phase. |
+| `undoStack` | `[]undoEntry` | LIFO stack capped at `undoLimit` (100), also limited to 1024 MiB of retained history storage. Each entry stores image pixels plus optional rotation metadata (`rotationAngle`), pre-warp flag (`preWarp`), and optional in-progress corner picks (`selectedCorners`) for undoing back into corner-selection phase. |
 
 ### `workingImage()` (in `app_adjust.go`)
 
@@ -155,13 +155,13 @@ Always writes to `warpedImage`. This ensures `SaveImage` always has a result, ev
 
 ### `saveUndo()` (in `app_adjust.go`)
 
-1. If `undoStack` is full, shift out the oldest entry.
-2. Push an `undoEntry` with cloned working image and `preWarp` metadata (true when `warpedImage == nil`).
+1. Snapshot the working image into immutable 128x128 pixel tiles, sharing byte-identical tiles with the preceding snapshot. Live image buffers never alias history.
+2. Push an `undoEntry` with the tiled image, rotation and post-disc levels metadata, and `preWarp` (true when `warpedImage == nil`). Evict oldest entries until at most 100 steps and 1024 MiB remain, counting shared tiles once. Always keep the newest step even if that scan alone exceeds the budget.
 3. **Clears `levelsBaseImage`, `descreenBaseImage`, and `descreenResultImage`** so the next levels/descreen session snapshots fresh baselines.
 
 ### `saveDiscRotationUndo()` (in `app_adjust.go`)
 
-Same as `saveUndo()` but also snapshots the current `rotationAngle` into the entry. Used by `StraightEdgeRotate` so that Undo restores both the image pixels and the accumulated rotation angle, keeping disc re-renders consistent.
+Delegates to `saveUndo()`. All entries now snapshot `rotationAngle` and post-disc levels; `StraightEdgeRotate` retains this helper so existing call sites remain explicit. Both paths invalidate levels and descreen sessions.
 
 **Rule:** Every operation that commits a permanent change must call `saveUndo()` first — except `SetLevels` and intra-session `Descreen` parameter changes (to avoid flooding undo entries during live parameter tuning). This includes warp-entry operations (`ClickCorner` on the 4th click, `ProcessLines`, `DrawDisc`) and most post-crop adjustments. `StraightEdgeRotate` uses `saveDiscRotationUndo()` instead.
 
@@ -186,7 +186,7 @@ Wails runtime
 
 | Field | Default |
 |-------|---------|
-| `undoLimit` | 10 |
+| `undoLimit` | 100 |
 | `featherSize` | 15 |
 | `cropAmount` | 3 |
 | `bgColor` | white (255,255,255,255) |
@@ -628,15 +628,17 @@ Undo()
     if undoStack empty → "Nothing to undo"
     entry = pop from undoStack
     if entry.preWarp:
-        currentImage = entry.image
+        currentImage = entry.image.restore()
         warpedImage = nil
         selectedCorners = entry.selectedCorners (if any)
         clear disc state and adjustment baselines
     else:
-        warpedImage = entry.image
+        warpedImage = entry.image.restore()
         if entry.rotationAngle != nil: rotationAngle = *entry.rotationAngle
     return preview
 ```
+
+Snapshots are independently restorable; eviction never breaks a delta chain. Popped and evicted slots are cleared so backing arrays cannot retain discarded pixels. Small edits allocate only changed tiles; full-frame changes and dimension changes may require a full snapshot. The budget excludes active images, preview caches, and transient restore allocations. Undo clears levels/descreen sessions, restores disc levels and rotation, and returns DescreenReset, Changed, and a remaining step count. The frontend synchronizes these controls and clears adjustment selections. Empty history and touch-up cancellation do not mark the document modified.
 
 Undo is blocked in the frontend while any drag operation is active (disc shift, rotation, etc.) to prevent undo from firing mid-drag and corrupting disc state.
 

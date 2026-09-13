@@ -121,6 +121,7 @@ type App struct {
 	cropTop, cropBottom, cropLeft, cropRight int
 	featherSize                              int
 	undoLimit                                int
+	undoMemoryLimit                          int64
 	cropAmount                               int
 
 	// Launch arguments (set before startup)
@@ -167,7 +168,7 @@ type App struct {
 // NewApp creates a new App application struct.
 func NewApp() *App {
 	app := &App{
-		undoLimit:         10,
+		undoLimit:         defaultUndoLimit,
 		featherSize:       15,
 		cropAmount:        3,
 		undoStack:         []undoEntry{},

@@ -92,7 +92,7 @@ func TestUndoCancelsInFlightTouchupWithoutPoppingHistory(t *testing.T) {
 	a := NewApp()
 	a.currentImage = solidTouchupTestImage(10)
 	a.warpedImage = solidTouchupTestImage(20)
-	a.undoStack = append(a.undoStack, undoEntry{image: solidTouchupTestImage(5)})
+	a.undoStack = append(a.undoStack, undoEntry{image: snapshotUndoImage(solidTouchupTestImage(5), nil)})
 	registerTouchupTestOperation(a)
 
 	res, err := a.Undo()

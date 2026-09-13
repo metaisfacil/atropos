@@ -33,7 +33,7 @@ export function useImageActions({
   setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
   setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscRotation, setDiscBgColor, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
   setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
-  setUseTouchupTool, setUseStraightEdgeTool, setDragging, setDragStart, setDragCurrent,
+  setUseTouchupTool, setUseDescreenTool, setUseStraightEdgeTool, setDragging, setDragStart, setDragCurrent,
   setConfirmDialog, setTouchupStrokes,
   setAdjustmentSelectionActive, setAdjustmentRect,
   touchupDraggingRef, canvasRef,
@@ -593,6 +593,13 @@ export function useImageActions({
       if (res?.preview) setPreview(res.preview)
       if (res?.width && res?.height) setRealImageDims({ w: res.width, h: res.height })
       showStatus(res?.message || '')
+      if (res?.descreenReset) setUseDescreenTool(false)
+      if (res?.changed) {
+        setBlackPoint(res.black ?? 0)
+        setWhitePoint(res.white ?? 255)
+        setAdjustmentRect(null)
+        if (mode === 'disc') setDiscRotation(res.discRotation ?? 0)
+      }
       if (res?.uncropped) {
         // The undo took us back past the initial crop — return to the cropping
         // phase by resetting the mode-specific post-crop state.  Only act if
@@ -630,7 +637,7 @@ export function useImageActions({
         setBlackPoint(0)
         setWhitePoint(255)
       }
-      markUnsavedChanges()
+      if (res?.changed) markUnsavedChanges()
     } catch (err) {
       console.error('Undo error:', err)
       showError(err)

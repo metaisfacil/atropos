@@ -47,7 +47,7 @@ function makeProps() {
     'setDiscCenter', 'setDiscRadius', 'setDiscRotation', 'setDiscBgColor',
     'setNormalRect', 'setNormalCropApplied', 'setCropSkipped', 'setCornersDetected',
     'setDetectedCornerPts', 'setSelectedCornerPts', 'setLines', 'setBlackPoint',
-    'setWhitePoint', 'setUseTouchupTool', 'setUseStraightEdgeTool', 'setDragging',
+    'setUseDescreenTool', 'setWhitePoint', 'setUseTouchupTool', 'setUseStraightEdgeTool', 'setDragging',
     'setDragStart', 'setDragCurrent', 'setConfirmDialog', 'setTouchupStrokes',
     'setAdjustmentSelectionActive', 'setAdjustmentRect', 'setCloseAfterSave',
     'setPostSaveEnabled', 'setPostSaveCommand', 'setImageMeta', 'setUnsavedChanges',
@@ -220,5 +220,30 @@ describe('Backend clipboard load', () => {
     expect(props.showStatus).not.toHaveBeenCalledWith('Loading clipboard image…')
     expect(props.setZoom).not.toHaveBeenCalled()
     consoleError.mockRestore()
+  })
+})
+
+
+describe('Undo state synchronization', () => {
+  it('clears adjustment sessions and restores disc rotation after a history step', async () => {
+    const props = { ...makeProps(), mode: 'disc', discActive: true }
+    appMocks.Undo.mockResolvedValue({ changed: true, descreenReset: true, black: 10, white: 230, discRotation: 12 })
+    const { result } = renderHook(() => useImageActions(props))
+    await act(async () => result.current.handleUndo())
+    expect(props.setUseDescreenTool).toHaveBeenCalledWith(false)
+    expect(props.setBlackPoint).toHaveBeenCalledWith(10)
+    expect(props.setWhitePoint).toHaveBeenCalledWith(230)
+    expect(props.setDiscRotation).toHaveBeenCalledWith(12)
+    expect(props.setAdjustmentRect).toHaveBeenCalledWith(null)
+    expect(props.setUnsavedChanges).toHaveBeenCalledWith(true)
+  })
+
+  it('does not mark the document modified when history is empty', async () => {
+    const props = makeProps()
+    appMocks.Undo.mockResolvedValue({ message: 'Nothing to undo' })
+    const { result } = renderHook(() => useImageActions(props))
+    await act(async () => result.current.handleUndo())
+    expect(props.setUnsavedChanges).not.toHaveBeenCalled()
+    expect(props.setBlackPoint).not.toHaveBeenCalled()
   })
 })
