@@ -152,6 +152,7 @@ func (a *App) ProcessLines() (*ProcessResult, error) {
 		warped = a.applyWarpFill(warped, oobMask)
 	}
 	a.warpedImage = warped
+	a.cropSkipped = false
 	a.lines = nil
 
 	preview, err := a.imagePreviewURL(a.warpedImage)
@@ -174,6 +175,7 @@ func (a *App) ClearLines() (*ProcessResult, error) {
 	a.descreenResultImage = nil
 	a.lines = nil
 	a.warpedImage = nil
+	a.cropSkipped = false
 
 	if a.currentImage == nil {
 		return &ProcessResult{Message: "Lines cleared"}, nil

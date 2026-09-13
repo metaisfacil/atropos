@@ -34,6 +34,7 @@ func (a *App) resetPipelineState() {
 	a.descreenSelection = adjustmentSelectionKey{}
 	a.previewAssets.Reset()
 	a.warpedImage = nil
+	a.cropSkipped = false
 	a.levelsBaseImage = nil
 	a.descreenBaseImage = nil
 	a.descreenResultImage = nil

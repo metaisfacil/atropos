@@ -719,6 +719,7 @@ func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
 		a.undoStack[n-1].selectedCorners = append([]image.Point(nil), a.selectedCorners[:3]...)
 	}
 	a.warpedImage = warped
+	a.cropSkipped = false
 	a.selectedCorners = nil
 
 	preview, err := a.imagePreviewURL(a.warpedImage)
@@ -790,6 +791,7 @@ func (a *App) ResetCorners() (*ProcessResult, error) {
 	a.descreenResultImage = nil
 	a.selectedCorners = nil
 	a.warpedImage = nil
+	a.cropSkipped = false
 
 	preview, err := a.imagePreviewURL(a.currentImage)
 	if err != nil {
@@ -823,6 +825,7 @@ func (a *App) SkipCrop() (*ProcessResult, error) {
 	a.descreenResultImage = nil
 	a.descreenSelection = adjustmentSelectionKey{}
 	a.warpedImage = raster.CloneNRGBA(a.currentImage)
+	a.cropSkipped = true
 	a.selectedCorners = nil
 
 	b := a.warpedImage.Bounds()

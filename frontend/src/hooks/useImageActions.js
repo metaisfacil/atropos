@@ -669,6 +669,7 @@ export function useImageActions({
       showStatus(res?.message || '')
       if (res?.descreenReset) setUseDescreenTool(false)
       if (res?.changed) {
+        setCropSkipped(res.cropSkipped ?? false)
         setBlackPoint(res.black ?? 0)
         setWhitePoint(res.white ?? 255)
         setAdjustmentRect(null)
@@ -684,7 +685,6 @@ export function useImageActions({
           if (res.discRadius > 0) setDiscBgColor({ r: res.discBgR ?? 0, g: res.discBgG ?? 0, b: res.discBgB ?? 0 })
         }
         if (redo && !res.uncropped) {
-          setCropSkipped(false)
           if (mode === 'corner') {
             setCornerState(s => ({ ...s, cornerCount: 4 }))
             setSelectedCornerPts([])

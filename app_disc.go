@@ -86,6 +86,7 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 	}
 	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
+	a.cropSkipped = false
 	a.discCenter = image.Pt(req.CenterX, req.CenterY)
 	a.discRadius = req.Radius
 	a.rotationAngle = 0
@@ -412,6 +413,7 @@ func (a *App) ResetDisc() (*ProcessResult, error) {
 	a.descreenResultImage = nil
 	a.resetDiscFields()
 	a.warpedImage = nil
+	a.cropSkipped = false
 	a.levelsBaseImage = nil
 
 	if a.currentImage == nil {

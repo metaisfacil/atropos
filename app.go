@@ -41,6 +41,8 @@ type App struct {
 	//   authoritative image for subsequent adjustments and for `SaveImage()`.
 	//   If `warpedImage` is nil, the app falls back to `currentImage`.
 	warpedImage *image.NRGBA
+	// cropSkipped distinguishes Skip Crop from a committed geometric crop.
+	cropSkipped bool
 
 	// `levelsBaseImage`:
 	//   A snapshot captured the first time the user starts dragging the
@@ -219,6 +221,7 @@ func (a *App) shutdown(ctx context.Context) {
 // ProcessResult is the standard response for image processing operations,
 // carrying an optional preview, status message, and image dimensions.
 type ProcessResult struct {
+	CropSkipped bool `json:"cropSkipped,omitempty"`
 	// History-only fields synchronize controls without triggering a disc redraw.
 	HistoryDiscSettings *DiscSettings `json:"historyDiscSettings,omitempty"`
 	HistoryFeatherSize  int           `json:"historyFeatherSize,omitempty"`

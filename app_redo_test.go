@@ -7,6 +7,52 @@ import (
 	"testing"
 )
 
+func TestHistoryPreservesSkipCropPhase(t *testing.T) {
+	a := newTestApp(100, 80)
+	if _, err := a.SkipCrop(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.AutoContrast(AutoContrastRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	for cycle := 0; cycle < 2; cycle++ {
+		for _, step := range []func() (*ProcessResult, error){a.Undo, a.Redo} {
+			res, err := step()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !res.CropSkipped || !a.cropSkipped || res.Uncropped {
+				t.Fatal("history lost Skip Crop phase")
+			}
+		}
+	}
+	if _, err := a.NormalCrop(NormalCropRequest{X2: 50, Y2: 40}); err != nil {
+		t.Fatal(err)
+	}
+	if a.cropSkipped {
+		t.Fatal("explicit crop retained Skip Crop phase")
+	}
+	res, err := a.Undo()
+	if err != nil || !res.CropSkipped {
+		t.Fatal("undo did not restore skipped phase before geometric crop")
+	}
+	res, err = a.Redo()
+	if err != nil || res.CropSkipped {
+		t.Fatal("redo did not restore geometric crop phase")
+	}
+	if _, err := a.ResetNormal(); err != nil {
+		t.Fatal(err)
+	}
+	if a.cropSkipped {
+		t.Fatal("reset retained skipped phase")
+	}
+	_, _ = a.SkipCrop()
+	a.resetPipelineState()
+	if a.cropSkipped {
+		t.Fatal("new document retained skipped phase")
+	}
+}
+
 func TestRedoRoundTripAcrossCropAndResize(t *testing.T) {
 	a := newTestApp(100, 80)
 	if _, err := a.NormalCrop(NormalCropRequest{X1: 5, Y1: 6, X2: 70, Y2: 60}); err != nil {

@@ -424,3 +424,19 @@ it.each([false, true])('keeps the first clipboard load owned across mode changes
   expect(appMocks.LoadImageFromClipboard).toHaveBeenCalledTimes(2)
   expect(props.setPreview).toHaveBeenLastCalledWith('/next-paste')
 })
+
+
+it.each(['corner', 'disc', 'line', 'normal'])('restores Skip Crop on undo and redo in %s mode', async mode => {
+  const props = { ...makeProps(), mode, discActive: mode === 'disc' }
+  const response = { changed: true, cropSkipped: true, preview: '/skipped-edit', width: 100, height: 80 }
+  appMocks.Undo.mockResolvedValue(response)
+  appMocks.Redo.mockResolvedValue(response)
+  const { result } = renderHook(() => useImageActions(props))
+  await act(async () => result.current.handleUndo())
+  expect(props.setCropSkipped).toHaveBeenLastCalledWith(true)
+  await act(async () => result.current.handleRedo())
+  expect(props.setCropSkipped).toHaveBeenLastCalledWith(true)
+  appMocks.Redo.mockResolvedValue({ ...response, cropSkipped: false })
+  await act(async () => result.current.handleRedo())
+  expect(props.setCropSkipped).toHaveBeenLastCalledWith(false)
+})

@@ -1283,3 +1283,8 @@ auto-detection.
 Before the first document is loaded, mode selection updates the mode preference
 without invalidating an in-flight load. Clipboard success and failure both retain
 ownership of their loading cleanup, and a successful load uses the selected mode.
+
+History records `cropSkipped` separately from the pre-warp flag. Adjustments
+preserve it, geometric crop commits clear it, and mode/document resets clear it.
+Undo/redo return the recorded phase so Skip Crop controls stay disabled when
+restoring an adjustment made without a geometric crop.

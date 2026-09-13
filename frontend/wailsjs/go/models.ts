@@ -586,6 +586,7 @@ export namespace main {
 	    }
 	}
 	export class ProcessResult {
+	    cropSkipped?: boolean;
 	    historyDiscSettings?: DiscSettings;
 	    historyFeatherSize?: number;
 	    preview: string;
@@ -614,6 +615,7 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.cropSkipped = source["cropSkipped"];
 	        this.historyDiscSettings = this.convertValues(source["historyDiscSettings"], DiscSettings);
 	        this.historyFeatherSize = source["historyFeatherSize"];
 	        this.preview = source["preview"];

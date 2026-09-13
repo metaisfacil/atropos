@@ -34,7 +34,7 @@ type historyDisc struct {
 func (a *App) captureHistory(previous undoEntry) undoEntry {
 	angle := a.rotationAngle
 	entry := undoEntry{image: snapshotUndoImage(a.workingImage(), previous.image),
-		preWarp: a.warpedImage == nil, rotationAngle: &angle,
+		preWarp: a.warpedImage == nil, rotationAngle: &angle, cropSkipped: a.cropSkipped,
 		postDiscBlack: a.postDiscBlack, postDiscWhite: a.postDiscWhite,
 		selectedCorners: append([]image.Point(nil), a.selectedCorners...)}
 	if a.discRadius > 0 {

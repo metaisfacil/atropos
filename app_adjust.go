@@ -17,6 +17,7 @@ import (
 // had produced a warpedImage; restoring such an entry returns the app to the
 // initial cropping phase rather than a post-warp editing state.
 type undoEntry struct {
+	cropSkipped     bool
 	image           *undoImage
 	disc            *historyDisc
 	rotationAngle   *float64
@@ -179,6 +180,7 @@ func (a *App) stepHistory(redo bool) (*ProcessResult, error) {
 	a.levelsBaseImage = nil
 	a.levelsSelection = adjustmentSelectionKey{}
 	a.descreenSelection = adjustmentSelectionKey{}
+	a.cropSkipped = entry.cropSkipped
 	a.postDiscBlack = entry.postDiscBlack
 	a.postDiscWhite = entry.postDiscWhite
 
@@ -228,6 +230,7 @@ func (a *App) stepHistory(redo bool) (*ProcessResult, error) {
 		Width:         b.Dx(),
 		Height:        b.Dy(),
 		Uncropped:     entry.preWarp,
+		CropSkipped:   a.cropSkipped,
 		DescreenReset: true,
 		Changed:       true,
 		White:         255,

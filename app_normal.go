@@ -84,6 +84,7 @@ func (a *App) NormalCrop(req NormalCropRequest) (*ProcessResult, error) {
 	a.saveUndo()
 	r := image.Rect(x1, y1, x2, y2)
 	a.setWorkingImage(raster.CropNRGBA(img, r))
+	a.cropSkipped = false
 
 	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
@@ -111,6 +112,7 @@ func (a *App) ResetNormal() (*ProcessResult, error) {
 	a.descreenBaseImage = nil
 	a.descreenResultImage = nil
 	a.warpedImage = nil
+	a.cropSkipped = false
 	img := a.workingImage()
 	if img == nil {
 		return nil, fmt.Errorf("no image loaded")
