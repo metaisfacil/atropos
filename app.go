@@ -71,6 +71,7 @@ type App struct {
 
 	imageLoaded bool
 	undoStack   []undoEntry
+	redoStack   []undoEntry
 	clipboardMu sync.Mutex
 	// Clipboard accessors are injectable so copy/paste behavior can be tested
 	// without reading or replacing the developer's real system clipboard.
@@ -218,10 +219,13 @@ func (a *App) shutdown(ctx context.Context) {
 // ProcessResult is the standard response for image processing operations,
 // carrying an optional preview, status message, and image dimensions.
 type ProcessResult struct {
-	Preview string `json:"preview"`
-	Message string `json:"message"`
-	Width   int    `json:"width"`
-	Height  int    `json:"height"`
+	// History-only fields synchronize controls without triggering a disc redraw.
+	HistoryDiscSettings *DiscSettings `json:"historyDiscSettings,omitempty"`
+	HistoryFeatherSize  int           `json:"historyFeatherSize,omitempty"`
+	Preview             string        `json:"preview"`
+	Message             string        `json:"message"`
+	Width               int           `json:"width"`
+	Height              int           `json:"height"`
 	// Changed is set by operations that can legitimately produce no pixel
 	// changes, allowing the frontend to preserve its unsaved-state indicator.
 	Changed bool `json:"changed,omitempty"`

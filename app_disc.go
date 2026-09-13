@@ -134,6 +134,7 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 //  3. Re-applies postDiscBlack/White, so any levels the user set after the disc
 //     was committed survive every subsequent disc re-render.
 func (a *App) redrawDisc() (*ProcessResult, error) {
+	a.redoStack = nil
 	descreenReset := a.descreenResultImage != nil
 	base := a.discBaseImage
 	if base == nil {
@@ -279,6 +280,7 @@ func (a *App) RotateDisc(req DiscRotateRequest) (*ProcessResult, error) {
 // Sampling from discBaseImage (rather than originalImage) means the colour
 // reflects any pre-disc tonal adjustments the user applied.
 func (a *App) GetPixelColor(req PixelColorRequest) (*ProcessResult, error) {
+	a.redoStack = nil
 	a.logf("GetPixelColor: x=%d y=%d", req.X, req.Y)
 
 	// Prefer the disc base (which includes pre-disc adjustments); fall back to
@@ -360,6 +362,7 @@ func (a *App) SetFeatherRadius(req FeatherRadiusRequest) (*ProcessResult, error)
 
 // SetFeatherSize updates the inward feather width and re-renders the disc.
 func (a *App) SetFeatherSize(req FeatherSizeRequest) (*ProcessResult, error) {
+	a.redoStack = nil
 	a.logf("SetFeatherSize: %d", req.Size)
 	if req.Size < 0 {
 		req.Size = 0
@@ -375,6 +378,7 @@ func (a *App) SetFeatherSize(req FeatherSizeRequest) (*ProcessResult, error) {
 
 // SetBackgroundColor sets the background colour for disc mode.
 func (a *App) SetBackgroundColor(r, g, b int) {
+	a.redoStack = nil
 	a.logf("SetBackgroundColor: r=%d g=%d b=%d", r, g, b)
 	a.bgColor = color.NRGBA{R: uint8(r), G: uint8(g), B: uint8(b), A: 255}
 }
@@ -395,9 +399,14 @@ func (a *App) resetDiscFields() {
 
 // ResetDisc clears the disc selection and restores the pre-disc image.
 func (a *App) ResetDisc() (*ProcessResult, error) {
+	a.cancelTouchup()
+	a.redoStack = nil
+	a.undoStack = nil
 	a.logf("ResetDisc")
 	descreenReset := a.descreenResultImage != nil
-	a.cancelTouchup()
+	a.levelsBaseImage = nil
+	a.descreenBaseImage = nil
+	a.descreenResultImage = nil
 	a.resetDiscFields()
 	a.warpedImage = nil
 	a.levelsBaseImage = nil

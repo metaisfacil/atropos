@@ -39,7 +39,8 @@ export default function ShortcutsPanel({ shortcutsOpen, setShortcutsOpen, mode, 
             </div>
             <div className="caption">Rotate {mode === 'disc' ? '±15°' : '±90°'}</div>
           </div>
-          <div className={cls(canSave)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd></div><div className="caption">Undo</div></div>
+          <div className={cls(imageLoaded)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd></div><div className="caption">Undo</div></div>
+          <div className={cls(imageLoaded)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Y</kbd></div><div className="caption">Redo</div></div>
           <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>O</kbd></div><div className="caption">Load</div></div>
           <div className="shortcut-item"><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>V</kbd></div><div className="caption">Paste image</div></div>
           <div className={cls(canCopySelection)}><div className="keys"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>C</kbd></div><div className="caption">Copy image/selection</div></div>

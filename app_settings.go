@@ -120,6 +120,12 @@ func sanitizeSettings(s AllSettings) AllSettings {
 func (a *App) SaveAllSettings(s AllSettings) error {
 	s = sanitizeSettings(s)
 
+	// Disc parameter edits branch redo; history synchronization supplies the
+	// parameters already restored in the backend and keeps redo intact.
+	if a.discCenterCutout != s.DiscCenterCutout || a.discCutoutPercent != s.DiscCutoutPercent {
+		a.redoStack = nil
+	}
+
 	// Apply backend-relevant fields immediately.
 	a.touchupBackend = s.TouchupBackend
 	a.iopaintURL = s.IOPaintURL
@@ -227,6 +233,7 @@ func (a *App) GetDiscSettings() DiscSettings {
 
 // SetDiscSettings updates the disc mode settings and re-renders any active disc.
 func (a *App) SetDiscSettings(settings DiscSettings) (*ProcessResult, error) {
+	a.redoStack = nil
 	a.discCenterCutout = settings.CenterCutout
 	if settings.CutoutPercent >= 0 && settings.CutoutPercent <= 50 {
 		a.discCutoutPercent = settings.CutoutPercent

@@ -38,6 +38,7 @@ type LineAddRequest struct {
 
 // AddLine records a line for line-based perspective correction.
 func (a *App) AddLine(req LineAddRequest) (*ProcessResult, error) {
+	a.redoStack = nil
 	a.logf("AddLine: (%d,%d)-(%d,%d)", req.X1, req.Y1, req.X2, req.Y2)
 	a.lines = append(a.lines, []image.Point{
 		{X: req.X1, Y: req.Y1},
@@ -163,9 +164,14 @@ func (a *App) ProcessLines() (*ProcessResult, error) {
 
 // ClearLines removes all drawn lines and restores the pre-line image.
 func (a *App) ClearLines() (*ProcessResult, error) {
+	a.cancelTouchup()
+	a.redoStack = nil
+	a.undoStack = nil
 	a.logf("ClearLines")
 	descreenReset := a.descreenResultImage != nil
-	a.cancelTouchup()
+	a.levelsBaseImage = nil
+	a.descreenBaseImage = nil
+	a.descreenResultImage = nil
 	a.lines = nil
 	a.warpedImage = nil
 

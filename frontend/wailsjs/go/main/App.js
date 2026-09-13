@@ -142,6 +142,10 @@ export function RecropImage() {
   return window['go']['main']['App']['RecropImage']();
 }
 
+export function Redo() {
+  return window['go']['main']['App']['Redo']();
+}
+
 export function RenderPreviewViewport(arg1) {
   return window['go']['main']['App']['RenderPreviewViewport'](arg1);
 }

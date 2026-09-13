@@ -191,6 +191,7 @@ func (a *App) CompositorLoadResult(req CompositorLoadResultRequest) (*ImageInfo,
 	a.detectedCorners = nil
 	a.lines = nil
 	a.undoStack = nil
+	a.redoStack = nil
 	a.discCenter = image.Point{}
 	a.discRadius = 0
 	a.rotationAngle = 0

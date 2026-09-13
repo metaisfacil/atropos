@@ -11,6 +11,9 @@ import "fmt"
 // corner dots cannot reappear if the user returns to Corner mode without
 // running detection again.
 func (a *App) GetCleanPreview() (*ProcessResult, error) {
+	a.cancelTouchup()
+	a.redoStack = nil
+	a.undoStack = nil
 	a.logf("GetCleanPreview")
 
 	// Clear in-progress selections; detected corners are preserved so the

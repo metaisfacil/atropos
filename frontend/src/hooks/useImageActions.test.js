@@ -26,6 +26,7 @@ const appMocks = vi.hoisted(() => ({
   SaveImage: vi.fn(),
   RunPostSaveCommand: vi.fn(),
   Undo: vi.fn(),
+  Redo: vi.fn(),
 }))
 
 const runtimeMocks = vi.hoisted(() => ({
@@ -47,7 +48,7 @@ function makeProps() {
     'setDiscCenter', 'setDiscRadius', 'setDiscRotation', 'setDiscBgColor',
     'setNormalRect', 'setNormalCropApplied', 'setCropSkipped', 'setCornersDetected',
     'setDetectedCornerPts', 'setSelectedCornerPts', 'setLines', 'setBlackPoint',
-    'setUseDescreenTool', 'setWhitePoint', 'setUseTouchupTool', 'setUseStraightEdgeTool', 'setDragging',
+    'setFeatherSize', 'syncHistoryDiscSettings', 'setUseDescreenTool', 'setWhitePoint', 'setUseTouchupTool', 'setUseStraightEdgeTool', 'setDragging',
     'setDragStart', 'setDragCurrent', 'setConfirmDialog', 'setTouchupStrokes',
     'setAdjustmentSelectionActive', 'setAdjustmentRect', 'setCloseAfterSave',
     'setPostSaveEnabled', 'setPostSaveCommand', 'setImageMeta', 'setUnsavedChanges',
@@ -246,4 +247,46 @@ describe('Undo state synchronization', () => {
     expect(props.setUnsavedChanges).not.toHaveBeenCalled()
     expect(props.setBlackPoint).not.toHaveBeenCalled()
   })
+})
+
+
+describe('Redo', () => {
+  it.each(['normal', 'disc', 'line', 'corner'])('restores the committed phase in %s mode', async mode => {
+    const props = { ...makeProps(), mode, normalCropApplied: false }
+    appMocks.Redo.mockResolvedValue({ changed: true, descreenReset: true, preview: '/redo', width: 30, height: 20, discRadius: 12, discRotation: 15, historyDiscSettings: { centerCutout: false, cutoutPercent: 9 }, historyFeatherSize: 7 })
+    const { result } = renderHook(() => useImageActions(props))
+    await act(async () => result.current.handleRedo())
+    expect(appMocks.Redo).toHaveBeenCalledOnce()
+    expect(props.setPreview).toHaveBeenCalledWith('/redo')
+    expect(props.setRealImageDims).toHaveBeenCalledWith({ w: 30, h: 20 })
+    if (mode === 'normal') expect(props.setNormalCropApplied).toHaveBeenCalledWith(true)
+    if (mode === 'disc') {
+      expect(props.setDiscActive).toHaveBeenCalledWith(true)
+      expect(props.syncHistoryDiscSettings).toHaveBeenCalledWith({ centerCutout: false, cutoutPercent: 9 })
+      expect(props.setFeatherSize).toHaveBeenCalledWith(7)
+    }
+    if (mode === 'line') expect(props.setLinesProcessed).toHaveBeenCalledWith(true)
+    if (mode === 'corner') expect(props.setCornerState.mock.calls.at(-1)[0]({}).cornerCount).toBe(4)
+  })
+
+  it('serializes undo and redo while a history request is pending', async () => {
+    let finish
+    appMocks.Redo.mockReturnValue(new Promise(resolve => { finish = resolve }))
+    const { result } = renderHook(() => useImageActions(makeProps()))
+    let pending
+    act(() => { pending = result.current.handleRedo() })
+    await act(async () => result.current.handleUndo())
+    expect(appMocks.Undo).not.toHaveBeenCalled()
+    await act(async () => { finish({ message: 'Nothing to redo' }); await pending })
+  })
+})
+
+
+it('resets backend disc history when switching modes after undoing the disc crop', async () => {
+  const props = { ...makeProps(), mode: 'disc', discActive: false }
+  appMocks.ResetDisc.mockResolvedValue({ preview: '/clean', width: 100, height: 80 })
+  appMocks.GetCleanPreview.mockResolvedValue({ preview: '/clean', width: 100, height: 80 })
+  const { result } = renderHook(() => useImageActions(props))
+  await act(async () => result.current.handleModeSwitch('normal'))
+  expect(appMocks.ResetDisc).toHaveBeenCalledOnce()
 })

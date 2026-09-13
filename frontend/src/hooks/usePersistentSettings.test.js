@@ -176,3 +176,15 @@ describe('usePersistentSettings – setters', () => {
     expect(saved.touchupBackend).toBe('patchmatch') // default preserved
   })
 })
+
+
+it('synchronizes history disc controls without triggering a render that clears redo', async () => {
+  vi.clearAllMocks()
+  GetAllSettings.mockReturnValue(new Promise(() => {}))
+  const { result } = renderHook(() => usePersistentSettings({ setPreview: MOCK_SET_PREVIEW }))
+  act(() => result.current.syncHistoryDiscSettings({ centerCutout: false, cutoutPercent: 9 }))
+  expect(result.current.discCenterCutout).toBe(false)
+  expect(result.current.discCutoutPercent).toBe(9)
+  expect(SetDiscSettings).not.toHaveBeenCalled()
+  expect(SaveAllSettings).toHaveBeenCalledWith(expect.objectContaining({ discCenterCutout: false, discCutoutPercent: 9 }))
+})

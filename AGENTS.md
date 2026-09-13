@@ -29,7 +29,7 @@ Understand the image fields before editing anything:
 - `discBaseImage` — deterministic source for disc redraws
 - `discWorkingCrop` — cached subregion used by disc redraws
 - `discNoMaskPreview` — unmasked disc preview used during live drag feedback
-- `undoStack` — capped LIFO undo history
+- `undoStack` / `redoStack` - shared tiled history, capped at 100 total steps and 1024 MiB
 
 ## Mode Model
 
@@ -51,7 +51,7 @@ Mode switching must:
 ### Undo System
 
 3. Forgetting `saveUndo()` before a committing operation makes it non-undoable.
-4. Calling `saveUndo()` inside `SetLevels` floods the undo stack.
+4. Calling `saveUndo()` inside `SetLevels` floods the undo stack. Non-committing edits must still clear redo; mode/document resets clear both stacks.
 
 ### Reset & Load Paths
 

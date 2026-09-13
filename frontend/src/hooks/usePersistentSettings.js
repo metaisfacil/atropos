@@ -103,7 +103,17 @@ export function usePersistentSettings({ setPreview }) {
   }
   const setDiscCutoutPercent = (v) => update('discCutoutPercent', v)
 
+  // History already restored the backend pixels and parameters. Synchronize
+  // controls without SetDiscSettings, which would render and branch history.
+  const syncHistoryDiscSettings = (disc) => {
+    const next = { ...settingsRef.current, discCenterCutout: disc.centerCutout, discCutoutPercent: disc.cutoutPercent }
+    settingsRef.current = next
+    setSettings(next)
+    SaveAllSettings(next).catch(() => {})
+  }
+
   return {
+    syncHistoryDiscSettings,
     touchupBackend:            settings.touchupBackend,
     iopaintURL:                settings.iopaintUrl,
     warpFillMode:              settings.warpFillMode,

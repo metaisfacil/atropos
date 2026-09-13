@@ -134,7 +134,7 @@ originalImage  ── immutable after LoadImage; never modified
 | `discWorkingCropRect` | `image.Rectangle` | Records the rect of `discBaseImage` that `discWorkingCrop` covers (in `discBaseImage` coordinates). Used to detect when a shift has moved the disc outside the working crop. |
 | `discCenterCutout` | `bool` | When true, `redrawDisc` punches a circular hole at the disc centre to expose `bgColor`. Default: `true`. |
 | `discCutoutPercent` | `int` | Diameter of the centre cutout as a percentage of the disc diameter (1–50). Cutout radius = `discRadius * discCutoutPercent / 100`. Default: `11`. |
-| `undoStack` | `[]undoEntry` | LIFO stack capped at `undoLimit` (100), also limited to 1024 MiB of retained history storage. Each entry stores image pixels plus optional rotation metadata (`rotationAngle`), pre-warp flag (`preWarp`), and optional in-progress corner picks (`selectedCorners`) for undoing back into corner-selection phase. |
+| `undoStack` | `[]undoEntry` | Undo stack sharing a 100-step / 1024 MiB budget with `redoStack`. Each entry stores image pixels plus optional rotation metadata (`rotationAngle`), pre-warp flag (`preWarp`), and optional in-progress corner picks (`selectedCorners`) for undoing back into corner-selection phase. |
 
 ### `workingImage()` (in `app_adjust.go`)
 
@@ -155,7 +155,7 @@ Always writes to `warpedImage`. This ensures `SaveImage` always has a result, ev
 
 ### `saveUndo()` (in `app_adjust.go`)
 
-1. Snapshot the working image into immutable 128x128 pixel tiles, sharing byte-identical tiles with the preceding snapshot. Live image buffers never alias history.
+1. Clear redo, then snapshot the working image into immutable 128x128 pixel tiles, sharing byte-identical tiles with the preceding snapshot. Live image buffers never alias history.
 2. Push an `undoEntry` with the tiled image, rotation and post-disc levels metadata, and `preWarp` (true when `warpedImage == nil`). Evict oldest entries until at most 100 steps and 1024 MiB remain, counting shared tiles once. Always keep the newest step even if that scan alone exceeds the budget.
 3. **Clears `levelsBaseImage`, `descreenBaseImage`, and `descreenResultImage`** so the next levels/descreen session snapshots fresh baselines.
 
@@ -221,7 +221,7 @@ LoadImage(req)
          selectedCorners = nil
          detectedCorners = nil
          lines = nil
-         undoStack = nil
+         undoStack = nil; redoStack = nil
          discCenter = zero
          discRadius = 0
          rotationAngle = 0
@@ -621,26 +621,39 @@ AutoContrast()
     return preview + black/white values
 ```
 
-### Undo
+### Undo and redo
 
-```
-Undo()
-    if undoStack empty → "Nothing to undo"
-    entry = pop from undoStack
-    if entry.preWarp:
-        currentImage = entry.image.restore()
-        warpedImage = nil
-        selectedCorners = entry.selectedCorners (if any)
-        clear disc state and adjustment baselines
-    else:
-        warpedImage = entry.image.restore()
-        if entry.rotationAngle != nil: rotationAngle = *entry.rotationAngle
-    return preview
-```
+`Undo()` and `Redo()` use the same `stepHistory` path. Before restoring a
+snapshot, it captures the current state onto the opposite stack. Redo restores
+exact pixels without rerunning the original processing operation. Both directions
+cancel an in-flight touch-up without consuming history on that keypress.
 
-Snapshots are independently restorable; eviction never breaks a delta chain. Popped and evicted slots are cleared so backing arrays cannot retain discarded pixels. Small edits allocate only changed tiles; full-frame changes and dimension changes may require a full snapshot. The budget excludes active images, preview caches, and transient restore allocations. Undo clears levels/descreen sessions, restores disc levels and rotation, and returns DescreenReset, Changed, and a remaining step count. The frontend synchronizes these controls and clears adjustment selections. Empty history and touch-up cancellation do not mark the document modified.
+Each snapshot owns immutable shared tiles plus pre-warp/corner state and disc
+rendering metadata. Disc snapshots include a tiled source image so redoing the
+initial disc crop also restores the source needed for later shifts and rotations.
+Derived disc crop caches and unmasked preview URLs are rebuilt on restoration.
+Levels/descreen sessions are cleared in both directions.
 
-Undo is blocked in the frontend while any drag operation is active (disc shift, rotation, etc.) to prevent undo from firing mid-drag and corrupting disc state.
+Undo and redo share a total cap of 100 steps and 1024 MiB, counting shared tiles
+once across both stacks and disc sources. Eviction removes farthest entries,
+preferring to keep the immediate reverse step, even when that single snapshot
+exceeds the budget. Snapshots are independently restorable; eviction cannot break
+a delta chain. Removed slots are cleared to release their tile references. The
+budget excludes live images, previews, and transient restoration allocations.
+
+A new committing edit clears redo through `saveUndo`. Non-committing levels,
+disc renders, and new backend selections also clear redo. Document loads,
+re-crops, compositor loads, and mode resets clear both stacks so another mode
+cannot restore an incompatible crop. In-progress corner-pick undo retains its
+existing behavior and clears image redo when the selection changes.
+
+Ctrl+Z invokes undo; Ctrl+Y (also Cmd+Y) invokes redo before disc eyedropper
+handling. Editable fields retain native text history. Repeated keydown events
+are suppressed, as are history actions during disc drags or optimistic crops.
+The action hook serializes history requests. It restores crop-phase controls,
+disc geometry/parameters, and adjustment controls; syncing disc settings avoids
+triggering a redraw that would invalidate redo. Empty history and touch-up
+cancellation do not mark the document modified.
 
 ### Dust Removal (`app_dust.go`, `internal/dust/`)
 

@@ -24,7 +24,7 @@ export function useKeyboardShortcuts({
   preview, realImageDims, optimisticCrop, setOptimisticCrop,
   setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setDiscRotation,
   displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, handleLoadImage, handlePasteImage, canSave,
-  normalRect, handleNormalCrop, handleUndo,
+  normalRect, handleNormalCrop, handleUndo, handleRedo,
   unsavedChanges, setUnsavedChanges, confirmClose,
   cornerState, setCornerState, setSelectedCornerPts,
   adjustmentSelectionActive, adjustmentRect, setAdjustmentRect,
@@ -117,6 +117,31 @@ export function useKeyboardShortcuts({
           return
         }
 
+        if ((e.ctrlKey || e.metaKey) && (key === 'z' || key === 'y')) {
+          const active = document.activeElement
+          if (active && (['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable)) return
+          e.preventDefault()
+          if (e.repeat || ctrlDragRef.current !== null || shiftDragRef.current !== null || optimisticCrop) return
+          if (key === 'y') {
+            await handleRedo()
+            return
+          }
+          // In corner mode, undo individual corner clicks before touching the backend undo stack.
+          // The 4th click triggers a warp (which pushes to backend undo), so only intercept 1–3.
+          if (mode === 'corner' && cornerState.cornerCount > 0 && cornerState.cornerCount < 4) {
+            const newCount = cornerState.cornerCount - 1
+            await UndoLastCorner()
+            setCornerState(s => ({ ...s, cornerCount: newCount }))
+            setSelectedCornerPts(prev => prev.slice(0, -1))
+            showStatus(newCount === 0
+              ? 'Corner selection cleared — click to select corners'
+              : `Corner ${newCount} of 4 selected`)
+            return
+          }
+          await handleUndo()
+          return
+        }
+
         if (mode === 'disc' && discActive) {
           const shiftStep = e.shiftKey ? 20 : 5
           // Rotate the visual arrow direction into image space so that
@@ -164,28 +189,6 @@ export function useKeyboardShortcuts({
               return
             }
           }
-        }
-
-        if ((e.ctrlKey || e.metaKey) && key === 'z') {
-          if (e.repeat) return
-          const active = document.activeElement
-          if (active && (['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable)) return
-          if (ctrlDragRef.current !== null || shiftDragRef.current !== null) return
-          e.preventDefault()
-          // In corner mode, undo individual corner clicks before touching the backend undo stack.
-          // The 4th click triggers a warp (which pushes to backend undo), so only intercept 1–3.
-          if (mode === 'corner' && cornerState.cornerCount > 0 && cornerState.cornerCount < 4) {
-            const newCount = cornerState.cornerCount - 1
-            await UndoLastCorner()
-            setCornerState(s => ({ ...s, cornerCount: newCount }))
-            setSelectedCornerPts(prev => prev.slice(0, -1))
-            showStatus(newCount === 0
-              ? 'Corner selection cleared — click to select corners'
-              : `Corner ${newCount} of 4 selected`)
-            return
-          }
-          await handleUndo()
-          return
         }
 
         if ((e.ctrlKey || e.metaKey) && key === 's') {
@@ -291,5 +294,5 @@ export function useKeyboardShortcuts({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, canSave, handleLoadImage, handlePasteImage, cornerState.cornerCount, adjustmentSelectionActive, adjustmentRect, preview, realImageDims, optimisticCrop]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, handleRedo, canSave, handleLoadImage, handlePasteImage, cornerState.cornerCount, adjustmentSelectionActive, adjustmentRect, preview, realImageDims, optimisticCrop]) // eslint-disable-line react-hooks/exhaustive-deps
 }

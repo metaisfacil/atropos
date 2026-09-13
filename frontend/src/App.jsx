@@ -147,6 +147,7 @@ export default function App() {
     iopaintURL, setIopaintURL,
     warpFillMode, setWarpFillMode,
     warpFillColor, setWarpFillColor,
+    syncHistoryDiscSettings,
     discCenterCutout, setDiscCenterCutout,
     discCutoutPercent, setDiscCutoutPercent,
     autoCornerParams, setAutoCornerParams,
@@ -231,6 +232,7 @@ export default function App() {
     flushPendingSave,
     handleModeSwitch,
     handleUndo,
+    handleRedo,
     handleCompositorLoad,
   } = useImageActions({
     mode, loading: busy, imageLoaded, discActive, linesProcessed, normalCropApplied,
@@ -242,6 +244,7 @@ export default function App() {
     setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor,
     setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
     setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
+    setFeatherSize, syncHistoryDiscSettings,
     setUseTouchupTool, setUseDescreenTool, setUseStraightEdgeTool, setDragging, setDragStart, setDragCurrent,
     setConfirmDialog, setTouchupStrokes,
     setAdjustmentSelectionActive, setAdjustmentRect,
@@ -296,7 +299,7 @@ export default function App() {
     setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscBgColor, setDiscRotation,
     displayToImage, showStatus, showError, handleSaveImage, flushPendingSave, handleLoadImage, handlePasteImage,
     canSave: imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive),
-    normalRect, handleNormalCrop, handleUndo,
+    normalRect, handleNormalCrop, handleUndo, handleRedo,
     unsavedChanges, setUnsavedChanges,
     confirmClose: async () => {
       await window.go.main.App.ConfirmClose()

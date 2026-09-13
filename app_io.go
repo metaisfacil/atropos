@@ -37,6 +37,7 @@ func (a *App) resetPipelineState() {
 	a.detectedCorners = nil
 	a.lines = nil
 	a.undoStack = nil
+	a.redoStack = nil
 	a.resetDiscFields()
 }
 

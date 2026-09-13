@@ -24,6 +24,7 @@ import {
   SaveImage,
   RunPostSaveCommand,
   Undo,
+  Redo,
 } from '../../wailsjs/go/main/App'
 
 export function useImageActions({
@@ -33,6 +34,7 @@ export function useImageActions({
   setZoom, setFitWidth, setCornerState, setLinesDone, setLinesProcessed,
   setDiscActive, setDiscNoMaskPreview, setDiscCenter, setDiscRadius, setDiscRotation, setDiscBgColor, setNormalRect, setNormalCropApplied, setCropSkipped, setCornersDetected,
   setDetectedCornerPts, setSelectedCornerPts, setLines, setBlackPoint, setWhitePoint,
+  setFeatherSize, syncHistoryDiscSettings,
   setUseTouchupTool, setUseDescreenTool, setUseStraightEdgeTool, setDragging, setDragStart, setDragCurrent,
   setConfirmDialog, setTouchupStrokes,
   setAdjustmentSelectionActive, setAdjustmentRect,
@@ -585,11 +587,14 @@ export function useImageActions({
   }
 
   // ── Undo ──────────────────────────────────────────────────────────────────
-  const handleUndo = async () => {
+  const historyBusyRef = useRef(false)
+  const handleHistory = async (redo) => {
+    if (historyBusyRef.current) return
+    historyBusyRef.current = true
     setLoading(true)
-    showStatus('Undoing…')
+    showStatus(redo ? 'Redoing...' : 'Undoing...')
     try {
-      const res = await Undo()
+      const res = await (redo ? Redo() : Undo())
       if (res?.preview) setPreview(res.preview)
       if (res?.width && res?.height) setRealImageDims({ w: res.width, h: res.height })
       showStatus(res?.message || '')
@@ -598,7 +603,30 @@ export function useImageActions({
         setBlackPoint(res.black ?? 0)
         setWhitePoint(res.white ?? 255)
         setAdjustmentRect(null)
-        if (mode === 'disc') setDiscRotation(res.discRotation ?? 0)
+        if (mode === 'disc') {
+          if (res.historyDiscSettings) {
+            syncHistoryDiscSettings(res.historyDiscSettings)
+            setFeatherSize(res.historyFeatherSize ?? 0)
+          }
+          setDiscRotation(res.discRotation ?? 0)
+          setDiscCenter({ x: res.discCenterX ?? 0, y: res.discCenterY ?? 0 })
+          setDiscRadius(res.discRadius ?? 0)
+          setDiscNoMaskPreview(res.unmaskedPreview || null)
+          if (res.discRadius > 0) setDiscBgColor({ r: res.discBgR ?? 0, g: res.discBgG ?? 0, b: res.discBgB ?? 0 })
+        }
+        if (redo && !res.uncropped) {
+          setCropSkipped(false)
+          if (mode === 'corner') {
+            setCornerState(s => ({ ...s, cornerCount: 4 }))
+            setSelectedCornerPts([])
+            setDetectedCornerPts([])
+          } else if (mode === 'disc') setDiscActive(true)
+          else if (mode === 'line') setLinesProcessed(true)
+          else if (mode === 'normal') {
+            setNormalCropApplied(true)
+            setNormalRect(null)
+          }
+        }
       }
       if (res?.uncropped) {
         // The undo took us back past the initial crop — return to the cropping
@@ -639,12 +667,16 @@ export function useImageActions({
       }
       if (res?.changed) markUnsavedChanges()
     } catch (err) {
-      console.error('Undo error:', err)
+      console.error('History error:', err)
       showError(err)
     } finally {
+      historyBusyRef.current = false
       setLoading(false)
     }
   }
+
+  const handleUndo = () => handleHistory(false)
+  const handleRedo = () => handleHistory(true)
 
   // ── Save ──────────────────────────────────────────────────────────────────
   // Core save implementation. Called by handleSaveImage (direct) and
@@ -824,7 +856,7 @@ export function useImageActions({
           setSelectedCornerPts([])
           setCropSkipped(false)
           leavePreview = await ResetCorners()
-        } else if (mode === 'disc' && discActive) {
+        } else if (mode === 'disc') {
           await ResetDisc(); setDiscActive(false); setCropSkipped(false)
         } else if (mode === 'line') {
           await ClearLines()
@@ -924,5 +956,6 @@ export function useImageActions({
     flushPendingSave,
     handleModeSwitch,
     handleUndo,
+    handleRedo,
   }
 }

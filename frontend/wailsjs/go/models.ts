@@ -359,11 +359,11 @@ export namespace main {
 	}
 	export class FeatherRadiusRequest {
 	    radius: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new FeatherRadiusRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.radius = source["radius"];
@@ -586,6 +586,8 @@ export namespace main {
 	    }
 	}
 	export class ProcessResult {
+	    historyDiscSettings?: DiscSettings;
+	    historyFeatherSize?: number;
 	    preview: string;
 	    message: string;
 	    width: number;
@@ -612,6 +614,8 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.historyDiscSettings = this.convertValues(source["historyDiscSettings"], DiscSettings);
+	        this.historyFeatherSize = source["historyFeatherSize"];
 	        this.preview = source["preview"];
 	        this.message = source["message"];
 	        this.width = source["width"];
@@ -844,3 +848,4 @@ export namespace main {
 	}
 
 }
+

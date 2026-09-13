@@ -51,6 +51,7 @@ function makeProps(overrides = {}) {
     normalRect: null,
     handleNormalCrop: vi.fn(),
     handleUndo: vi.fn(),
+    handleRedo: vi.fn(),
     unsavedChanges: false,
     setUnsavedChanges: vi.fn(),
     confirmClose: vi.fn(),
@@ -298,5 +299,40 @@ describe('layout-independent spatial shortcuts', () => {
     act(() => window.dispatchEvent(event))
 
     expect(appMocks.Crop).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('Ctrl+Y redo', () => {
+  it('takes precedence over the disc eyedropper', async () => {
+    const props = makeProps({ mode: 'disc', discActive: true })
+    renderHook(() => useKeyboardShortcuts(props))
+    const event = new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, cancelable: true })
+    await act(async () => window.dispatchEvent(event))
+    expect(event.defaultPrevented).toBe(true)
+    expect(props.handleRedo).toHaveBeenCalledOnce()
+    expect(appMocks.GetPixelColor).not.toHaveBeenCalled()
+  })
+
+  it.each([{ repeat: true }, { dragging: true }])('suppresses browser behavior without redoing for %o', async flags => {
+    const props = makeProps({ ctrlDragRef: { current: flags.dragging ? {} : null } })
+    renderHook(() => useKeyboardShortcuts(props))
+    const event = new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, repeat: !!flags.repeat, cancelable: true })
+    await act(async () => window.dispatchEvent(event))
+    expect(event.defaultPrevented).toBe(true)
+    expect(props.handleRedo).not.toHaveBeenCalled()
+  })
+
+  it('leaves redo in text inputs to the browser', async () => {
+    const props = makeProps()
+    renderHook(() => useKeyboardShortcuts(props))
+    const input = document.createElement('input')
+    document.body.append(input)
+    input.focus()
+    const event = new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, cancelable: true, bubbles: true })
+    await act(async () => input.dispatchEvent(event))
+    expect(event.defaultPrevented).toBe(false)
+    expect(props.handleRedo).not.toHaveBeenCalled()
+    input.remove()
   })
 })

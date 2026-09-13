@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"image"
+	"image/color"
 )
 
 const (
@@ -17,6 +18,47 @@ type undoTile struct{ pixels []byte }
 type undoImage struct {
 	rect  image.Rectangle
 	tiles []*undoTile
+}
+
+// Disc rendering needs its source as well as the visible result when redo
+// crosses the initial crop. Cache rasters are rebuilt, never kept in history.
+type historyDisc struct {
+	base            *undoImage
+	center          image.Point
+	radius, feather int
+	background      color.NRGBA
+	cutout          bool
+	cutoutPercent   int
+}
+
+func (a *App) captureHistory(previous undoEntry) undoEntry {
+	angle := a.rotationAngle
+	entry := undoEntry{image: snapshotUndoImage(a.workingImage(), previous.image),
+		preWarp: a.warpedImage == nil, rotationAngle: &angle,
+		postDiscBlack: a.postDiscBlack, postDiscWhite: a.postDiscWhite,
+		selectedCorners: append([]image.Point(nil), a.selectedCorners...)}
+	if a.discRadius > 0 {
+		base := previous.image
+		if previous.disc != nil {
+			base = previous.disc.base
+		}
+		entry.disc = &historyDisc{base: snapshotUndoImage(a.discBaseImage, base),
+			center: a.discCenter, radius: a.discRadius, feather: a.featherSize,
+			background: a.bgColor, cutout: a.discCenterCutout, cutoutPercent: a.discCutoutPercent}
+	}
+	return entry
+}
+
+func (a *App) restoreHistoryDisc(disc *historyDisc, base *image.NRGBA, unmasked string) {
+	a.discWorkingCrop = nil
+	a.discWorkingCropRect = image.Rectangle{}
+	a.discBaseImage, a.discNoMaskPreview = base, unmasked
+	a.discCenter, a.discRadius = image.Point{}, 0
+	if disc == nil {
+		return
+	}
+	a.discCenter, a.discRadius, a.featherSize = disc.center, disc.radius, disc.feather
+	a.bgColor, a.discCenterCutout, a.discCutoutPercent = disc.background, disc.cutout, disc.cutoutPercent
 }
 
 func snapshotUndoImage(img *image.NRGBA, previous *undoImage) *undoImage {
@@ -83,16 +125,24 @@ func (s *undoImage) restore() *image.NRGBA {
 func (a *App) undoBytes() int64 {
 	seen := make(map[*undoTile]bool)
 	var size int64
-	for _, entry := range a.undoStack {
-		size += 256
-		if entry.image == nil {
-			continue
-		}
-		size += int64(cap(entry.image.tiles)) * 8
-		for _, tile := range entry.image.tiles {
-			if !seen[tile] {
-				seen[tile] = true
-				size += int64(len(tile.pixels)) + 32
+	for _, stack := range [][]undoEntry{a.undoStack, a.redoStack} {
+		for _, entry := range stack {
+			size += 256
+			images := []*undoImage{entry.image}
+			if entry.disc != nil {
+				images = append(images, entry.disc.base)
+			}
+			for _, img := range images {
+				if img == nil {
+					continue
+				}
+				size += int64(cap(img.tiles)) * 8
+				for _, tile := range img.tiles {
+					if !seen[tile] {
+						seen[tile] = true
+						size += int64(len(tile.pixels)) + 32
+					}
+				}
 			}
 		}
 	}
@@ -100,6 +150,10 @@ func (a *App) undoBytes() int64 {
 }
 
 func (a *App) trimUndo() {
+	a.trimHistory(false)
+}
+
+func (a *App) trimHistory(keepRedo bool) {
 	limit := a.undoLimit
 	if limit <= 0 {
 		limit = defaultUndoLimit
@@ -108,9 +162,20 @@ func (a *App) trimUndo() {
 	if budget <= 0 {
 		budget = defaultUndoBytes
 	}
-	// Always retain the most recent undo, even for a scan larger than budget.
-	for len(a.undoStack) > 1 && (len(a.undoStack) > limit || a.undoBytes() > budget) {
-		a.undoStack[0] = undoEntry{}
-		a.undoStack = a.undoStack[1:]
+	// Keep the closest return step even if one scan alone exceeds the budget.
+	for len(a.undoStack)+len(a.redoStack) > 1 && (len(a.undoStack)+len(a.redoStack) > limit || a.undoBytes() > budget) {
+		drop := &a.undoStack
+		if !keepRedo {
+			drop = &a.redoStack
+		}
+		if len(*drop) == 0 {
+			if keepRedo {
+				drop = &a.redoStack
+			} else {
+				drop = &a.undoStack
+			}
+		}
+		(*drop)[0] = undoEntry{}
+		*drop = (*drop)[1:]
 	}
 }

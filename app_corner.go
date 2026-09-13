@@ -687,6 +687,7 @@ func cornerSnapRadius(w, h int) float64 {
 // After 4 corners the perspective warp is performed automatically.
 // For clicks 1–3 no preview is returned — the frontend renders dots via SVG.
 func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
+	a.redoStack = nil
 	a.logf("ClickCorner: x=%d y=%d custom=%v", req.X, req.Y, req.Custom)
 	if !a.imageLoaded {
 		return nil, fmt.Errorf("no image loaded")
@@ -792,6 +793,7 @@ func (a *App) RestoreCornerOverlay(req RestoreCornerOverlayRequest) (*ProcessRes
 // in-progress selection without resetting the full state. It is a no-op if
 // no corners are currently selected. Returns the number of corners remaining.
 func (a *App) UndoLastCorner() int {
+	a.redoStack = nil
 	if len(a.selectedCorners) > 0 {
 		a.selectedCorners = a.selectedCorners[:len(a.selectedCorners)-1]
 	}
@@ -802,9 +804,14 @@ func (a *App) UndoLastCorner() int {
 // ResetCorners clears any in-progress corner selection. The detected corners
 // are preserved and returned so the frontend can restore its SVG overlay.
 func (a *App) ResetCorners() (*ProcessResult, error) {
+	a.cancelTouchup()
+	a.redoStack = nil
+	a.undoStack = nil
 	a.logf("ResetCorners")
 	descreenReset := a.descreenResultImage != nil
-	a.cancelTouchup()
+	a.levelsBaseImage = nil
+	a.descreenBaseImage = nil
+	a.descreenResultImage = nil
 	a.selectedCorners = nil
 	a.warpedImage = nil
 
@@ -826,6 +833,7 @@ func (a *App) ResetCorners() (*ProcessResult, error) {
 // SkipCrop sets warpedImage to the current image so that adjustments can be
 // saved without performing a perspective crop.
 func (a *App) SkipCrop() (*ProcessResult, error) {
+	a.redoStack = nil
 	a.logf("SkipCrop")
 	if a.currentImage == nil {
 		return nil, fmt.Errorf("no image loaded")

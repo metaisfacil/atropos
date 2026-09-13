@@ -18,6 +18,7 @@ import (
 // initial cropping phase rather than a post-warp editing state.
 type undoEntry struct {
 	image           *undoImage
+	disc            *historyDisc
 	rotationAngle   *float64
 	preWarp         bool
 	postDiscBlack   int
@@ -85,14 +86,12 @@ func (a *App) setWorkingImage(img *image.NRGBA) {
 // The entry is tagged preWarp=true when warpedImage is nil at save time so
 // that Undo() can restore the pre-crop state correctly.
 func (a *App) saveUndo() {
-	var previous *undoImage
+	a.redoStack = nil
+	var previous undoEntry
 	if n := len(a.undoStack); n > 0 {
-		previous = a.undoStack[n-1].image
+		previous = a.undoStack[n-1]
 	}
-	img := snapshotUndoImage(a.workingImage(), previous)
-	angle := a.rotationAngle
-	a.undoStack = append(a.undoStack, undoEntry{image: img, preWarp: a.warpedImage == nil,
-		rotationAngle: &angle, postDiscBlack: a.postDiscBlack, postDiscWhite: a.postDiscWhite})
+	a.undoStack = append(a.undoStack, a.captureHistory(previous))
 	a.trimUndo()
 	// Any committing operation invalidates both adjustment baselines so that
 	// the next SetLevels / Descreen call re-snapshots from the new working image.
@@ -116,7 +115,12 @@ func (a *App) saveDiscRotationUndo() {
 // currentImage is set from the entry and warpedImage is cleared to nil.  Any
 // disc state accumulated since then is also cleared.  The response carries
 // Uncropped=true so the frontend can return to the initial cropping UI.
-func (a *App) Undo() (*ProcessResult, error) {
+func (a *App) Undo() (*ProcessResult, error) { return a.stepHistory(false) }
+
+// Redo restores the last undone result without re-running image processing.
+func (a *App) Redo() (*ProcessResult, error) { return a.stepHistory(true) }
+
+func (a *App) stepHistory(redo bool) (*ProcessResult, error) {
 	// An in-flight touch-up has not entered history yet. Cancel it and leave
 	// the existing stack alone; otherwise Undo could pop the preceding edit and
 	// the worker could later push a snapshot of that wrong state.
@@ -139,15 +143,39 @@ func (a *App) Undo() (*ProcessResult, error) {
 		}, nil
 	}
 
-	a.logf("Undo: stack depth=%d", len(a.undoStack))
-	if len(a.undoStack) == 0 {
-		a.logf("Undo: nothing to undo")
-		return &ProcessResult{Message: "Nothing to undo"}, nil
+	from, to := &a.undoStack, &a.redoStack
+	action, completed := "undo", "Undone"
+	if redo {
+		from, to = &a.redoStack, &a.undoStack
+		action, completed = "redo", "Redone"
 	}
-	entry := a.undoStack[len(a.undoStack)-1]
-	a.undoStack[len(a.undoStack)-1] = undoEntry{}
-	a.undoStack = a.undoStack[:len(a.undoStack)-1]
+	if len(*from) == 0 {
+		return &ProcessResult{Message: "Nothing to " + action}, nil
+	}
+	entry := (*from)[len(*from)-1]
 	restored := entry.image.restore()
+	preview, err := a.imagePreviewURL(restored)
+	if err != nil {
+		return nil, err
+	}
+	// Prepare both directions before mutating the stacks or document.
+	var discBase *image.NRGBA
+	var unmasked string
+	if entry.disc != nil {
+		discBase = entry.disc.base.restore()
+		if discBase != nil {
+			unmasked, err = a.imagePreviewURL(discBase)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	inverse := a.captureHistory(entry)
+	(*from)[len(*from)-1] = undoEntry{}
+	*from = (*from)[:len(*from)-1]
+	*to = append(*to, inverse)
+	a.trimHistory(!redo)
+
 	a.levelsBaseImage = nil
 	a.levelsSelection = adjustmentSelectionKey{}
 	a.descreenSelection = adjustmentSelectionKey{}
@@ -192,12 +220,9 @@ func (a *App) Undo() (*ProcessResult, error) {
 		a.descreenResultImage = nil
 	}
 
-	img := a.workingImage()
-	preview, err := a.imagePreviewURL(img)
-	if err != nil {
-		return nil, err
-	}
-	b := img.Bounds()
+	a.selectedCorners = append([]image.Point(nil), entry.selectedCorners...)
+	a.restoreHistoryDisc(entry.disc, discBase, unmasked)
+	b := restored.Bounds()
 	res := &ProcessResult{
 		Preview:       preview,
 		Width:         b.Dx(),
@@ -206,11 +231,16 @@ func (a *App) Undo() (*ProcessResult, error) {
 		DescreenReset: true,
 		Changed:       true,
 		White:         255,
-		Message:       fmt.Sprintf("Undone (%d steps remaining)", len(a.undoStack)),
+		Message:       fmt.Sprintf("%s (%d %s steps remaining)", completed, len(*from), action),
 	}
 	if a.discRadius > 0 {
 		res.Black, res.White = a.postDiscBlack, a.postDiscWhite
 		res.DiscRotation = a.rotationAngle
+		res.HistoryDiscSettings = &DiscSettings{CenterCutout: a.discCenterCutout, CutoutPercent: a.discCutoutPercent}
+		res.HistoryFeatherSize = a.featherSize
+		res.DiscCenterX, res.DiscCenterY, res.DiscRadius = a.discCenter.X, a.discCenter.Y, a.discRadius
+		res.UnmaskedPreview = a.discNoMaskPreview
+		res.DiscBgR, res.DiscBgG, res.DiscBgB = int(a.bgColor.R), int(a.bgColor.G), int(a.bgColor.B)
 	}
 	if entry.preWarp {
 		if len(a.detectedCorners) > 0 {
@@ -220,7 +250,7 @@ func (a *App) Undo() (*ProcessResult, error) {
 			res.SelectedCorners = a.selectedCorners
 			res.Message = fmt.Sprintf("Corner %d of 4 selected", len(a.selectedCorners))
 		} else {
-			res.Message = "Crop undone — click 4 corners"
+			res.Message = completed + " - ready to crop"
 		}
 	}
 	return res, nil
@@ -632,6 +662,8 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	a.redoStack = nil
 
 	// Snapshot the base on first touch; reuse on every subsequent drag.
 	if a.levelsBaseImage == nil || a.levelsSelection != selectionKey {
