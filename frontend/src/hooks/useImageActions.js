@@ -90,7 +90,14 @@ export function useImageActions({
   // Loads share the mode-reset queue: overlapping drops must not make the
   // backend reject the newer load while the frontend ignores the older one.
   const queueLoad = (generation, request) => {
-    const task = () => transitionRef.current === generation ? request() : null
+    const task = async () => {
+      if (transitionRef.current !== generation) return null
+      const result = await request()
+      // A successful request has already replaced the backend document. Publish
+      // it before the next queued request, even if that next request may fail.
+      presentLoadedImage(result)
+      return result
+    }
     const pending = modeQueueRef.current.then(task, task)
     modeQueueRef.current = pending.then(() => {}, () => {})
     return pending
@@ -171,8 +178,7 @@ export function useImageActions({
   }
 
   // ── Core image result applier (shared for LoadImage/LoadImageBytes) ─
-  const applyLoadedImage = async (result, autoDetect = true, generation = transitionRef.current) => {
-    showStatus(`Loaded: ${result.width}x${result.height}`)
+  const presentLoadedImage = (result) => {
     setPreview(result.preview)
     setImageLoaded(true)
     setRealImageDims({ w: result.width, h: result.height })
@@ -185,8 +191,13 @@ export function useImageActions({
 
     suggestedCornerParamsRef.current = result.suggestedCornerParams || {}
 
-    setLoadingFull(false)
     clearUnsavedChanges()
+
+  }
+
+  const applyLoadedImage = async (result, autoDetect = true, generation = transitionRef.current) => {
+    showStatus(`Loaded: ${result.width}x${result.height}`)
+    setLoadingFull(false)
 
     if (autoDetect && modeRef.current === 'corner') {
       await runDetectCorners(autoCornerParams ? suggestedCornerParamsRef.current : {})

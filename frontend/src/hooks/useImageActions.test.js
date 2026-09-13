@@ -356,7 +356,7 @@ describe('State transition ownership', () => {
 })
 
 
-it('queues overlapping drops and presents only the last loaded image', async () => {
+it('queues overlapping drops and keeps the presented document synchronized', async () => {
   let firstResolve, secondResolve
   appMocks.LoadImage.mockImplementationOnce(() => new Promise(resolve => { firstResolve = resolve }))
     .mockImplementationOnce(() => new Promise(resolve => { secondResolve = resolve }))
@@ -370,8 +370,29 @@ it('queues overlapping drops and presents only the last loaded image', async () 
   props.setLoading.mockClear()
   await act(async () => { firstResolve({ preview: '/first', width: 10, height: 10 }); await first })
   expect(appMocks.LoadImage).toHaveBeenCalledTimes(2)
-  expect(props.setPreview).not.toHaveBeenCalledWith('/first')
+  expect(props.setPreview).toHaveBeenLastCalledWith('/first')
   expect(props.setLoading).not.toHaveBeenCalledWith(false)
   await act(async () => { secondResolve({ preview: '/second', width: 20, height: 20 }); await second })
   expect(props.setPreview).toHaveBeenLastCalledWith('/second')
+})
+
+
+it('retains the successful document when a newer queued load fails', async () => {
+  let finishFirst
+  appMocks.LoadImage.mockImplementationOnce(() => new Promise(resolve => { finishFirst = resolve }))
+    .mockRejectedValueOnce(new Error('Cannot decode second image'))
+  const props = makeProps()
+  renderHook(() => useImageActions(props))
+  const drop = runtimeMocks.OnFileDrop.mock.calls.at(-1)[0]
+  let first, second
+  await act(async () => { first = drop(0, 0, ['first.png']) })
+  await act(async () => { second = drop(0, 0, ['invalid.png']) })
+  await act(async () => { finishFirst({ preview: '/first', width: 20, height: 30, format: 'PNG' }); await first; await second })
+  expect(props.setPreview).toHaveBeenLastCalledWith('/first')
+  expect(props.setRealImageDims).toHaveBeenLastCalledWith({ w: 20, h: 30 })
+  expect(props.setImageMeta).toHaveBeenLastCalledWith({ format: 'PNG', dpiX: 0, dpiY: 0 })
+  expect(props.setNormalCropApplied).toHaveBeenLastCalledWith(false)
+  expect(props.setUnsavedChanges).toHaveBeenLastCalledWith(false)
+  expect(props.setLoading).toHaveBeenLastCalledWith(false)
+  expect(props.showError).toHaveBeenCalled()
 })

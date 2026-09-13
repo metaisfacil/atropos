@@ -1274,3 +1274,8 @@ rather than accumulated offsets, so repeated crops and history traversal remain
 consistent; invalid directions and one-pixel no-ops do not consume history.
 Levels changes, disc redraws, and Skip Crop actually clear invalidated descreen
 sessions as well as reporting `DescreenReset`.
+
+Successful queued loads publish document state before the next load starts, even
+when superseded. If a later load fails, the frontend retains the last successful
+backend document; stale loads do not finish a newer request's busy state or start
+auto-detection.
