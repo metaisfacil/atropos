@@ -935,8 +935,16 @@ export function useMouseHandlers({
 
     if (mode === 'line' && !linesProcessed) {
       // Use the image-space start captured at mousedown (stable across zoom changes).
-      const start = lineStartImgRef.current || displayToImage(dragStart.x, dragStart.y)
+      // A missing start means this shared drag began under another tool (for
+      // example Touch-up immediately before Re-crop reset the tool state).
+      // Never reinterpret that gesture as a line on mouseup.
+      const start = lineStartImgRef.current
       lineStartImgRef.current = null
+      if (!start) {
+        setLineDragKind('none')
+        setDragStart(null); setDragCurrent(null)
+        return
+      }
       const end   = displayToImage(pos.x, pos.y)
       const dx = end.x - start.x; const dy = end.y - start.y
       if (Math.hypot(dx, dy) < 5) { setLineDragKind('none'); return }

@@ -79,6 +79,9 @@ export function useImageActions({
     setTouchupStrokes([])
     setUseTouchupTool(false)
     setUseStraightEdgeTool(false)
+    setDragging(false)
+    setDragStart(null)
+    setDragCurrent(null)
     setAdjustmentSelectionActive(false)
     setAdjustmentRect(null)
     touchupDraggingRef.current = false
@@ -431,6 +434,15 @@ export function useImageActions({
       message: 'Re-crop will use the current output as a new source image, resetting all crop and adjustment state. Continue?',
       onConfirm: async () => {
         CancelTouchup()
+        // End transient pointer ownership before waiting for the backend. In
+        // particular, a touch-up drag must not survive until Lines is reset to
+        // its pre-crop state and then be completed as a line gesture.
+        setTouchupStrokes([])
+        setUseTouchupTool(false)
+        touchupDraggingRef.current = false
+        setDragging(false)
+        setDragStart(null)
+        setDragCurrent(null)
         setConfirmDialog(null)
         setLoading(true)
         // Re-crop promotes the current output to a fresh source image. Reset

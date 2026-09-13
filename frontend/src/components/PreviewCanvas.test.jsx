@@ -5,6 +5,7 @@ import {
   croppedRasterDrawRect,
   optimisticCropSourceRect,
   shouldDrawDiscCropGuide,
+  shouldDrawLineGuide,
   sourceRectContains,
 } from './PreviewCanvas'
 
@@ -163,5 +164,25 @@ describe('shouldDrawDiscCropGuide', () => {
       discActive: true,
       adjustmentSelectionActive: true,
     })).toBe(false)
+  })
+})
+
+describe('shouldDrawLineGuide', () => {
+  const lineDrag = {
+    mode: 'line',
+    lineDragKind: 'draw',
+    dragging: true,
+    dragStart: { x: 10, y: 20 },
+    dragCurrent: { x: 30, y: 40 },
+    useTouchupTool: false,
+  }
+
+  it('draws only a gesture that Lines owns', () => {
+    expect(shouldDrawLineGuide(lineDrag)).toBe(true)
+    expect(shouldDrawLineGuide({ ...lineDrag, lineDragKind: 'none' })).toBe(false)
+  })
+
+  it('suppresses the line guide while Touch-up owns the drag', () => {
+    expect(shouldDrawLineGuide({ ...lineDrag, useTouchupTool: true })).toBe(false)
   })
 })

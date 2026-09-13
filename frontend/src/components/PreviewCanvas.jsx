@@ -423,6 +423,15 @@ export function shouldDrawDiscCropGuide(visual, ctrlDragActive = false, shiftDra
   )
 }
 
+export function shouldDrawLineGuide(visual) {
+  return Boolean(
+    visual?.mode === 'line' &&
+    !visual.useTouchupTool &&
+    visual.lineDragKind === 'draw' &&
+    visual.dragging && visual.dragStart && visual.dragCurrent
+  )
+}
+
 function drawVisualGuides(ctx, visual, layout, displayToImage, lineStartImgRef, ctrlDragRef, shiftDragRef) {
   if (!visual || !validDims(visual.realImageDims)) return
   const dims = visual.realImageDims
@@ -572,7 +581,7 @@ function drawVisualGuides(ctx, visual, layout, displayToImage, lineStartImgRef, 
       drawCircle(ctx, b.x, b.y, 6 * imageScale, '#00ff00', '#0b1a0b', 1.5)
     }
 
-    if (visual.dragging && visual.dragStart && visual.dragCurrent && visual.lineDragKind !== 'edit') {
+    if (shouldDrawLineGuide(visual)) {
       const startImage = lineStartImgRef?.current || displayToImage?.(visual.dragStart.x, visual.dragStart.y)
       const endImage = displayToImage?.(visual.dragCurrent.x, visual.dragCurrent.y)
       if (startImage && endImage) {

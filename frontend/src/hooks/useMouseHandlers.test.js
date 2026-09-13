@@ -2,7 +2,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useMouseHandlers } from './useMouseHandlers'
-import { DrawDisc } from '../../wailsjs/go/main/App'
+import { AddLine, DrawDisc } from '../../wailsjs/go/main/App'
 
 vi.mock('../../wailsjs/go/main/App', () => ({
   ClickCorner: vi.fn(),
@@ -219,6 +219,45 @@ describe('touch-up brush resize gesture', () => {
     expect(args.touchupDraggingRef.current).toBe(true)
     expect(args.setTouchupStrokes).toHaveBeenCalledWith([{ x: 200, y: 200 }])
     expect(args.setBrushSize).not.toHaveBeenCalled()
+  })
+})
+
+describe('pointer tool ownership', () => {
+  it('does not reinterpret a touch-up drag as a line after tool state resets', async () => {
+    const args = makeArgs({ mode: 'line' })
+    const { result, rerender, unmount } = renderHook(currentArgs => useMouseHandlers(currentArgs), {
+      initialProps: args,
+    })
+    unmounts.push(unmount)
+
+    act(() => {
+      result.current.handleMouseDown({
+        target: args.imgRef.current,
+        button: 0,
+        clientX: 110,
+        clientY: 120,
+        preventDefault: vi.fn(),
+      })
+    })
+
+    args.touchupDraggingRef.current = false
+    rerender({
+      ...args,
+      useTouchupTool: false,
+      dragging: true,
+      dragStart: { x: 100, y: 100 },
+      dragCurrent: { x: 180, y: 160 },
+    })
+
+    await act(async () => {
+      await result.current.handleMouseUp({
+        target: args.imgRef.current,
+        clientX: 210,
+        clientY: 170,
+      })
+    })
+
+    expect(AddLine).not.toHaveBeenCalled()
   })
 })
 

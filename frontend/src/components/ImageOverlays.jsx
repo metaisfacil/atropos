@@ -101,7 +101,7 @@ export default function ImageOverlays({
       {adjustmentSelectionActive && adjustmentRect && !useTouchupTool && (
         <RectangleHitTargets rect={adjustmentRect} dims={realImageDims} dataAttribute="data-adjustment-handle" />
       )}
-      {mode === 'line' && (
+      {mode === 'line' && !useTouchupTool && (
         <LineHitTargets lines={lines} dims={realImageDims} />
       )}
     </div>

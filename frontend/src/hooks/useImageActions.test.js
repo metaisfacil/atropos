@@ -106,6 +106,39 @@ describe('Re-crop viewport reset', () => {
     expect(props.setFitWidth).not.toHaveBeenCalled()
     expect(props.setPreview).toHaveBeenCalledWith('/__atropos/preview/session-2/1.jpg')
   })
+
+  it('ends touch-up pointer state before starting the backend re-crop', async () => {
+    let resolveRecrop
+    appMocks.RecropImage.mockReturnValue(new Promise(resolve => { resolveRecrop = resolve }))
+    const props = makeProps()
+    props.mode = 'line'
+    props.linesProcessed = true
+    props.touchupDraggingRef.current = true
+    const { result } = renderHook(() => useImageActions(props))
+
+    await waitFor(() => expect(appMocks.GetLaunchArgs).toHaveBeenCalled())
+    act(() => result.current.handleRecrop())
+    const dialog = props.setConfirmDialog.mock.calls.at(-1)[0]
+
+    let confirmation
+    act(() => { confirmation = dialog.onConfirm() })
+
+    expect(appMocks.RecropImage).toHaveBeenCalledOnce()
+    expect(props.touchupDraggingRef.current).toBe(false)
+    expect(props.setUseTouchupTool).toHaveBeenCalledWith(false)
+    expect(props.setTouchupStrokes).toHaveBeenCalledWith([])
+    expect(props.setDragging).toHaveBeenCalledWith(false)
+    expect(props.setDragStart).toHaveBeenCalledWith(null)
+    expect(props.setDragCurrent).toHaveBeenCalledWith(null)
+    expect(props.setUseTouchupTool.mock.invocationCallOrder[0]).toBeLessThan(appMocks.RecropImage.mock.invocationCallOrder[0])
+
+    resolveRecrop({
+      preview: '/__atropos/preview/session-2/1.jpg',
+      width: 2400,
+      height: 1600,
+    })
+    await act(async () => confirmation)
+  })
 })
 
 describe('Manual corner parameters', () => {
