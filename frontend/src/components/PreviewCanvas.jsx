@@ -432,7 +432,7 @@ export function shouldDrawLineGuide(visual) {
   )
 }
 
-function drawVisualGuides(ctx, visual, layout, displayToImage, lineStartImgRef, ctrlDragRef, shiftDragRef) {
+function drawVisualGuides(ctx, visual, layout, displayToImage, lineStartImgRef, ctrlDragRef, shiftDragRef, touchupCursor) {
   if (!visual || !validDims(visual.realImageDims)) return
   const dims = visual.realImageDims
   const imageScale = layout.stageWidth / dims.w
@@ -470,8 +470,8 @@ function drawVisualGuides(ctx, visual, layout, displayToImage, lineStartImgRef, 
     }
   }
 
-  if (visual.useTouchupTool && visual.touchupCursor) {
-    const p = toCanvas(visual.touchupCursor)
+  if (visual.useTouchupTool && touchupCursor) {
+    const p = toCanvas(touchupCursor)
     const radius = (visual.brushSize || 1) * imageScale / 2
 
     // Photoshop-style brush cursor: a high-contrast double ring stays legible
@@ -479,7 +479,7 @@ function drawVisualGuides(ctx, visual, layout, displayToImage, lineStartImgRef, 
     drawCircle(ctx, p.x, p.y, radius, null, 'rgba(0,0,0,0.78)', 3)
     drawCircle(ctx, p.x, p.y, radius, null, 'rgba(255,255,255,0.95)', 1)
 
-    if (visual.touchupCursor.resizing) {
+    if (touchupCursor.resizing) {
       const label = `${Math.round(visual.brushSize || 1)} px`
       ctx.save()
       ctx.font = '12px sans-serif'
@@ -614,6 +614,7 @@ export default function PreviewCanvas({
   onPresented,
   optimisticCrop,
   visual,
+  touchupCursor,
   discLiveActive,
   discLiveTransform,
   ctrlDragRef,
@@ -673,6 +674,7 @@ export default function PreviewCanvas({
     imageDims,
     optimisticCrop,
     visual,
+    touchupCursor,
     discLiveActive,
     discLiveTransform,
     ctrlDragRef,
@@ -805,6 +807,7 @@ export default function PreviewCanvas({
         props.lineStartImgRef,
         props.ctrlDragRef,
         props.shiftDragRef,
+        props.touchupCursor,
       )
     })
   }, [scrollRef])
@@ -1060,9 +1063,12 @@ export default function PreviewCanvas({
   }, [source, imageDims?.w, imageDims?.h, scheduleDraw, scheduleRequest])
 
   useEffect(() => {
+    // The pointer is live even while revision-bound guides/metadata are held
+    // for an incoming raster. Its movement must schedule its own redraw.
     scheduleDraw()
   }, [
     visual,
+    touchupCursor,
     discLiveActive,
     discLiveTransform,
     optimisticCrop,

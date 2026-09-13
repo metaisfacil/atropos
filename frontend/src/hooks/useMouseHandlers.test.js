@@ -118,6 +118,33 @@ function makeArgs(overrides = {}) {
   }
 }
 
+describe('navigation while processing', () => {
+  it('allows space-drag panning while blocking new brush strokes', async () => {
+    const args = makeArgs({ loading: true, spaceDownRef: { current: true } })
+    args.canvasRef.current.scrollLeft = 200
+    args.canvasRef.current.scrollTop = 150
+    const { result, unmount } = renderHook(() => useMouseHandlers(args))
+    unmounts.push(unmount)
+    const event = { button: 0, clientX: 100, clientY: 100, preventDefault: vi.fn() }
+
+    act(() => result.current.handleMouseDown(event))
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+    await act(async () => {
+      await result.current.handleMouseMove({ clientX: 130, clientY: 120 })
+    })
+    expect(args.canvasRef.current.scrollLeft).toBe(170)
+    expect(args.canvasRef.current.scrollTop).toBe(130)
+    await act(async () => result.current.handleMouseUp(event))
+    expect(args.panDragRef.current).toBeNull()
+
+    args.spaceDownRef.current = false
+    act(() => result.current.handleMouseDown(event))
+    expect(args.setTouchupStrokes).not.toHaveBeenCalled()
+    expect(args.commitTouchup).not.toHaveBeenCalled()
+    expect(args.setDragging).not.toHaveBeenCalled()
+  })
+})
+
 describe('touch-up brush resize gesture', () => {
   it('resizes with Alt + right-drag without painting and suppresses the context menu', async () => {
     const args = makeArgs()

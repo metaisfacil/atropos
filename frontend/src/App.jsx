@@ -316,7 +316,6 @@ export default function App() {
     useTouchupTool,
     touchupStrokes,
     brushSize,
-    touchupCursor,
     useStraightEdgeTool,
     discActive,
     discLiveActive,
@@ -643,6 +642,7 @@ export default function App() {
           onPresented={handlePreviewPresented}
           optimisticCrop={optimisticCrop}
           visual={presentedVisual}
+          touchupCursor={touchupCursor}
           discLiveActive={discLiveActive}
           discLiveTransform={discLiveTransform}
           ctrlDragRef={ctrlDragRef}

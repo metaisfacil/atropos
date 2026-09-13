@@ -232,7 +232,21 @@ export function useMouseHandlers({
   const adjustmentToolReady = adjustmentSelectionActive && !useTouchupTool && !useStraightEdgeTool
 
   const handleMouseDown = (e) => {
-    if (!imageLoaded || loading) return
+    if (!imageLoaded) return
+    // Panning changes only the camera and stays available during image work.
+    if (spaceDownRef.current && e.button === 0) {
+      const el = canvasRef.current
+      if (!el) return
+      e.preventDefault()
+      panDragRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        scrollLeft: el.scrollLeft,
+        scrollTop: el.scrollTop,
+      }
+      return
+    }
+    if (loading) return
     if (useTouchupTool && e.button === 2 && e.altKey && isPreviewTarget(e.target)) {
       e.preventDefault()
       touchupResizeRef.current = {
@@ -284,18 +298,6 @@ export function useMouseHandlers({
       setDragging(true)
       setDragStart(pos)
       setDragCurrent(pos)
-      return
-    }
-    if (spaceDownRef.current) {
-      const el = canvasRef.current
-      if (!el) return
-      e.preventDefault()
-      panDragRef.current = {
-        startX: e.clientX,
-        startY: e.clientY,
-        scrollLeft: el.scrollLeft,
-        scrollTop:  el.scrollTop,
-      }
       return
     }
     if (e.target !== imgRef.current) {

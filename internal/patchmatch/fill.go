@@ -1207,13 +1207,18 @@ func parallelRowsSized(ctx context.Context, start, end, width int, fn func(y int
 		return nil
 	}
 	work := rows * maxInt(1, width)
-	workers := minInt(runtime.GOMAXPROCS(0), rows)
+	// Keep a processor available for the preview/IPC and the desktop WebView.
+	// Limit this solver rather than changing the process-wide GOMAXPROCS.
+	workers := minInt(maxInt(1, runtime.GOMAXPROCS(0)-1), rows)
 	if workers <= 1 || work < 12000 || rows < 6 {
 		for y := start; y < end; y++ {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			fn(y)
+			// Also cooperate when only one processor is available. A row can
+			// contain many SIMD calls, so don't rely solely on preemption.
+			runtime.Gosched()
 		}
 		return nil
 	}
