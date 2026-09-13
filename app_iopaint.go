@@ -70,12 +70,17 @@ type iopaintRequest struct {
 func (a *App) iopaintFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha) (*image.NRGBA, error) {
 	// Crop to the bounding box of the mask (+ margin) to keep the payload small.
 	const cropMargin = 128
+	phaseStarted := time.Now()
 	crop, hasMask := maskBoundingBox(mask, cropMargin, src.Bounds())
 	if !hasMask {
-		return raster.ToNRGBA(src), nil
+		result := raster.ToNRGBA(src)
+		a.logf("TouchUp IOPaint: cloned source (empty mask) in %s", time.Since(phaseStarted))
+		return result, nil
 	}
+	a.logf("TouchUp IOPaint: mask bounds resolved to %v in %s", crop, time.Since(phaseStarted))
 
 	// Crop source to the patch region (origin translated to 0,0 by toNRGBA).
+	phaseStarted = time.Now()
 	cropSrc := raster.ToNRGBA(src.SubImage(crop))
 
 	// Crop mask to the same region.
@@ -85,8 +90,10 @@ func (a *App) iopaintFill(ctx context.Context, src *image.NRGBA, mask *image.Alp
 			cropMask.SetAlpha(x-crop.Min.X, y-crop.Min.Y, mask.AlphaAt(x, y))
 		}
 	}
+	a.logf("TouchUp IOPaint: crop inputs prepared in %s", time.Since(phaseStarted))
 
 	// Encode source patch as JPEG (fast + small; iopaint doesn't need lossless input).
+	phaseStarted = time.Now()
 	var imgBuf bytes.Buffer
 	if err := jpeg.Encode(&imgBuf, cropSrc, &jpeg.Options{Quality: 95}); err != nil {
 		return nil, fmt.Errorf("iopaint: encode source image: %w", err)
@@ -108,6 +115,7 @@ func (a *App) iopaintFill(ctx context.Context, src *image.NRGBA, mask *image.Alp
 		return nil, fmt.Errorf("iopaint: encode mask: %w", err)
 	}
 	maskB64 := "data:image/png;base64," + base64.StdEncoding.EncodeToString(maskBuf.Bytes())
+	a.logf("TouchUp IOPaint: inputs encoded (image=%d bytes mask=%d bytes) in %s", imgBuf.Len(), maskBuf.Len(), time.Since(phaseStarted))
 
 	reqBody := iopaintRequest{
 		Image:                       imgB64,
@@ -153,14 +161,17 @@ func (a *App) iopaintFill(ctx context.Context, src *image.NRGBA, mask *image.Alp
 		PowerpaintTask:              "text-guided",
 	}
 
+	phaseStarted = time.Now()
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("iopaint: marshal request: %w", err)
 	}
+	a.logf("TouchUp IOPaint: request marshalled (%d bytes) in %s", len(bodyBytes), time.Since(phaseStarted))
 
 	endpoint := strings.TrimRight(a.iopaintURL, "/") + "/api/v1/inpaint"
-	a.logf("iopaintFill: POST %s (body=%d bytes)", endpoint, len(bodyBytes))
+	a.logf("TouchUp IOPaint: POST %s (body=%d bytes)", endpoint, len(bodyBytes))
 
+	phaseStarted = time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("iopaint: build request: %w", err)
@@ -172,19 +183,22 @@ func (a *App) iopaintFill(ctx context.Context, src *image.NRGBA, mask *image.Alp
 		return nil, fmt.Errorf("iopaint: POST %s: %w", endpoint, err)
 	}
 	defer resp.Body.Close()
+	a.logf("TouchUp IOPaint: response headers received status=%d in %s", resp.StatusCode, time.Since(phaseStarted))
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("iopaint: server returned %d: %s", resp.StatusCode, string(body))
 	}
 
+	phaseStarted = time.Now()
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("iopaint: read response: %w", err)
 	}
-	a.logf("iopaintFill: response %d bytes", len(respBytes))
+	a.logf("TouchUp IOPaint: response body read (%d bytes) in %s", len(respBytes), time.Since(phaseStarted))
 
 	// Try raw image bytes first (IOPaint typically returns PNG directly).
+	phaseStarted = time.Now()
 	out, _, decErr := image.Decode(bytes.NewReader(respBytes))
 	if decErr != nil {
 		// Fall back: try JSON {"image": "data:...;base64,..."}.
@@ -204,10 +218,12 @@ func (a *App) iopaintFill(ctx context.Context, src *image.NRGBA, mask *image.Alp
 			return nil, fmt.Errorf("iopaint: decode response image: %w", decErr)
 		}
 	}
+	a.logf("TouchUp IOPaint: response image decoded in %s", time.Since(phaseStarted))
 
 	patch := raster.ToNRGBA(out)
 
 	// Composite: copy inpainted pixels back into a full clone of src.
+	phaseStarted = time.Now()
 	result := raster.ToNRGBA(src)
 	for y := crop.Min.Y; y < crop.Max.Y; y++ {
 		for x := crop.Min.X; x < crop.Max.X; x++ {
@@ -216,6 +232,7 @@ func (a *App) iopaintFill(ctx context.Context, src *image.NRGBA, mask *image.Alp
 			}
 		}
 	}
+	a.logf("TouchUp IOPaint: result composited in %s", time.Since(phaseStarted))
 	return result, nil
 }
 

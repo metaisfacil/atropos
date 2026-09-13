@@ -141,18 +141,39 @@ func paintStrokeSegment(mask *image.Alpha, a, b TouchUpPoint, radius float64) {
 // sufficient unmasked context from which to draw source patches.
 func patchMatchChunkedFill(ctx context.Context, src *image.NRGBA, mask *image.Alpha,
 	patchSize, iterations int) (*image.NRGBA, error) {
+	return patchMatchChunkedFillLogged(ctx, src, mask, patchSize, iterations, nil)
+}
+
+// patchMatchChunkedFillLogged is the instrumented implementation used by the
+// application. Keeping the logger optional leaves the state-free helper useful
+// to benchmarks and tests without requiring an App.
+func patchMatchChunkedFillLogged(ctx context.Context, src *image.NRGBA, mask *image.Alpha,
+	patchSize, iterations int, logf func(string, ...interface{})) (*image.NRGBA, error) {
 
 	const cropMargin = 256
+	phaseStarted := time.Now()
 	crops, err := patchMatchRegions(ctx, mask, cropMargin, src.Bounds())
 	if err != nil {
 		return nil, err
 	}
+	if logf != nil {
+		logf("TouchUp PatchMatch: region scan found %d crop(s) in %s", len(crops), time.Since(phaseStarted))
+	}
+
+	phaseStarted = time.Now()
 	if len(crops) == 0 {
-		return raster.ToNRGBA(src), nil
+		result := raster.ToNRGBA(src)
+		if logf != nil {
+			logf("TouchUp PatchMatch: cloned source (empty mask) in %s", time.Since(phaseStarted))
+		}
+		return result, nil
 	}
 
 	result := raster.ToNRGBA(src)
-	for _, crop := range crops {
+	if logf != nil {
+		logf("TouchUp PatchMatch: cloned source in %s", time.Since(phaseStarted))
+	}
+	for cropIndex, crop := range crops {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -160,6 +181,7 @@ func patchMatchChunkedFill(ctx context.Context, src *image.NRGBA, mask *image.Al
 		// Re-origin both inputs for patchmatch.Fill. The crop mask includes every
 		// marked pixel in the context window, not just the seed component, so a
 		// second damaged region can never be selected as valid source material.
+		phaseStarted = time.Now()
 		cropSrc := raster.ToNRGBA(src.SubImage(crop))
 		cropMask := image.NewAlpha(image.Rect(0, 0, crop.Dx(), crop.Dy()))
 		for y := crop.Min.Y; y < crop.Max.Y; y++ {
@@ -167,18 +189,29 @@ func patchMatchChunkedFill(ctx context.Context, src *image.NRGBA, mask *image.Al
 				cropMask.SetAlpha(x-crop.Min.X, y-crop.Min.Y, mask.AlphaAt(x, y))
 			}
 		}
+		if logf != nil {
+			logf("TouchUp PatchMatch: crop %d/%d prepared rect=%v in %s", cropIndex+1, len(crops), crop, time.Since(phaseStarted))
+		}
 
+		phaseStarted = time.Now()
 		filled, fillErr := patchmatch.Fill(ctx, cropSrc, cropMask, patchSize, iterations)
 		if fillErr != nil {
 			return nil, fillErr
 		}
+		if logf != nil {
+			logf("TouchUp PatchMatch: crop %d/%d filled in %s", cropIndex+1, len(crops), time.Since(phaseStarted))
+		}
 
+		phaseStarted = time.Now()
 		for y := crop.Min.Y; y < crop.Max.Y; y++ {
 			for x := crop.Min.X; x < crop.Max.X; x++ {
 				if mask.AlphaAt(x, y).A > 0 {
 					result.SetNRGBA(x, y, filled.NRGBAAt(x-crop.Min.X, y-crop.Min.Y))
 				}
 			}
+		}
+		if logf != nil {
+			logf("TouchUp PatchMatch: crop %d/%d composited in %s", cropIndex+1, len(crops), time.Since(phaseStarted))
 		}
 	}
 	return result, nil
@@ -345,12 +378,13 @@ func (a *App) buildMask(maskB64 string) (*image.Alpha, error) {
 // is processed by Wails as a separate, near-instantaneous call that arrives
 // before the queue drains into the (now-cancelled) TouchUpApply.
 func (a *App) CancelTouchup() {
+	started := time.Now()
 	a.touchupMu.Lock()
 	hasCancel := a.touchupCancel != nil
 	a.touchupMu.Unlock()
 	a.logf("CancelTouchup: called, hasCancel=%v", hasCancel)
 	a.cancelTouchup()
-	a.logf("CancelTouchup: done")
+	a.logf("CancelTouchup: done in %s", time.Since(started))
 }
 
 // cancelTouchup cancels any in-flight TouchUpApply operation. Safe to call
@@ -404,22 +438,28 @@ func (a *App) commitTouchupResult(ctx context.Context, generation uint64, srcImg
 // TouchUpApply accepts the legacy full-size PNG mask. New brush callers should
 // use TouchUpApplyStrokes to avoid the full-image encode/decode path.
 func (a *App) TouchUpApply(maskB64 string, patchSize int, iterations int) (*ProcessResult, error) {
+	operationStarted := time.Now()
 	a.logf("TouchUpApply: backend=%q patchSize=%d iterations=%d patchKernel=%s", a.touchupBackend, patchSize, iterations, patchmatch.ActiveKernel())
 	if a.currentImage == nil && a.warpedImage == nil {
+		a.logf("TouchUpApply: failed before launch in %s: no image loaded", time.Since(operationStarted))
 		return nil, fmt.Errorf("no image loaded")
 	}
 
 	a.cancelTouchup()
+	phaseStarted := time.Now()
 	mask, err := a.buildMask(maskB64)
 	if err != nil {
+		a.logf("TouchUpApply: mask preparation failed in %s (total %s): %v", time.Since(phaseStarted), time.Since(operationStarted), err)
 		return nil, err
 	}
+	a.logf("TouchUpApply: mask=%v bytes=%d prepared in %s (total %s)", mask.Bounds(), len(mask.Pix), time.Since(phaseStarted), time.Since(operationStarted))
 
 	srcImg := a.workingImage()
 	if srcImg == nil {
+		a.logf("TouchUpApply: failed before launch in %s: no image loaded", time.Since(operationStarted))
 		return nil, fmt.Errorf("no image loaded")
 	}
-	return a.startTouchup(srcImg, mask, patchSize, iterations)
+	return a.startTouchup(srcImg, mask, patchSize, iterations, operationStarted)
 }
 
 // TouchUpApplyStrokes rasterizes a compact image-space brush stroke directly
@@ -429,6 +469,7 @@ func (a *App) TouchUpApplyStrokes(request TouchUpStrokeRequest) (*ProcessResult,
 	a.logf("TouchUpApplyStrokes: backend=%q points=%d brushSize=%.1f patchSize=%d iterations=%d patchKernel=%s",
 		a.touchupBackend, len(request.Points), request.BrushSize, request.PatchSize, request.Iterations, patchmatch.ActiveKernel())
 	if a.currentImage == nil && a.warpedImage == nil {
+		a.logf("TouchUpApplyStrokes: failed before launch in %s: no image loaded", time.Since(started))
 		return nil, fmt.Errorf("no image loaded")
 	}
 
@@ -437,27 +478,32 @@ func (a *App) TouchUpApplyStrokes(request TouchUpStrokeRequest) (*ProcessResult,
 	a.cancelTouchup()
 	srcImg := a.workingImage()
 	if srcImg == nil {
+		a.logf("TouchUpApplyStrokes: failed before launch in %s: no image loaded", time.Since(started))
 		return nil, fmt.Errorf("no image loaded")
 	}
+	phaseStarted := time.Now()
 	mask, err := buildStrokeMask(srcImg.Bounds(), request.Points, request.BrushSize)
 	if err != nil {
+		a.logf("TouchUpApplyStrokes: mask rasterization failed in %s (total %s): %v", time.Since(phaseStarted), time.Since(started), err)
 		return nil, err
 	}
 	_, selectionKey, err := resolveAdjustmentSelection(request.Selection, srcImg.Bounds())
 	if err != nil {
+		a.logf("TouchUpApplyStrokes: selection resolution failed in %s (total %s): %v", time.Since(phaseStarted), time.Since(started), err)
 		return nil, err
 	}
 	mask, err = clipAlphaToAdjustmentSelection(mask, selectionKey)
 	if err != nil {
+		a.logf("TouchUpApplyStrokes: mask clipping failed in %s (total %s): %v", time.Since(phaseStarted), time.Since(started), err)
 		return nil, err
 	}
-	a.logf("TouchUpApplyStrokes: mask=%v bytes=%d rasterize=%s", mask.Bounds(), len(mask.Pix), time.Since(started))
-	return a.startTouchup(srcImg, mask, request.PatchSize, request.Iterations)
+	a.logf("TouchUpApplyStrokes: mask=%v bytes=%d prepared in %s (total %s)", mask.Bounds(), len(mask.Pix), time.Since(phaseStarted), time.Since(started))
+	return a.startTouchup(srcImg, mask, request.PatchSize, request.Iterations, started)
 }
 
 // startTouchup registers cancellation, launches the fill, and returns without
 // holding up Wails' IPC queue. Completion is delivered via "touchup-done".
-func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, iterations int) (*ProcessResult, error) {
+func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, iterations int, operationStarted time.Time) (*ProcessResult, error) {
 	a.cancelTouchup()
 	ctx, cancel := context.WithCancel(context.Background())
 	a.touchupMu.Lock()
@@ -465,9 +511,11 @@ func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, it
 	generation := a.touchupGen
 	a.touchupCancel = cancel
 	a.touchupMu.Unlock()
+	backend := a.touchupBackend
 
 	go func() {
-		a.logf("TouchUpApply goroutine: starting fill, backend=%s", a.touchupBackend)
+		outcome := "cancelled"
+		a.logf("TouchUpApply %d: starting fill, backend=%s (setup %s)", generation, backend, time.Since(operationStarted))
 		defer func() {
 			cancel()
 			a.touchupMu.Lock()
@@ -475,26 +523,28 @@ func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, it
 				a.touchupCancel = nil
 			}
 			a.touchupMu.Unlock()
-			a.logf("TouchUpApply goroutine: exited")
+			a.logf("TouchUpApply %d: finished outcome=%s backend=%s in %s", generation, outcome, backend, time.Since(operationStarted))
 		}()
 
 		emit := func(ev touchUpDoneEvent) { runtime.EventsEmit(a.ctx, "touchup-done", ev) }
 
 		var out *image.NRGBA
 		var fillErr error
-		if a.touchupBackend == "iopaint" {
+		phaseStarted := time.Now()
+		if backend == "iopaint" {
 			out, fillErr = a.iopaintFill(ctx, srcImg, mask)
 		} else {
-			out, fillErr = patchMatchChunkedFill(ctx, srcImg, mask, patchSize, iterations)
+			out, fillErr = patchMatchChunkedFillLogged(ctx, srcImg, mask, patchSize, iterations, a.logf)
 		}
-		a.logf("TouchUpApply goroutine: fill returned, err=%v", fillErr)
+		a.logf("TouchUpApply %d: fill finished in %s (total %s), err=%v", generation, time.Since(phaseStarted), time.Since(operationStarted), fillErr)
 
 		if fillErr != nil {
 			if errors.Is(fillErr, context.Canceled) {
-				a.logf("TouchUpApply: cancelled (%s)", a.touchupBackend)
+				a.logf("TouchUpApply %d: cancelled during fill (%s)", generation, backend)
 				emit(touchUpDoneEvent{Cancelled: true})
 				return
 			}
+			outcome = "error"
 			emit(touchUpDoneEvent{Error: fillErr.Error()})
 			return
 		}
@@ -512,23 +562,31 @@ func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, it
 		// failure cannot leave behind an invisible committed edit. A cancelled
 		// operation may leave one unreachable cache entry, which is harmless and
 		// bounded by the preview revision LRU.
+		phaseStarted = time.Now()
 		preview, previewErr := a.imagePreviewURL(out)
 		if previewErr != nil {
+			outcome = "error"
+			a.logf("TouchUpApply %d: preview publication failed in %s (total %s): %v", generation, time.Since(phaseStarted), time.Since(operationStarted), previewErr)
 			emit(touchUpDoneEvent{Error: previewErr.Error()})
 			return
 		}
+		a.logf("TouchUpApply %d: preview published in %s (total %s)", generation, time.Since(phaseStarted), time.Since(operationStarted))
 
 		// Serialize the small state commit with cancellation. The generation and
 		// source-pointer checks prevent a superseded worker from snapshotting a
 		// newer image into undo and then overwriting it with stale output.
+		phaseStarted = time.Now()
 		committed, descreenReset := a.commitTouchupResult(ctx, generation, srcImg, out)
 		if !committed {
+			a.logf("TouchUpApply %d: commit rejected in %s (total %s)", generation, time.Since(phaseStarted), time.Since(operationStarted))
 			emit(touchUpDoneEvent{Cancelled: true})
 			return
 		}
+		a.logf("TouchUpApply %d: committed in %s (total %s)", generation, time.Since(phaseStarted), time.Since(operationStarted))
 
 		b := out.Bounds()
 		emit(touchUpDoneEvent{Preview: preview, Message: "Touch-up applied.", Width: b.Dx(), Height: b.Dy(), DescreenReset: descreenReset})
+		outcome = "success"
 	}()
 
 	return &ProcessResult{Message: "running"}, nil
