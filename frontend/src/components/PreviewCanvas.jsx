@@ -37,6 +37,10 @@ function normalizeRect(rect) {
   }
 }
 
+export function viewportRasterKey(source, rect, width, height) {
+  return `${source}:${rect.x},${rect.y},${rect.w},${rect.h}:${width}x${height}`
+}
+
 export function sourceRectContains(container, inner, epsilon = 1) {
   if (!container || !inner) return false
   return (
@@ -146,7 +150,7 @@ export function buildViewportRequest({ source, dims, visibleRect, displayWidth, 
     rect,
     width: destination.width,
     height: destination.height,
-    key: `${source}:${rect.x},${rect.y},${rect.w},${rect.h}:${destination.width}x${destination.height}`,
+    key: viewportRasterKey(source, rect, destination.width, destination.height),
   }
 }
 
@@ -202,6 +206,9 @@ function closeRaster(raster) {
       // decoded surface be reclaimed after LRU eviction.
       raster?.bitmap?.removeAttribute?.('src')
     }
+    for (const patch of raster?.patches || []) {
+      patch.bitmap?.removeAttribute?.('src')
+    }
   } catch (_) {
     // Raster release is best-effort.
   }
@@ -247,6 +254,55 @@ export function clippedRasterDrawRect(raster, layout, viewport) {
       h: visible.h * bitmapHeight / destination.h,
     },
     destination: visible,
+  }
+}
+
+export function touchupPatchDrawRect(patch, raster, layout, viewport) {
+  if (!patch || !raster || !validDims(raster.dims) ||
+      !(patch.width > 0) || !(patch.height > 0) ||
+      !(viewport?.w > 0) || !(viewport?.h > 0)) return null
+
+  const patchRect = { x: patch.x, y: patch.y, w: patch.width, h: patch.height }
+  const covered = intersectRect(patchRect, raster.rect)
+  if (!covered) return null
+  const destination = canvasRectFromImage(covered, layout, raster.dims)
+  const visible = intersectRect(destination, { x: 0, y: 0, w: viewport.w, h: viewport.h })
+  if (!visible || !(destination.w > 0) || !(destination.h > 0)) return null
+
+  const bitmapWidth = patch.bitmap?.naturalWidth || patch.bitmap?.width || patch.width
+  const bitmapHeight = patch.bitmap?.naturalHeight || patch.bitmap?.height || patch.height
+  const coveredSource = {
+    x: (covered.x - patch.x) * bitmapWidth / patch.width,
+    y: (covered.y - patch.y) * bitmapHeight / patch.height,
+    w: covered.w * bitmapWidth / patch.width,
+    h: covered.h * bitmapHeight / patch.height,
+  }
+  return {
+    source: {
+      x: coveredSource.x + (visible.x - destination.x) * coveredSource.w / destination.w,
+      y: coveredSource.y + (visible.y - destination.y) * coveredSource.h / destination.h,
+      w: visible.w * coveredSource.w / destination.w,
+      h: visible.h * coveredSource.h / destination.h,
+    },
+    destination: visible,
+  }
+}
+
+export function promoteTouchupRaster(raster, patch, bitmap) {
+  if (!raster || !patch || !bitmap || raster.source !== patch.baseSource ||
+      !sameDims(raster.dims, { w: patch.imageWidth, h: patch.imageHeight })) return null
+  const overlay = {
+    x: patch.x,
+    y: patch.y,
+    width: patch.width,
+    height: patch.height,
+    bitmap,
+  }
+  return {
+    ...raster,
+    source: patch.source,
+    key: viewportRasterKey(patch.source, raster.rect, raster.width, raster.height),
+    patches: [...(raster.patches || []), overlay],
   }
 }
 
@@ -615,6 +671,7 @@ export default function PreviewCanvas({
   optimisticCrop,
   visual,
   touchupCursor,
+  touchupPatch,
   discLiveActive,
   discLiveTransform,
   ctrlDragRef,
@@ -633,6 +690,7 @@ export default function PreviewCanvas({
   const drawFrameRef = useRef(0)
   const requestTimerRef = useRef(0)
   const requestControllerRef = useRef(null)
+  const patchControllerRef = useRef(null)
   const requestGenerationRef = useRef(0)
   const requestRasterRef = useRef(null)
   const requestInFlightRef = useRef(false)
@@ -675,6 +733,7 @@ export default function PreviewCanvas({
     optimisticCrop,
     visual,
     touchupCursor,
+    touchupPatch,
     discLiveActive,
     discLiveTransform,
     ctrlDragRef,
@@ -737,11 +796,39 @@ export default function PreviewCanvas({
           const destination = optimistic
             ? clipped.destination
             : canvasRectFromImage(candidate.rect, drawLayout, candidate.dims)
+          const drawPatches = () => {
+            if (optimistic) return
+            for (const patch of candidate.patches || []) {
+              const draw = touchupPatchDrawRect(patch, candidate, drawLayout, { w: width, h: height })
+              if (!draw) continue
+              ctx.save()
+              ctx.beginPath()
+              ctx.rect(draw.destination.x, draw.destination.y, draw.destination.w, draw.destination.h)
+              ctx.clip()
+              // Only mask-covered pixels are opaque in the patch. Normal
+              // source-over compositing leaves the untouched rectangle edge
+              // on the existing JPEG raster, avoiding visible tile seams.
+              ctx.globalCompositeOperation = 'source-over'
+              ctx.drawImage(
+                patch.bitmap,
+                draw.source.x,
+                draw.source.y,
+                draw.source.w,
+                draw.source.h,
+                draw.destination.x,
+                draw.destination.y,
+                draw.destination.w,
+                draw.destination.h,
+              )
+              ctx.restore()
+            }
+          }
           if (props.discLiveActive && !optimistic) {
             // The disc preview applies an additional canvas transform. Its
             // inverse-transformed viewport is not axis-aligned, so retain the
             // full draw during the brief live gesture.
             ctx.drawImage(candidate.bitmap, destination.x, destination.y, destination.w, destination.h)
+            drawPatches()
             return destination
           }
 
@@ -760,6 +847,7 @@ export default function PreviewCanvas({
             drawRect.destination.w,
             drawRect.destination.h,
           )
+          drawPatches()
           return drawRect.destination
         }
 
@@ -1005,6 +1093,60 @@ export default function PreviewCanvas({
   }, [])
 
   useEffect(() => {
+    const patch = touchupPatch
+    if (!patch || patch.source !== source || !patch.dataURL) return undefined
+
+    const base = activeRasterRef.current
+    if (!base || base.source !== patch.baseSource) {
+      scheduleRequest(true)
+      return undefined
+    }
+
+    patchControllerRef.current?.abort()
+    const loader = beginImageLoad(patch.dataURL)
+    patchControllerRef.current = loader
+    let disposed = false
+
+    loader.promise.then(bitmap => {
+      if (disposed || latestPropsRef.current?.source !== patch.source) {
+        bitmap.removeAttribute?.('src')
+        return
+      }
+      const current = activeRasterRef.current
+      const promoted = promoteTouchupRaster(current, patch, bitmap)
+      if (!promoted) {
+        bitmap.removeAttribute?.('src')
+        scheduleRequest(true)
+        return
+      }
+
+      const cache = rasterCacheRef.current
+      // Transfer ownership of the base bitmap and any earlier touch-up patches
+      // to the promoted revision. Do not close the removed raster: the new
+      // entry intentionally shares those decoded surfaces.
+      if (current.key && cache.get(current.key) === current) cache.delete(current.key)
+      const replaced = cache.get(promoted.key)
+      if (replaced && replaced !== current) closeRaster(replaced)
+      cache.set(promoted.key, promoted)
+      activateRaster(promoted)
+      pruneRasterCache()
+    }).catch(error => {
+      if (!disposed && error?.name !== 'AbortError') {
+        console.error('Touch-up preview patch failed:', error)
+        scheduleRequest(true)
+      }
+    })
+
+    return () => {
+      disposed = true
+      if (patchControllerRef.current === loader) {
+        loader.abort()
+        patchControllerRef.current = null
+      }
+    }
+  }, [activateRaster, pruneRasterCache, scheduleRequest, source, touchupPatch])
+
+  useEffect(() => {
     const scroller = scrollRef.current
     if (!scroller) return undefined
 
@@ -1059,8 +1201,11 @@ export default function PreviewCanvas({
       scheduleDraw()
       return
     }
-    scheduleRequest(true)
-  }, [source, imageDims?.w, imageDims?.h, scheduleDraw, scheduleRequest])
+    // A touch-up can promote the currently decoded viewport by applying only
+    // its changed rectangle. The settled-layout request below remains a
+    // fallback if patch decoding or promotion takes unusually long.
+    if (touchupPatch?.source !== source) scheduleRequest(true)
+  }, [source, imageDims?.w, imageDims?.h, touchupPatch, scheduleDraw, scheduleRequest])
 
   useEffect(() => {
     // The pointer is live even while revision-bound guides/metadata are held
@@ -1078,6 +1223,8 @@ export default function PreviewCanvas({
   useEffect(() => () => {
     requestControllerRef.current?.abort()
     requestControllerRef.current = null
+    patchControllerRef.current?.abort()
+    patchControllerRef.current = null
 
     window.clearTimeout(requestTimerRef.current)
     requestTimerRef.current = 0

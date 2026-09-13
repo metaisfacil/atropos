@@ -76,7 +76,7 @@ This document contains the detailed system model, data flow, and operation order
 | `hooks/useMouseHandlers.js` | All pointer interaction: `handleMouseDown/Move/Up/ImageMouseLeave` across all modes. Owns refs for corner click guards, disc drag state, line endpoint editing, and Normal-mode draw/move/resize (`normalDragPendingRef`, `normalMoveDragRef`, `normalHandleDragRef`). Uses shared `computeDiscShift` mapping from `utils/imageCoords` for consistent disc translation math across live preview and backend commit. Registers `window` `mouseup` and `mousemove` listeners to safely finish drags outside the canvas area. Returns `displayToImage` and `lineStartImgRef` for stable image-space coordinates during zoom changes mid-drag. |
 | `hooks/useKeyboardShortcuts.js` | Single `keydown` effect: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+A`/`Cmd+A` (select the whole image while the adjustment selection tool is active), `Ctrl+C`/`Cmd+C` (send an adjustment selection, uncommitted Normal crop rectangle, or the full image bounds to the backend for native clipboard copy), `Ctrl+V`/`Cmd+V` (ask the backend to read the native image clipboard and replace the document), `Ctrl+Z` (undo), `Ctrl+S` (save), `Ctrl+O` (load), `Ctrl+W`/`Cmd+W` (quit), `Enter` (apply Normal crop), and the physical `WASDQE` positions (crop/rotate). The displayed spatial keys come from `navigator.keyboard.getLayoutMap()`, so AZERTY shows `ZQSD`/`AE`, with QWERTY as a fallback. In corner mode, `Ctrl+Z` first calls `UndoLastCorner` for in-progress corner picks (1–3) before using backend image undo. Spatial crop/rotate keys are guarded by `canSave`; if no crop result exists, `showStatus` is shown instead of forwarding to Go. |
 | `hooks/useKeyboardLayout.js` | Reads the platform keyboard layout map for the physical crop/rotate positions and refreshes it on `layoutchange` or window focus. Supplies QWERTY labels when the Keyboard Map API is unavailable or denied. |
-| `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, window mouseup effect, `EventsOn("touchup-done")` effect. |
+| `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, bounded preview-patch handoff, window mouseup effect, `EventsOn("touchup-done")` effect. |
 | `hooks/useZoomPan.js` | Viewport camera state: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, and scroll anchoring. `imgRef` points at the transparent logical image surface, so cursor anchoring and the existing pointer state machine use the same geometry as the canvas renderer without making image pixels a DOM `<img>`. |
 | `hooks/usePersistentSettings.js` | File-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, `autoCornerParams`, `closeAfterSave`, `postSaveEnabled`, `postSaveCommand`, `touchupRemainsActive`, `straightEdgeRemainsActive`, `autoDetectOnModeSwitch`). Loads from Go (`GetAllSettings`) on mount and persists via `SaveAllSettings` on every change. Performs a one-time migration from `localStorage` on first launch of the file-backed version. |
 | `hooks/useStatusMessage.js` | `imageInfo` + fade timer logic (`showStatus`). |
@@ -720,18 +720,29 @@ TouchUpApply(maskB64, patchSize, iterations) → ProcessResult{Message:"running"
 
         if cancelled  → EventsEmit("touchup-done", {cancelled:true})
         if error      → EventsEmit("touchup-done", {error})
+        preview = imagePreviewURL(out)     ← authoritative immutable revision
         saveUndo(); setWorkingImage(out)
-        encode only the nonzero mask bounds as a transparent PNG replacement
-        EventsEmit("touchup-done", {patch, message, width, height, descreenReset})
+        if changed bounds <= 512×512 pixels:
+            encode mask-covered output pixels plus transparent edge padding as a lossless PNG
+        EventsEmit("touchup-done", {preview, patch, message, width, height, descreenReset})
 ```
 
-Touch-up does not register a new full-frame preview revision. The frontend
-positions the returned patch in full-image coordinates above the current base
-image and keeps it there across that revision's low-to-full promotion. Rapid
-touch-ups therefore add only their changed rectangles; neither base asset is
-re-encoded or swapped. The busy indicator remains active until the patch
-element fires `onLoad`. Any later non-touch-up preview revision contains the
-committed pixels and clears the temporary patch stack.
+Every touch-up registers a normal immutable preview revision, preserving the
+same authoritative fallback and revision semantics as other edits. For normal
+brush-sized changes, the completion event also carries the changed pixels on a
+transparent, padded lossless PNG. Keeping untouched pixels transparent avoids
+exposing the quality boundary between the PNG and the viewport JPEG. Fully
+covered brush pixels are opaque; antialiased edge pixels retain their brush
+coverage so a nearly untouched lossless pixel cannot trace a bright contour
+over the lossy viewport.
+`PreviewCanvas` decodes that small patch, retains
+the already-decoded viewport bitmap, adds the patch to its raster-local overlay
+list, and promotes the raster's cache key/source to the new revision. Rapid
+touch-ups accumulate on that promoted raster, so they remain visible without
+re-rendering or transporting the unchanged viewport. A later pan/zoom fetches
+an authoritative raster for the current revision as usual. If the patch is
+absent, invalid, cannot be chained from the active revision, or exceeds the
+512×512-pixel cap, the normal viewport RPC path is used immediately.
 
 ### PatchMatch (`internal/patchmatch/`; used via `patchMatchChunkedFill`)
 
@@ -918,7 +929,7 @@ Processing is local:
 
 `patchmatch.FillBounds` is preferred when the caller already knows the stroke bounds. `patchmatch.FillROI` is preferred when the editor can composite the returned rectangle itself, because it also avoids the final full-document clone. `ctx.Err()` is checked at entry and throughout pyramid, search, and reconstruction work so an in-flight touch-up can be cancelled.
 
-The normal scanned-print setting is `patchSize=7`, `iterations=4`; iterations are a maximum because stable levels terminate early. Regression coverage includes displacement-preserving pyramid seeding, strict whole-patch source validity, separate target/source mask semantics, local working-ROI behavior, supplied-bounds equivalence, basic defect completion, repeated printing through thin scratches and larger dabs, reconstruction convergence, slow-decay round termination, transparent edge outpainting with nonzero image origins, stochastic texture retention, texture beside a crossing edge, and sharp slanted colour-edge preservation.
+The normal scanned-print setting is `patchSize=7`, `iterations=5`; iterations are a maximum because stable levels terminate early. Regression coverage includes displacement-preserving pyramid seeding, strict whole-patch source validity, separate target/source mask semantics, local working-ROI behavior, supplied-bounds equivalence, basic defect completion, repeated printing through thin scratches and larger dabs, reconstruction convergence, slow-decay round termination, transparent edge outpainting with nonzero image origins, stochastic texture retention, texture beside a crossing edge, and sharp slanted colour-edge preservation.
 
 Architecture-specific tests additionally verify AVX2/NEON SSD equivalence, early-exit behavior, dispatch, and the `pmKernelArgs` assembly layout.
 

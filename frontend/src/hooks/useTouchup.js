@@ -2,9 +2,26 @@ import { useState, useRef, useEffect } from 'react'
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 import { adjustmentSelectionPayload } from '../utils/adjustmentSelection'
 
+export function touchupPreviewPatch(data, baseSource) {
+  const patch = data?.patch
+  if (!baseSource || !data?.preview || !patch?.dataURL ||
+      !Number.isFinite(patch.x) || !Number.isFinite(patch.y) ||
+      !Number.isFinite(patch.width) || !Number.isFinite(patch.height) ||
+      patch.width <= 0 || patch.height <= 0 || !data?.width || !data?.height) {
+    return null
+  }
+  return {
+    ...patch,
+    baseSource,
+    source: data.preview,
+    imageWidth: data.width,
+    imageHeight: data.height,
+  }
+}
+
 export function useTouchup({
   imageLoaded, loading, setLoading, showStatus,
-  touchupBackend, setErrorMessage, setPreview, onDragEnd,
+  touchupBackend, setErrorMessage, preview, setPreview, onDragEnd,
   flushPendingSaveRef,
   touchupRemainsActive, setUseTouchupTool, setUseDescreenTool,
   setUnsavedChanges,
@@ -13,6 +30,7 @@ export function useTouchup({
 }) {
   const [touchupStrokes, setTouchupStrokes] = useState([])
   const [brushSize, setBrushSize]           = useState(40)
+  const [touchupPatch, setTouchupPatch]     = useState(null)
   const touchupDraggingRefLocal = touchupDraggingRef || useRef(false) // true while a touch-up brush drag is in progress
   // Holds the latest touch-up commit handler for the window-level mouseup listener.
   // Updated every render so the closure always sees fresh state.
@@ -95,10 +113,11 @@ export function useTouchup({
     }
 
     if (data?.preview) {
-      // Touch-up now publishes a normal immutable preview revision. The canvas
-      // renderer keeps showing the previous raster until the new viewport is
-      // ready, then swaps atomically through the same presentation path used
-      // by every other image operation.
+      // Let PreviewCanvas promote the already-decoded base raster with the
+      // small lossless replacement before changing the authoritative source.
+      // The immutable revision remains the fallback for an absent/invalid patch.
+      const patch = touchupPreviewPatch(data, preview)
+      if (patch) setTouchupPatch(patch)
       setPreview(data.preview)
     }
     setLoading(false)
@@ -121,6 +140,7 @@ export function useTouchup({
   return {
     touchupStrokes, setTouchupStrokes,
     brushSize, setBrushSize,
+    touchupPatch,
     touchupDraggingRef: touchupDraggingRefLocal,
     clearTouchup, commitTouchup,
   }

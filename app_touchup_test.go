@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"image"
+	"image/color"
+	"strings"
 	"testing"
 
 	"atropos/internal/raster"
@@ -161,6 +165,54 @@ func TestBuildStrokeMaskRejectsInvalidInput(t *testing.T) {
 	}
 	if _, err := buildStrokeMask(image.Rect(0, 0, 10, 10), []TouchUpPoint{{X: 50, Y: 50}}, 5); err == nil {
 		t.Fatal("off-image stroke was accepted")
+	}
+}
+
+func TestEncodeTouchUpPreviewPatchUsesTransparentPaddedBounds(t *testing.T) {
+	out := image.NewNRGBA(image.Rect(0, 0, 40, 30))
+	mask := image.NewAlpha(image.Rect(10, 8, 20, 18))
+	mask.SetAlpha(12, 11, color.Alpha{A: 255})
+	mask.SetAlpha(15, 14, color.Alpha{A: 128})
+	out.SetNRGBA(12, 11, color.NRGBA{R: 10, G: 20, B: 30, A: 255})
+	out.SetNRGBA(15, 14, color.NRGBA{R: 80, G: 90, B: 100, A: 255})
+
+	patch, err := encodeTouchUpPreviewPatch(out, mask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patch.X != 11 || patch.Y != 10 || patch.Width != 6 || patch.Height != 6 {
+		t.Fatalf("patch geometry = (%d,%d %dx%d), want (11,10 6x6)", patch.X, patch.Y, patch.Width, patch.Height)
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(patch.DataURL, "data:image/png;base64,"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, _, err := image.Decode(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := color.NRGBAModel.Convert(decoded.At(1, 1)).(color.NRGBA); got != (color.NRGBA{R: 10, G: 20, B: 30, A: 255}) {
+		t.Fatalf("first replacement pixel = %v", got)
+	}
+	if got := color.NRGBAModel.Convert(decoded.At(4, 4)).(color.NRGBA); got != (color.NRGBA{R: 80, G: 90, B: 100, A: 128}) {
+		t.Fatalf("soft-mask coverage was not preserved: %v", got)
+	}
+	if got := color.NRGBAModel.Convert(decoded.At(0, 0)).(color.NRGBA); got.A != 0 {
+		t.Fatalf("padding pixel is not transparent: %v", got)
+	}
+}
+
+func TestEncodeTouchUpPreviewPatchSkipsOversizedBounds(t *testing.T) {
+	out := image.NewNRGBA(image.Rect(0, 0, 1024, 1024))
+	mask := image.NewAlpha(out.Bounds())
+	mask.SetAlpha(0, 0, color.Alpha{A: 255})
+	mask.SetAlpha(1023, 1023, color.Alpha{A: 255})
+	patch, err := encodeTouchUpPreviewPatch(out, mask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patch != nil {
+		t.Fatalf("oversized patch was encoded: %+v", patch)
 	}
 }
 

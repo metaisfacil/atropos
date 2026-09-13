@@ -27,13 +27,14 @@ describe('touch-up preview presentation', () => {
     const showStatus = vi.fn()
     const flushPendingSave = vi.fn()
 
-    renderHook(() => useTouchup({
+    const { result } = renderHook(() => useTouchup({
       imageLoaded: true,
       loading: true,
       setLoading,
       showStatus,
       touchupBackend: 'patchmatch',
       setErrorMessage: vi.fn(),
+      preview: '/__atropos/preview/session/41.jpg',
       setPreview,
       onDragEnd: vi.fn(),
       flushPendingSaveRef: { current: flushPendingSave },
@@ -50,6 +51,7 @@ describe('touch-up preview presentation', () => {
         preview,
         width: 100,
         height: 80,
+        patch: { dataURL: 'data:image/png;base64,cGF0Y2g=', x: 10, y: 20, width: 8, height: 6 },
         message: 'Touch-up applied.',
         descreenReset: true,
       })
@@ -57,6 +59,17 @@ describe('touch-up preview presentation', () => {
 
     expect(setPreview).toHaveBeenCalledOnce()
     expect(setPreview).toHaveBeenCalledWith(preview)
+    expect(result.current.touchupPatch).toEqual({
+      dataURL: 'data:image/png;base64,cGF0Y2g=',
+      x: 10,
+      y: 20,
+      width: 8,
+      height: 6,
+      baseSource: '/__atropos/preview/session/41.jpg',
+      source: preview,
+      imageWidth: 100,
+      imageHeight: 80,
+    })
     expect(setLoading).toHaveBeenCalledWith(false)
     expect(setUseDescreenTool).toHaveBeenCalledWith(false)
     expect(setUnsavedChanges).toHaveBeenCalledWith(true)

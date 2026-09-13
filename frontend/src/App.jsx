@@ -191,6 +191,7 @@ export default function App() {
   const {
     touchupStrokes, setTouchupStrokes,
     brushSize, setBrushSize,
+    touchupPatch,
     clearTouchup, commitTouchup,
   } = useTouchup({
     imageLoaded,
@@ -200,6 +201,7 @@ export default function App() {
     realImageDims,
     touchupBackend,
     setErrorMessage,
+    preview,
     setPreview,
     onDragEnd: () => {
       setDragging(false)
@@ -646,6 +648,7 @@ export default function App() {
           optimisticCrop={optimisticCrop}
           visual={presentedVisual}
           touchupCursor={touchupCursor}
+          touchupPatch={touchupPatch}
           discLiveActive={discLiveActive}
           discLiveTransform={discLiveTransform}
           ctrlDragRef={ctrlDragRef}

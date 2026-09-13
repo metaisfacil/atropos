@@ -31,7 +31,15 @@ func ToNRGBA(src image.Image) *image.NRGBA {
 	switch source := src.(type) {
 	case *image.NRGBA:
 		if source.Stride == w*4 {
-			copy(dst.Pix, source.Pix[:w*h*4])
+			const parallelCopyThreshold = 16 << 20
+			rowBytes := w * 4
+			if len(dst.Pix) >= parallelCopyThreshold {
+				parallelFor(h, runtime.NumCPU(), func(start, end int) {
+					copy(dst.Pix[start*rowBytes:end*rowBytes], source.Pix[start*rowBytes:end*rowBytes])
+				})
+			} else {
+				copy(dst.Pix, source.Pix[:w*h*4])
+			}
 		} else {
 			for y := 0; y < h; y++ {
 				srcOff := (b.Min.Y+y-source.Rect.Min.Y)*source.Stride + (b.Min.X-source.Rect.Min.X)*4

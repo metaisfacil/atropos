@@ -4,9 +4,11 @@ import {
   clippedRasterDrawRect,
   croppedRasterDrawRect,
   optimisticCropSourceRect,
+  promoteTouchupRaster,
   shouldDrawDiscCropGuide,
   shouldDrawLineGuide,
   sourceRectContains,
+  touchupPatchDrawRect,
 } from './PreviewCanvas'
 
 describe('buildViewportRequest', () => {
@@ -105,6 +107,55 @@ describe('clippedRasterDrawRect', () => {
       { stageX: 1000, stageY: 1000, stageWidth: 1000, stageHeight: 1000 },
       { w: 500, h: 500 },
     )).toBeNull()
+  })
+})
+
+describe('touch-up raster promotion', () => {
+  const raster = {
+    source: '/preview/1',
+    dims: { w: 1000, h: 800 },
+    rect: { x: 100, y: 100, w: 500, h: 400 },
+    width: 1000,
+    height: 800,
+    bitmap: { naturalWidth: 1000, naturalHeight: 800 },
+    key: 'old',
+  }
+  const patch = {
+    baseSource: '/preview/1',
+    source: '/preview/2',
+    dataURL: 'data:image/png;base64,cGF0Y2g=',
+    x: 200,
+    y: 180,
+    width: 40,
+    height: 20,
+    imageWidth: 1000,
+    imageHeight: 800,
+  }
+
+  it('relabels a decoded viewport and retains its patch as a new revision', () => {
+    const bitmap = { naturalWidth: 40, naturalHeight: 20 }
+    const promoted = promoteTouchupRaster(raster, patch, bitmap)
+    expect(promoted.source).toBe('/preview/2')
+    expect(promoted.bitmap).toBe(raster.bitmap)
+    expect(promoted.patches).toEqual([{ x: 200, y: 180, width: 40, height: 20, bitmap }])
+    expect(promoted.key).toContain('/preview/2')
+  })
+
+  it('maps and clips the full-resolution patch into the viewport raster', () => {
+    const draw = touchupPatchDrawRect(
+      { ...patch, bitmap: { naturalWidth: 40, naturalHeight: 20 } },
+      raster,
+      { stageX: -100, stageY: -80, stageWidth: 1000, stageHeight: 800 },
+      { w: 120, h: 120 },
+    )
+    expect(draw).toEqual({
+      source: { x: 0, y: 0, w: 20, h: 20 },
+      destination: { x: 100, y: 100, w: 20, h: 20 },
+    })
+  })
+
+  it('rejects promotion from an unrelated revision', () => {
+    expect(promoteTouchupRaster(raster, { ...patch, baseSource: '/preview/other' }, {})).toBeNull()
   })
 })
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/png"
 	"math"
 	"time"
 
@@ -406,17 +407,91 @@ func (a *App) cancelTouchup() bool {
 }
 
 // touchUpDoneEvent is the payload sent on the "touchup-done" Wails event.
-// A successful touch-up publishes a new immutable preview revision. The canvas
-// renderer then requests only the viewport raster it needs from that revision;
-// there is no separate browser-side patch overlay.
+// A successful touch-up publishes a normal immutable preview revision and, for
+// a reasonably small brush rectangle, a lossless patch that lets the canvas
+// promote its current viewport without re-rendering all of the unchanged pixels.
 type touchUpDoneEvent struct {
-	Cancelled     bool   `json:"cancelled,omitempty"`
-	Error         string `json:"error,omitempty"`
-	Preview       string `json:"preview,omitempty"`
-	Message       string `json:"message,omitempty"`
-	Width         int    `json:"width,omitempty"`
-	Height        int    `json:"height,omitempty"`
-	DescreenReset bool   `json:"descreenReset,omitempty"`
+	Cancelled     bool                 `json:"cancelled,omitempty"`
+	Error         string               `json:"error,omitempty"`
+	Preview       string               `json:"preview,omitempty"`
+	Patch         *touchUpPreviewPatch `json:"patch,omitempty"`
+	Message       string               `json:"message,omitempty"`
+	Width         int                  `json:"width,omitempty"`
+	Height        int                  `json:"height,omitempty"`
+	DescreenReset bool                 `json:"descreenReset,omitempty"`
+}
+
+type touchUpPreviewPatch struct {
+	DataURL string `json:"dataURL"`
+	X       int    `json:"x"`
+	Y       int    `json:"y"`
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
+}
+
+const touchUpPreviewPatchMaxPixels = 512 * 512
+
+// encodeTouchUpPreviewPatch returns the exact output rectangle covering the
+// non-zero mask. Oversized rectangles deliberately fall back to the normal
+// immutable viewport render so one unusual stroke cannot create a huge event.
+func encodeTouchUpPreviewPatch(out *image.NRGBA, mask *image.Alpha) (*touchUpPreviewPatch, error) {
+	if out == nil || mask == nil {
+		return nil, nil
+	}
+	scan := mask.Bounds().Intersect(out.Bounds())
+	bounds := image.Rectangle{}
+	for y := scan.Min.Y; y < scan.Max.Y; y++ {
+		row := (y - mask.Rect.Min.Y) * mask.Stride
+		for x := scan.Min.X; x < scan.Max.X; x++ {
+			if mask.Pix[row+x-mask.Rect.Min.X] == 0 {
+				continue
+			}
+			pixel := image.Rect(x, y, x+1, y+1)
+			if bounds.Empty() {
+				bounds = pixel
+			} else {
+				bounds = bounds.Union(pixel)
+			}
+		}
+	}
+	if bounds.Empty() {
+		return nil, nil
+	}
+	// Keep transparent padding around the changed pixels. Without it, browser
+	// filtering can clamp an edge pixel across the PNG's rectangular boundary.
+	bounds = bounds.Inset(-1).Intersect(out.Bounds())
+	if bounds.Dx() > touchUpPreviewPatchMaxPixels/bounds.Dy() {
+		return nil, nil
+	}
+
+	patch := image.NewNRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			coverage := mask.AlphaAt(x, y).A
+			if coverage == 0 {
+				continue
+			}
+			pixel := out.NRGBAAt(x, y)
+			// Fully covered pixels replace the preview exactly. At the brush's
+			// antialiased edge, retain its fractional coverage: making a 1/255
+			// edge pixel opaque exposes the quality difference between this
+			// lossless patch and the JPEG viewport as a bright contour.
+			pixel.A = uint8((uint16(pixel.A)*uint16(coverage) + 127) / 255)
+			patch.SetNRGBA(x-bounds.Min.X, y-bounds.Min.Y, pixel)
+		}
+	}
+	var encoded bytes.Buffer
+	encoder := png.Encoder{CompressionLevel: png.BestSpeed}
+	if err := encoder.Encode(&encoded, patch); err != nil {
+		return nil, err
+	}
+	return &touchUpPreviewPatch{
+		DataURL: "data:image/png;base64," + base64.StdEncoding.EncodeToString(encoded.Bytes()),
+		X:       bounds.Min.X,
+		Y:       bounds.Min.Y,
+		Width:   bounds.Dx(),
+		Height:  bounds.Dy(),
+	}, nil
 }
 
 // commitTouchupResult atomically verifies and records a completed touch-up.
@@ -584,8 +659,20 @@ func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, it
 		}
 		a.logf("TouchUpApply %d: committed in %s (total %s)", generation, time.Since(phaseStarted), time.Since(operationStarted))
 
+		phaseStarted = time.Now()
+		patch, patchErr := encodeTouchUpPreviewPatch(out, mask)
+		if patchErr != nil {
+			// The immutable preview remains a complete, authoritative fallback.
+			a.logf("TouchUpApply %d: preview patch failed in %s: %v", generation, time.Since(phaseStarted), patchErr)
+		} else if patch != nil {
+			a.logf("TouchUpApply %d: preview patch %dx%d encoded in %s, payload=%d bytes (total %s)",
+				generation, patch.Width, patch.Height, time.Since(phaseStarted), len(patch.DataURL), time.Since(operationStarted))
+		} else {
+			a.logf("TouchUpApply %d: preview patch skipped in %s (total %s)", generation, time.Since(phaseStarted), time.Since(operationStarted))
+		}
+
 		b := out.Bounds()
-		emit(touchUpDoneEvent{Preview: preview, Message: "Touch-up applied.", Width: b.Dx(), Height: b.Dy(), DescreenReset: descreenReset})
+		emit(touchUpDoneEvent{Preview: preview, Patch: patch, Message: "Touch-up applied.", Width: b.Dx(), Height: b.Dy(), DescreenReset: descreenReset})
 		outcome = "success"
 	}()
 
