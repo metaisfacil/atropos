@@ -848,9 +848,11 @@ export function useImageActions({
     if (m === modeRef.current) return Promise.resolve()
     modeRef.current = m
     setMode(m)
+    // With no document, selecting a mode is only a preference for the pending
+    // first load. Keep that load's generation and cleanup ownership intact.
+    if (!imageLoaded) { backendModeRef.current = m; return Promise.resolve() }
     const generation = beginTransition()
     const current = () => transitionRef.current === generation
-    if (!imageLoaded) { backendModeRef.current = m; return Promise.resolve() }
     setLoading(true)
     const task = async () => {
       if (!current()) return

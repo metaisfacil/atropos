@@ -1279,3 +1279,7 @@ Successful queued loads publish document state before the next load starts, even
 when superseded. If a later load fails, the frontend retains the last successful
 backend document; stale loads do not finish a newer request's busy state or start
 auto-detection.
+
+Before the first document is loaded, mode selection updates the mode preference
+without invalidating an in-flight load. Clipboard success and failure both retain
+ownership of their loading cleanup, and a successful load uses the selected mode.

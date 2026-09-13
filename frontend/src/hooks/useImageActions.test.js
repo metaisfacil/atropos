@@ -396,3 +396,31 @@ it('retains the successful document when a newer queued load fails', async () =>
   expect(props.setLoading).toHaveBeenLastCalledWith(false)
   expect(props.showError).toHaveBeenCalled()
 })
+
+
+it.each([false, true])('keeps the first clipboard load owned across mode changes (failure=%s)', async fail => {
+  let finishRead, rejectRead
+  appMocks.LoadImageFromClipboard.mockReturnValueOnce(new Promise((resolve, reject) => { finishRead = resolve; rejectRead = reject }))
+    .mockResolvedValue({ preview: '/next-paste', width: 40, height: 30 })
+  const props = { ...makeProps(), imageLoaded: false }
+  const { result } = renderHook(() => useImageActions(props))
+  let paste
+  await act(async () => { paste = result.current.handlePasteImage() })
+  await act(async () => result.current.handleModeSwitch('disc'))
+  await act(async () => result.current.handleModeSwitch('line'))
+  await act(async () => {
+    if (fail) rejectRead(new Error('clipboard does not contain an image'))
+    else finishRead({ preview: '/clipboard', width: 20, height: 30 })
+    await paste
+  })
+  expect(props.setMode).toHaveBeenLastCalledWith('line')
+  expect(props.setLoading).toHaveBeenLastCalledWith(false)
+  expect(result.current.loadingFull).toBe(false)
+  if (!fail) {
+    expect(props.setImageLoaded).toHaveBeenCalledWith(true)
+    expect(props.setPreview).toHaveBeenLastCalledWith('/clipboard')
+  }
+  await act(async () => result.current.handlePasteImage())
+  expect(appMocks.LoadImageFromClipboard).toHaveBeenCalledTimes(2)
+  expect(props.setPreview).toHaveBeenLastCalledWith('/next-paste')
+})
