@@ -144,6 +144,69 @@ describe('Re-crop viewport reset', () => {
 })
 
 describe('Manual corner parameters', () => {
+  it('uses the latest slider values from the long-lived filesystem drop callback', async () => {
+    const props = makeProps()
+    props.mode = 'corner'
+    appMocks.LoadImage.mockResolvedValue({
+      preview: '/__atropos/preview/session-3/0.jpg',
+      width: 2400,
+      height: 1600,
+      suggestedCornerParams: { maxCorners: 500, minDistance: 80 },
+    })
+    appMocks.DetectCorners.mockResolvedValue({
+      preview: '/__atropos/preview/session-3/1.jpg',
+      width: 2400,
+      height: 1600,
+      corners: [],
+      message: 'Detected 0 corners',
+    })
+
+    const { rerender } = renderHook(currentProps => useImageActions(currentProps), {
+      initialProps: props,
+    })
+    await waitFor(() => expect(appMocks.GetLaunchArgs).toHaveBeenCalled())
+    const drop = runtimeMocks.OnFileDrop.mock.calls.at(-1)[0]
+
+    rerender({
+      ...props,
+      cornerState: { ...props.cornerState, maxCorners: 275, minDistance: 37 },
+    })
+    await act(async () => drop(0, 0, ['next-scan.png']))
+
+    expect(appMocks.DetectCorners).toHaveBeenLastCalledWith(expect.objectContaining({
+      maxCorners: 275,
+      minDistance: 37,
+    }))
+  })
+
+  it('reuses the current manual parameters when a new image supplies suggestions', async () => {
+    const props = makeProps()
+    props.mode = 'corner'
+    props.cornerState = { ...props.cornerState, maxCorners: 275, minDistance: 37 }
+    appMocks.DetectCorners.mockResolvedValue({
+      preview: '/__atropos/preview/session-3/1.jpg',
+      width: 2400,
+      height: 1600,
+      corners: [],
+      message: 'Detected 0 corners',
+    })
+
+    const { result } = renderHook(() => useImageActions(props))
+    await waitFor(() => expect(appMocks.GetLaunchArgs).toHaveBeenCalled())
+
+    await act(async () => result.current.handleCompositorLoad({
+      preview: '/__atropos/preview/session-3/0.jpg',
+      width: 2400,
+      height: 1600,
+      suggestedCornerParams: { maxCorners: 500, minDistance: 80 },
+    }))
+
+    expect(appMocks.DetectCorners).toHaveBeenLastCalledWith(expect.objectContaining({
+      maxCorners: 275,
+      minDistance: 37,
+    }))
+  })
+
   it('does not reapply load-time suggestions when Detect is pressed', async () => {
     const props = makeProps()
     props.mode = 'corner'

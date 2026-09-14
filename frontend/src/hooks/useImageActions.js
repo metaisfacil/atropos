@@ -65,6 +65,17 @@ export function useImageActions({
   const pendingDropRef     = useRef(null)
   const pendingSaveRef     = useRef(false)
   const loadingRef         = useRef(false)
+  // Wails registers the filesystem-drop callback once. Keep everything that
+  // callback needs in refs so it never replays detector values from the first
+  // render after the user has moved a slider or changed the Options toggle.
+  const cornerStateRef       = useRef(cornerState)
+  const dotRadiusRef         = useRef(dotRadius)
+  const stretchPreprocessRef = useRef(useStretchPreprocess)
+  const autoCornerParamsRef  = useRef(autoCornerParams)
+  cornerStateRef.current = cornerState
+  dotRadiusRef.current = dotRadius
+  stretchPreprocessRef.current = useStretchPreprocess
+  autoCornerParamsRef.current = autoCornerParams
   useEffect(() => { modeRef.current = mode }, [mode])
   useEffect(() => { loadingRef.current = loading }, [loading])
 
@@ -140,18 +151,21 @@ export function useImageActions({
   // ── Core corner detector (private — used by loadFile and handleDetectCorners) ─
   const runDetectCorners = async (overrides = {}) => {
     const gen = ++detectGenRef.current
-    const maxCorners  = overrides.maxCorners  ?? cornerState.maxCorners
-    const minDistance = overrides.minDistance ?? cornerState.minDistance
+    const currentCornerState = cornerStateRef.current
+    const currentDotRadius   = dotRadiusRef.current
+    const currentUseStretch  = stretchPreprocessRef.current
+    const maxCorners  = overrides.maxCorners  ?? currentCornerState.maxCorners
+    const minDistance = overrides.minDistance ?? currentCornerState.minDistance
     showStatus('Detecting corners…')
     let result
     try {
       result = await DetectCorners({
         maxCorners,
-        qualityLevel: cornerState.qualityLevel,
+        qualityLevel: currentCornerState.qualityLevel,
         minDistance,
-        accentValue:  cornerState.accent,
-        dotRadius,
-        useStretch:      useStretchPreprocess,
+        accentValue:  currentCornerState.accent,
+        dotRadius:    currentDotRadius,
+        useStretch:      currentUseStretch,
         stretchLow:      0.01,
         stretchHigh:     0.99,
       })
@@ -170,10 +184,10 @@ export function useImageActions({
     setCornersDetected(true)
     lastDetectSettings.current = {
       maxCorners,
-      qualityLevel:   cornerState.qualityLevel,
+      qualityLevel:   currentCornerState.qualityLevel,
       minDistance,
-      accent:         cornerState.accent,
-      useStretch:     useStretchPreprocess,
+      accent:         currentCornerState.accent,
+      useStretch:     currentUseStretch,
     }
   }
 
@@ -200,7 +214,7 @@ export function useImageActions({
     setLoadingFull(false)
 
     if (autoDetect && modeRef.current === 'corner') {
-      await runDetectCorners(autoCornerParams ? suggestedCornerParamsRef.current : {})
+      await runDetectCorners(autoCornerParamsRef.current ? suggestedCornerParamsRef.current : {})
     }
 
     if (transitionRef.current === generation) setLoading(false)
@@ -430,7 +444,7 @@ export function useImageActions({
       modeRef.current = 'corner'
       backendModeRef.current = 'corner'
       setMode('corner')
-      await runDetectCorners(autoCornerParams ? suggestedCornerParamsRef.current : {})
+      await runDetectCorners(autoCornerParamsRef.current ? suggestedCornerParamsRef.current : {})
     } catch (err) {
       showError(err)
     } finally {
