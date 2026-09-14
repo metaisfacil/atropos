@@ -182,9 +182,11 @@ func adaptiveHighlightStretch(src *image.Gray) (*image.Gray, int, int) {
 // different scales. The detector's full minDistance is intentionally not used
 // here: scale-space localization can shift a broad corner without making the
 // two candidates redundant for snapping purposes.
+const cornerDedupeDivisor = 8.0
+
 func dedupeCornerPoints(corners []image.Point, minDistance int) []image.Point {
 	var unique []image.Point
-	dedupeDistance := float64(minDistance) / 3.0
+	dedupeDistance := float64(minDistance) / cornerDedupeDivisor
 	minDistSq := dedupeDistance * dedupeDistance
 	for _, c := range corners {
 		duplicate := false

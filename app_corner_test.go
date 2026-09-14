@@ -143,11 +143,11 @@ func TestHighlightRecoveryBudgetFavorsBrightPerimeterScans(t *testing.T) {
 func TestDedupeCornerPointsPreservesDistinctScaleLocalizations(t *testing.T) {
 	points := []image.Point{
 		{X: 100, Y: 100},
-		{X: 110, Y: 100}, // duplicate: less than 90/3 pixels away
-		{X: 140, Y: 100}, // distinct: formerly removed by the 90/2 radius
+		{X: 110, Y: 100}, // duplicate: less than 90/8 pixels away
+		{X: 120, Y: 100}, // distinct: calibrated corpus needs both localizations
 	}
 	got := dedupeCornerPoints(points, 90)
-	want := []image.Point{{X: 100, Y: 100}, {X: 140, Y: 100}}
+	want := []image.Point{{X: 100, Y: 100}, {X: 120, Y: 100}}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
