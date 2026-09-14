@@ -153,6 +153,8 @@ export default function App() {
     syncHistoryDiscSettings,
     discCenterCutout, setDiscCenterCutout,
     discCutoutPercent, setDiscCutoutPercent,
+    cornerMaxCorners, setCornerMaxCorners,
+    cornerMinDistance, setCornerMinDistance,
     autoCornerParams, setAutoCornerParams,
     closeAfterSave, setCloseAfterSave,
     postSaveEnabled, setPostSaveEnabled,
@@ -161,6 +163,17 @@ export default function App() {
     straightEdgeRemainsActive, setStraightEdgeRemainsActive,
     autoDetectOnModeSwitch, setAutoDetectOnModeSwitch,
   } = usePersistentSettings({ setPreview })
+
+  // Automatic load-time suggestions are presentation state only. Keep the
+  // persisted manual values separate so disabling automatic adjustment can
+  // restore them without saving an image-derived suggestion as user intent.
+  useEffect(() => {
+    if (autoCornerParams) return
+    setCornerState(state => {
+      if (state.maxCorners === cornerMaxCorners && state.minDistance === cornerMinDistance) return state
+      return { ...state, maxCorners: cornerMaxCorners, minDistance: cornerMinDistance }
+    })
+  }, [autoCornerParams, cornerMaxCorners, cornerMinDistance])
 
   const rendererSource = discLiveActive && discNoMaskPreview ? discNoMaskPreview : preview
   const previewPresentationPending = isPreviewPresentationPending(preview, presentedPreview)
@@ -398,6 +411,14 @@ export default function App() {
               <CornerPanel
                 state={cornerState}
                 setState={setCornerState}
+                onMaxCornersChange={(value) => {
+                  setCornerState(state => ({ ...state, maxCorners: value }))
+                  setCornerMaxCorners(value)
+                }}
+                onMinDistanceChange={(value) => {
+                  setCornerState(state => ({ ...state, minDistance: value }))
+                  setCornerMinDistance(value)
+                }}
                 dotRadius={dotRadius}
                 setDotRadius={setDotRadius}
                 customCorner={customCorner}

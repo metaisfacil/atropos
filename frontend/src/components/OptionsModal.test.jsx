@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import React from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import OptionsModal from './OptionsModal'
+
+afterEach(cleanup)
 
 function renderOptions(overrides = {}) {
   const props = {
@@ -49,5 +51,19 @@ describe('OptionsModal Debug tab', () => {
 
     expect(props.onClose).toHaveBeenCalledTimes(1)
     expect(props.onOpenCornerCalibration).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('OptionsModal corner parameters', () => {
+  it('offers automatic load adjustment as an opt-in setting', async () => {
+    const props = renderOptions({ autoCornerParams: false })
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Modes' }))
+    const checkbox = await screen.findByRole('checkbox', { name: /Auto-adjust parameters on load/ })
+    expect(checkbox.checked).toBe(false)
+    expect(screen.getByText('(default: off)')).toBeTruthy()
+
+    fireEvent.click(checkbox)
+    expect(props.setAutoCornerParams).toHaveBeenCalledWith(true)
   })
 })

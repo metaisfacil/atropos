@@ -44,6 +44,9 @@ export namespace main {
 	    warpFillColor: string;
 	    discCenterCutout: boolean;
 	    discCutoutPercent: number;
+	    cornerMaxCorners: number;
+	    cornerMinDistance: number;
+	    cornerSettingsVersion: number;
 	    autoCornerParams: boolean;
 	    closeAfterSave: boolean;
 	    postSaveEnabled: boolean;
@@ -65,6 +68,9 @@ export namespace main {
 	        this.warpFillColor = source["warpFillColor"];
 	        this.discCenterCutout = source["discCenterCutout"];
 	        this.discCutoutPercent = source["discCutoutPercent"];
+	        this.cornerMaxCorners = source["cornerMaxCorners"];
+	        this.cornerMinDistance = source["cornerMinDistance"];
+	        this.cornerSettingsVersion = source["cornerSettingsVersion"];
 	        this.autoCornerParams = source["autoCornerParams"];
 	        this.closeAfterSave = source["closeAfterSave"];
 	        this.postSaveEnabled = source["postSaveEnabled"];

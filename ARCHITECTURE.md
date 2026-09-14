@@ -79,7 +79,7 @@ This document contains the detailed system model, data flow, and operation order
 | `hooks/useKeyboardLayout.js` | Reads the platform keyboard layout map for the physical crop/rotate positions and refreshes it on `layoutchange` or window focus. Supplies QWERTY labels when the Keyboard Map API is unavailable or denied. |
 | `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, bounded preview-patch handoff, window mouseup effect, `EventsOn("touchup-done")` effect. |
 | `hooks/useZoomPan.js` | Viewport camera state: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, and scroll anchoring. `imgRef` points at the transparent logical image surface, so cursor anchoring and the existing pointer state machine use the same geometry as the canvas renderer without making image pixels a DOM `<img>`. |
-| `hooks/usePersistentSettings.js` | File-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, `autoCornerParams`, `closeAfterSave`, `postSaveEnabled`, `postSaveCommand`, `touchupRemainsActive`, `straightEdgeRemainsActive`, `autoDetectOnModeSwitch`). Loads from Go (`GetAllSettings`) on mount and persists via `SaveAllSettings` on every change. Performs a one-time migration from `localStorage` on first launch of the file-backed version. |
+| `hooks/usePersistentSettings.js` | File-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, manual corner parameters, `autoCornerParams`, workflow flags). Loads from Go (`GetAllSettings`) on mount and persists via `SaveAllSettings` on every change. Performs one-time migrations for legacy `localStorage` and corner defaults. |
 | `hooks/useStatusMessage.js` | `imageInfo` + fade timer logic (`showStatus`). |
 | `components/PreviewCanvas.jsx` | Visible viewport renderer. Requests only the visible/overscanned image-space region at the device density needed for the current zoom, receives that small JPEG through the Wails RPC bridge as a data URL, caches recent rasters, composites touch-up patches, and draws all visible image-space guides. |
 | `components/ImageOverlays.jsx` | Transparent DOM hit targets for editable Normal/Line handles. Visible guides are drawn by `PreviewCanvas`; this component exists so the mature pointer state machine can keep DOM hit testing. |
@@ -994,7 +994,7 @@ GetCleanPreview()
 
 When switching back to corner mode, if all of `{maxCorners, qualityLevel, minDistance, accent, useStretch}` match `lastDetectSettings.current`, `RestoreCornerOverlay` is called instead of re-detecting. `lastDetectSettings.current` is set after every successful `DetectCorners` call and cleared by `resetImageState` (used by `loadFile`, `loadImageFromBytes`, and compositor-load promotion).
 
-Suggested Max Corners and Min Distance values are load-time defaults only. Pressing **Detect** or automatically detecting after returning to Corner mode uses the current controls, so manual changes made after image load are preserved even when `autoCornerParams` is enabled.
+Max Corners and Min Distance are persistent manual settings and are reused across image loads and application restarts by default. When `autoCornerParams` is enabled in Options, image-derived suggestions replace the visible controls only for each new load; they do not overwrite the saved manual values. Turning the option off restores those manual values. Pressing **Detect** or automatically detecting after returning to Corner mode uses the values currently shown in the controls.
 
 ---
 
@@ -1236,7 +1236,9 @@ Settings are persisted to `%AppData%\atropos\settings.json` (Windows) / `~/.conf
 | Warp fill color | `warpFillColor` | `warpFillColor` | CSS hex `"#rrggbb"` |
 | Disc centre cutout | `discCenterCutout` | `discCenterCutout` | `true` / `false` (default `true`) |
 | Disc cutout size | `discCutoutPercent` | `discCutoutPercent` | Integer 0–50 (default `11`) |
-| Auto-adjust corner params | `autoCornerParams` | *(frontend-only)* | `true` / `false` (default `true`) |
+| Manual maximum corners | `cornerMaxCorners` | *(frontend-only)* | `1`–`1000` (default `500`) |
+| Manual minimum corner distance | `cornerMinDistance` | *(frontend-only)* | `1`–`200` (default `100`) |
+| Auto-adjust corner params | `autoCornerParams` | *(frontend-only)* | `true` / `false` (default `false`) |
 | Close after save | `closeAfterSave` | *(frontend-only)* | `true` / `false` (default `false`) |
 | Post-save enabled | `postSaveEnabled` | *(frontend-only)* | `true` / `false` (default `false`) |
 | Post-save command | `postSaveCommand` | *(frontend-only)* | Any string |

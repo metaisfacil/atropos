@@ -42,9 +42,11 @@ describe('usePersistentSettings – compiled-in defaults', () => {
     expect(result.current.discCutoutPercent).toBe(11)
   })
 
-  it('auto-detection settings are enabled by default', () => {
+  it('preserves manual corner parameters by default', () => {
     const { result } = renderHook(() => usePersistentSettings({ setPreview: MOCK_SET_PREVIEW }))
-    expect(result.current.autoCornerParams).toBe(true)
+    expect(result.current.autoCornerParams).toBe(false)
+    expect(result.current.cornerMaxCorners).toBe(500)
+    expect(result.current.cornerMinDistance).toBe(100)
     expect(result.current.autoDetectOnModeSwitch).toBe(true)
   })
 
@@ -79,10 +81,42 @@ describe('usePersistentSettings – backend merge', () => {
 
   it('does not migrate localStorage when initialized=true', async () => {
     localStorage.setItem('touchupBackend', 'iopaint')
-    GetAllSettings.mockResolvedValue({ initialized: true, touchupBackend: 'patchmatch' })
+    GetAllSettings.mockResolvedValue({ initialized: true, touchupBackend: 'patchmatch', cornerSettingsVersion: 1 })
     const { result } = renderHook(() => usePersistentSettings({ setPreview: MOCK_SET_PREVIEW }))
     await waitFor(() => expect(GetAllSettings).toHaveBeenCalled())
     expect(result.current.touchupBackend).toBe('patchmatch')
+    expect(SaveAllSettings).not.toHaveBeenCalled()
+  })
+
+  it('migrates the former automatic corner default to preserved manual values once', async () => {
+    GetAllSettings.mockResolvedValue({
+      initialized: true,
+      autoCornerParams: true,
+      cornerSettingsVersion: 0,
+    })
+    const { result } = renderHook(() => usePersistentSettings({ setPreview: MOCK_SET_PREVIEW }))
+    await waitFor(() => expect(SaveAllSettings).toHaveBeenCalled())
+    expect(result.current.autoCornerParams).toBe(false)
+    expect(SaveAllSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      autoCornerParams: false,
+      cornerMaxCorners: 500,
+      cornerMinDistance: 100,
+      cornerSettingsVersion: 1,
+    }))
+  })
+
+  it('keeps an explicit automatic corner choice after migration', async () => {
+    GetAllSettings.mockResolvedValue({
+      initialized: true,
+      autoCornerParams: true,
+      cornerMaxCorners: 320,
+      cornerMinDistance: 48,
+      cornerSettingsVersion: 1,
+    })
+    const { result } = renderHook(() => usePersistentSettings({ setPreview: MOCK_SET_PREVIEW }))
+    await waitFor(() => expect(result.current.autoCornerParams).toBe(true))
+    expect(result.current.cornerMaxCorners).toBe(320)
+    expect(result.current.cornerMinDistance).toBe(48)
     expect(SaveAllSettings).not.toHaveBeenCalled()
   })
 })
@@ -136,7 +170,7 @@ describe('usePersistentSettings – setters', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
     localStorage.clear()
-    GetAllSettings.mockResolvedValue({ initialized: true })
+    GetAllSettings.mockResolvedValue({ initialized: true, cornerSettingsVersion: 1 })
   })
 
   it('setTouchupBackend updates state and persists', async () => {
@@ -163,6 +197,21 @@ describe('usePersistentSettings – setters', () => {
     act(() => { result.current.setDiscCenterCutout(false) })
     expect(result.current.discCenterCutout).toBe(false)
     expect(SetDiscSettings).toHaveBeenCalledWith(expect.objectContaining({ centerCutout: false }))
+  })
+
+  it('persists manual corner parameters', async () => {
+    const { result } = renderHook(() => usePersistentSettings({ setPreview: MOCK_SET_PREVIEW }))
+    await waitFor(() => expect(GetAllSettings).toHaveBeenCalled())
+    act(() => {
+      result.current.setCornerMaxCorners(275)
+      result.current.setCornerMinDistance(37)
+    })
+    expect(result.current.cornerMaxCorners).toBe(275)
+    expect(result.current.cornerMinDistance).toBe(37)
+    expect(SaveAllSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      cornerMaxCorners: 275,
+      cornerMinDistance: 37,
+    }))
   })
 
   it('SaveAllSettings receives the complete settings object, not just the changed key', async () => {

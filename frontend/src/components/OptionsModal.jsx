@@ -216,14 +216,14 @@ export default function OptionsModal({
             </div>
           </DelayedHint>
 
-          <DelayedHint hint="When on, Min Distance and Max Corners are automatically set from image dimensions each time an image is loaded. You can still adjust them manually after loading.">
+          <DelayedHint hint="When on, Min Distance and Max Corners are automatically set from image dimensions each time an image is loaded. When off, your last manual values are restored and reused.">
             <label className="options-radio-label">
               <input
                 type="checkbox"
                 checked={autoCornerParams}
                 onChange={(e) => setAutoCornerParams(e.target.checked)}
               />
-              Auto-adjust parameters on load <span className="options-hint">(default: on)</span>
+              Auto-adjust parameters on load <span className="options-hint">(default: off)</span>
             </label>
           </DelayedHint>
         </>

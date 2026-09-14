@@ -15,7 +15,10 @@ const DEFAULTS = {
   warpFillColor:             '#ffffff',
   discCenterCutout:          true,
   discCutoutPercent:         11,
-  autoCornerParams:          true,
+  cornerMaxCorners:          500,
+  cornerMinDistance:         100,
+  cornerSettingsVersion:     1,
+  autoCornerParams:          false,
   closeAfterSave:            false,
   postSaveEnabled:           false,
   postSaveCommand:           '',
@@ -64,10 +67,25 @@ export function usePersistentSettings({ setPreview }) {
   useEffect(() => {
     GetAllSettings().then((s) => {
       let merged = { ...DEFAULTS, ...s }
+      let needsSave = false
       if (!s.initialized) {
         merged = migrateFromLocalStorage(merged)
-        SaveAllSettings(merged).catch(() => {})
+        needsSave = true
+      } else if ((s.cornerSettingsVersion ?? 0) < 1) {
+        // Older settings files contain autoCornerParams=true because that was
+        // the former default, not necessarily because the user selected it.
+        // Migrate once to stable manual parameters; subsequent opt-in choices
+        // are preserved normally by cornerSettingsVersion.
+        merged = {
+          ...merged,
+          autoCornerParams: false,
+          cornerMaxCorners: DEFAULTS.cornerMaxCorners,
+          cornerMinDistance: DEFAULTS.cornerMinDistance,
+          cornerSettingsVersion: 1,
+        }
+        needsSave = true
       }
+      if (needsSave) SaveAllSettings(merged).catch(() => {})
       settingsRef.current = merged
       setSettings(merged)
     }).catch(() => {})
@@ -86,6 +104,8 @@ export function usePersistentSettings({ setPreview }) {
   const setIopaintURL     = (v) => update('iopaintUrl', v)
   const setWarpFillMode   = (v) => update('warpFillMode', v)
   const setWarpFillColor  = (v) => update('warpFillColor', v)
+  const setCornerMaxCorners           = (v) => update('cornerMaxCorners', v)
+  const setCornerMinDistance          = (v) => update('cornerMinDistance', v)
   const setAutoCornerParams          = (v) => update('autoCornerParams', v)
   const setCloseAfterSave            = (v) => update('closeAfterSave', v)
   const setPostSaveEnabled           = (v) => update('postSaveEnabled', v)
@@ -120,6 +140,8 @@ export function usePersistentSettings({ setPreview }) {
     warpFillColor:             settings.warpFillColor,
     discCenterCutout:          settings.discCenterCutout,
     discCutoutPercent:         settings.discCutoutPercent,
+    cornerMaxCorners:          settings.cornerMaxCorners,
+    cornerMinDistance:         settings.cornerMinDistance,
     autoCornerParams:          settings.autoCornerParams,
     closeAfterSave:            settings.closeAfterSave,
     postSaveEnabled:           settings.postSaveEnabled,
@@ -133,6 +155,8 @@ export function usePersistentSettings({ setPreview }) {
     setWarpFillColor,
     setDiscCenterCutout,
     setDiscCutoutPercent,
+    setCornerMaxCorners,
+    setCornerMinDistance,
     setAutoCornerParams,
     setCloseAfterSave,
     setPostSaveEnabled,

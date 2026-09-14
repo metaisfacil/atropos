@@ -23,6 +23,10 @@ type AllSettings struct {
 	// Disc
 	DiscCenterCutout  bool `json:"discCenterCutout"`
 	DiscCutoutPercent int  `json:"discCutoutPercent"`
+	// Corner detection
+	CornerMaxCorners      int `json:"cornerMaxCorners"`
+	CornerMinDistance     int `json:"cornerMinDistance"`
+	CornerSettingsVersion int `json:"cornerSettingsVersion"`
 	// Behaviour flags (frontend-only values persisted here for sharing)
 	AutoCornerParams          bool   `json:"autoCornerParams"`
 	CloseAfterSave            bool   `json:"closeAfterSave"`
@@ -63,7 +67,10 @@ func (a *App) GetAllSettings() AllSettings {
 		WarpFillColor:             fmt.Sprintf("#%02x%02x%02x", a.warpFillColor.R, a.warpFillColor.G, a.warpFillColor.B),
 		DiscCenterCutout:          a.discCenterCutout,
 		DiscCutoutPercent:         a.discCutoutPercent,
-		AutoCornerParams:          true,
+		CornerMaxCorners:          500,
+		CornerMinDistance:         100,
+		CornerSettingsVersion:     1,
+		AutoCornerParams:          false,
 		CloseAfterSave:            false,
 		PostSaveEnabled:           false,
 		PostSaveCommand:           "",
@@ -110,6 +117,12 @@ func sanitizeSettings(s AllSettings) AllSettings {
 	}
 	if s.DiscCutoutPercent < 0 || s.DiscCutoutPercent > 50 {
 		s.DiscCutoutPercent = 11
+	}
+	if s.CornerMaxCorners < 1 || s.CornerMaxCorners > 1000 {
+		s.CornerMaxCorners = 500
+	}
+	if s.CornerMinDistance < 1 || s.CornerMinDistance > 200 {
+		s.CornerMinDistance = 100
 	}
 	return s
 }

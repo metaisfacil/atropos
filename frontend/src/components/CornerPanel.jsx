@@ -3,6 +3,7 @@ import DelayedHint from './DelayedHint'
 
 // CornerPanel renders the corner-detection mode controls in the sidebar.
 // Props:
+//   on*Change             — updates and persists the two load-adjustable parameters
 //   state / setState      — detection params (maxCorners, qualityLevel, minDistance, accent, cornerCount)
 //   dotRadius             — current dot radius
 //   setDotRadius          — setter
@@ -13,6 +14,7 @@ import DelayedHint from './DelayedHint'
 //   setPreview            — update the canvas preview
 export default function CornerPanel({
   state, setState,
+  onMaxCornersChange, onMinDistanceChange,
   dotRadius, setDotRadius,
   customCorner, setCustomCorner,
   disabled,
@@ -29,7 +31,7 @@ export default function CornerPanel({
               max="1000"
               value={state.maxCorners}
               disabled={disabled}
-              onChange={(e) => setState({ ...state, maxCorners: parseInt(e.target.value) })}
+              onChange={(e) => onMaxCornersChange(parseInt(e.target.value))}
             />
             <span className="value-display">{state.maxCorners}</span>
           </div>
@@ -63,7 +65,7 @@ export default function CornerPanel({
               max="200"
               value={state.minDistance}
               disabled={disabled}
-              onChange={(e) => setState({ ...state, minDistance: parseInt(e.target.value) })}
+              onChange={(e) => onMinDistanceChange(parseInt(e.target.value))}
             />
             <span className="value-display">{state.minDistance}</span>
           </div>
