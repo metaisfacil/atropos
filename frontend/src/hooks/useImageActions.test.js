@@ -75,6 +75,7 @@ function makeProps() {
     touchupDraggingRef: { current: false },
     canvasRef: { current: null },
     compositorDropRef: { current: null },
+    calibrationDropRef: { current: null },
     showStatus: vi.fn(),
     showError: vi.fn(),
     unsavedChanges: false,
@@ -355,6 +356,20 @@ describe('State transition ownership', () => {
   })
 })
 
+
+it('routes the full dropped batch to Corner Calibration while it is open', async () => {
+  const props = makeProps()
+  props.calibrationDropRef.current = vi.fn()
+  props.compositorDropRef.current = vi.fn()
+  renderHook(() => useImageActions(props))
+  const drop = runtimeMocks.OnFileDrop.mock.calls.at(-1)[0]
+
+  await act(async () => drop(0, 0, ['one.tif', 'notes.txt', 'two.JPG']))
+
+  expect(props.calibrationDropRef.current).toHaveBeenCalledWith(['one.tif', 'two.JPG'])
+  expect(props.compositorDropRef.current).not.toHaveBeenCalled()
+  expect(appMocks.LoadImage).not.toHaveBeenCalled()
+})
 
 it('queues overlapping drops and keeps the presented document synchronized', async () => {
   let firstResolve, secondResolve

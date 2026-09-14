@@ -9,6 +9,7 @@ import ShortcutsPanel from './components/ShortcutsPanel'
 import OptionsModal from './components/OptionsModal'
 import ToolsPanel from './components/ToolsPanel'
 import CompositorModal from './components/CompositorModal'
+import CornerCalibrationModal from './components/CornerCalibrationModal'
 import AboutModal from './components/AboutModal'
 import ErrorModal from './components/ErrorModal'
 import ConfirmationModal from './components/ConfirmationModal'
@@ -114,6 +115,7 @@ export default function App() {
   const [adjustmentDragKind, setAdjustmentDragKind] = useState('none')
 
   const compositorDropRef = useRef(null)
+  const calibrationDropRef = useRef(null)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [adjPanelOpen, setAdjPanelOpen] = useState(false)
   const [autoContrastPending, setAutoContrastPending] = useState(false)
@@ -127,6 +129,7 @@ export default function App() {
   const [optionsOpen, setOptionsOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
   const [compositorOpen, setCompositorOpen] = useState(false)
+  const [cornerCalibrationOpen, setCornerCalibrationOpen] = useState(false)
   const [toolsOpen, setToolsOpen] = useState(false)
   const sidebarRef = useRef(null)
 
@@ -254,6 +257,7 @@ export default function App() {
     showStatus, showError,
     setImageMeta,
     compositorDropRef,
+    calibrationDropRef,
     setDiscRotation,
     unsavedChanges, setUnsavedChanges,
   })
@@ -580,6 +584,11 @@ export default function App() {
         }}
         dropRef={compositorDropRef}
       />
+      <CornerCalibrationModal
+        open={cornerCalibrationOpen}
+        onClose={() => setCornerCalibrationOpen(false)}
+        dropRef={calibrationDropRef}
+      />
       <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
       <ErrorModal message={errorMessage} onClose={() => setErrorMessage(null)} />
       <ConfirmationModal
@@ -619,6 +628,7 @@ export default function App() {
         setStraightEdgeRemainsActive={setStraightEdgeRemainsActive}
         autoDetectOnModeSwitch={autoDetectOnModeSwitch}
         setAutoDetectOnModeSwitch={setAutoDetectOnModeSwitch}
+        onOpenCornerCalibration={() => setCornerCalibrationOpen(true)}
       />
 
       <main className="main-content">

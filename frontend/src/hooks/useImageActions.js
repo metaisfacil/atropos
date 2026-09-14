@@ -41,7 +41,7 @@ export function useImageActions({
   touchupDraggingRef, canvasRef,
   showStatus, showError,
   setImageMeta,
-  compositorDropRef,
+  compositorDropRef, calibrationDropRef,
   unsavedChanges, setUnsavedChanges,
 }) {
   const [loadingFull, setLoadingFull] = useState(false)
@@ -301,6 +301,11 @@ export function useImageActions({
     OnFileDrop(async (_x, _y, paths) => {
       if (!paths || paths.length === 0) return
       const validExts = ['png', 'jpg', 'jpeg', 'tif', 'tiff', 'bmp', 'gif', 'webp']
+      if (calibrationDropRef?.current) {
+        const imagePaths = paths.filter(p => validExts.includes(p.split('.').pop().toLowerCase()))
+        if (imagePaths.length > 0) calibrationDropRef.current(imagePaths)
+        return
+      }
       // If the compositor modal is open, forward the dropped paths to it instead
       if (compositorDropRef?.current) {
         const imagePaths = paths.filter(p => validExts.includes(p.split('.').pop().toLowerCase()))

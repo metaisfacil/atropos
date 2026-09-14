@@ -31,6 +31,7 @@ export default function OptionsModal({
   setStraightEdgeRemainsActive,
   autoDetectOnModeSwitch,
   setAutoDetectOnModeSwitch,
+  onOpenCornerCalibration,
 }) {
   const dialogRef = useRef(null)
   const [mounted, setMounted] = useState(false)
@@ -331,6 +332,33 @@ export default function OptionsModal({
               Close after save <span className="options-hint">(default: off)</span>
             </label>
           </DelayedHint>
+        </>
+      ),
+    },
+    {
+      id: 'debug',
+      label: 'Debug',
+      content: (
+        <>
+          <DelayedHint hint="Utilities for collecting diagnostic data used to evaluate and tune Atropos.">
+            <div className="options-section-title" tabIndex={0}>
+              Corner detection
+            </div>
+          </DelayedHint>
+
+          <p className="options-debug-description">
+            Annotate exact corners across a batch of raw scans and export a ground-truth JSON dataset.
+          </p>
+          <button
+            type="button"
+            className="options-debug-action"
+            onClick={() => {
+              onClose()
+              onOpenCornerCalibration()
+            }}
+          >
+            Open Corner Calibration
+          </button>
         </>
       ),
     },

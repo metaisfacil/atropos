@@ -953,6 +953,27 @@ button.options-close:hover {
   font-size: 11px;
 }
 
+.options-debug-description {
+  margin: 0;
+  color: #b8b8b8;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+button.options-debug-action {
+  width: auto;
+  align-self: flex-start;
+  padding: 7px 12px;
+  background: #3e3e42;
+  border: 1px solid #555;
+  color: #e0e0e0;
+  font-size: 12px;
+}
+
+button.options-debug-action:hover {
+  background: #505054;
+}
+
 .options-iopaint-url {
   max-height: 0;
   overflow: hidden;
@@ -1628,3 +1649,151 @@ button.about-btn:hover {
 }
 
 .compositor-orientation-select:disabled { opacity: 0.5; cursor: default; }
+.calibration-backdrop { background: rgba(0, 0, 0, 0.72); }
+.calibration-dialog {
+  width: min(1480px, 96vw);
+  height: min(940px, 94vh);
+  max-width: 96vw;
+  max-height: 94vh;
+  overflow: hidden;
+}
+.calibration-subtitle { margin-top: 3px; color: #858585; font-size: 11px; }
+.calibration-body {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.calibration-queue {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px;
+  gap: 10px;
+  background: #252526;
+  border-right: 1px solid #3e3e42;
+}
+.calibration-summary { color: #c8c8c8; font-size: 12px; font-weight: 600; }
+.calibration-file-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 3px;
+  overflow-y: auto;
+}
+.calibration-empty {
+  padding: 18px 10px;
+  border: 1px dashed #555;
+  border-radius: 4px;
+  color: #858585;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+button.calibration-file {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  gap: 7px;
+  background: #2d2d30;
+  border: 1px solid transparent;
+  color: #bbb;
+  font-size: 11px;
+  text-align: left;
+}
+button.calibration-file:hover { background: #38383c; }
+button.calibration-file.active { border-color: #007acc; background: #33333a; color: #fff; }
+button.calibration-file--done .calibration-file-state { color: #67d391; }
+button.calibration-file--draft .calibration-file-state { color: #e7bd62; }
+button.calibration-file--skipped { opacity: 0.62; }
+.calibration-file-state { flex: 0 0 16px; text-align: center; font-weight: 700; }
+.calibration-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.calibration-add { flex: 0 0 auto; font-size: 12px; }
+.calibration-workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 10px 12px;
+  gap: 8px;
+}
+.calibration-toolbar {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 12px;
+  color: #999;
+  font-size: 11px;
+}
+.calibration-zoom { display: flex; gap: 3px; }
+.calibration-zoom button {
+  width: auto;
+  padding: 3px 8px;
+  background: #3e3e42;
+  color: #bbb;
+  font-size: 11px;
+}
+.calibration-zoom button.active { background: #005a9e; color: #fff; }
+.calibration-next-corner { margin-left: auto; color: #9ddd9d; font-weight: 600; }
+.calibration-canvas-shell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #3e3e42;
+  border-radius: 4px;
+  background: #1e1e1e;
+}
+.calibration-canvas-shell > .preview-host {
+  width: 100%;
+  height: 100%;
+}
+.calibration-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: #bbb;
+  background: rgba(30, 30, 30, 0.88);
+  font-size: 12px;
+}
+.calibration-status {
+  min-height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  color: #aaa;
+  font-size: 11px;
+  line-height: 18px;
+}
+.calibration-status-message { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calibration-coordinates { display: flex; gap: 4px; margin-left: auto; flex: 0 0 auto; }
+.calibration-coordinates button {
+  width: auto;
+  padding: 2px 5px;
+  border: 1px solid #4d704d;
+  background: #263526;
+  color: #b9ffb9;
+  font: 10px ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.calibration-coordinates button:hover { background: #334a33; }
+.calibration-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.calibration-actions button { padding: 7px 10px; font-size: 12px; }
+.calibration-footer { align-items: center; gap: 10px; color: #777; font-size: 11px; }
+.calibration-footer > span { margin-right: auto; }
+.calibration-footer button { width: auto; min-width: 110px; font-size: 12px; }
+@media (max-width: 900px) {
+  .calibration-body { grid-template-columns: 180px minmax(0, 1fr); }
+  .calibration-toolbar > span:not(.calibration-next-corner) { display: none; }
+}

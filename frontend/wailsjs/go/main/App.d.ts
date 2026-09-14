@@ -6,6 +6,14 @@ export function AddLine(arg1:main.LineAddRequest):Promise<main.ProcessResult>;
 
 export function AutoContrast(arg1:main.AutoContrastRequest):Promise<main.ProcessResult>;
 
+export function CalibrationClearPreview():Promise<void>;
+
+export function CalibrationLoadImage(arg1:main.CalibrationLoadRequest):Promise<main.CalibrationImageInfo>;
+
+export function CalibrationOpenFilesDialog():Promise<Array<string>>;
+
+export function CalibrationSaveDataset(arg1:main.CalibrationSaveRequest):Promise<main.CalibrationSaveResult>;
+
 export function CancelCornerDetect():Promise<void>;
 
 export function CancelTouchup():Promise<void>;
@@ -73,6 +81,8 @@ export function ProcessLines():Promise<main.ProcessResult>;
 export function RecropImage():Promise<main.ImageInfo>;
 
 export function Redo():Promise<main.ProcessResult>;
+
+export function RenderCalibrationPreviewViewport(arg1:main.PreviewViewportRequest):Promise<main.PreviewViewportResponse>;
 
 export function RenderPreviewViewport(arg1:main.PreviewViewportRequest):Promise<main.PreviewViewportResponse>;
 

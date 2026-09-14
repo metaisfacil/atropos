@@ -10,6 +10,22 @@ export function AutoContrast(arg1) {
   return window['go']['main']['App']['AutoContrast'](arg1);
 }
 
+export function CalibrationClearPreview() {
+  return window['go']['main']['App']['CalibrationClearPreview']();
+}
+
+export function CalibrationLoadImage(arg1) {
+  return window['go']['main']['App']['CalibrationLoadImage'](arg1);
+}
+
+export function CalibrationOpenFilesDialog() {
+  return window['go']['main']['App']['CalibrationOpenFilesDialog']();
+}
+
+export function CalibrationSaveDataset(arg1) {
+  return window['go']['main']['App']['CalibrationSaveDataset'](arg1);
+}
+
 export function CancelCornerDetect() {
   return window['go']['main']['App']['CancelCornerDetect']();
 }
@@ -144,6 +160,10 @@ export function RecropImage() {
 
 export function Redo() {
   return window['go']['main']['App']['Redo']();
+}
+
+export function RenderCalibrationPreviewViewport(arg1) {
+  return window['go']['main']['App']['RenderCalibrationPreviewViewport'](arg1);
 }
 
 export function RenderPreviewViewport(arg1) {

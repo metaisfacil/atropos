@@ -62,6 +62,7 @@ This document contains the detailed system model, data flow, and operation order
   - [Wails-facing methods](#wails-facing-methods)
   - [Stitching pipeline](#stitching-pipeline-internalcompositorstitchgo)
   - [Frontend flow](#frontend-flow)
+- [Corner Calibration](#corner-calibration-app_calibrationgo)
 - [State transition ownership](#state-transition-ownership)
 
 ---
@@ -84,7 +85,8 @@ This document contains the detailed system model, data flow, and operation order
 | `components/ImageOverlays.jsx` | Transparent DOM hit targets for editable Normal/Line handles. Visible guides are drawn by `PreviewCanvas`; this component exists so the mature pointer state machine can keep DOM hit testing. |
 | `components/StatusBar.jsx` | Bottom status bar. Shows file format, pixel dimensions, DPI when known, and zoom level. Zoom is clickable and resets to 100%. All fields use `DelayedHint`. |
 | `components/DelayedHint.jsx` | Portal-rendered tooltip that appears after a 1 s hover delay. Uses a two-pass `useLayoutEffect` to clamp the tooltip inside the viewport before making it visible, avoiding flicker and edge clipping. |
-| `components/*Panel.jsx` | Mode-specific sidebar controls. `AdjustmentsPanel` owns resize, trim borders, auto-contrast, levels, descreen, dust removal, touch-up brush, and disc straight-edge controls. `ShortcutsPanel` accepts `canSave` and `imageLoaded` props and applies `.shortcut-item--disabled` to unavailable shortcuts. `ToolsPanel` is a collapsible sidebar panel between Adjustments and Shortcuts that houses the Image Compositor. |
+| `components/*Panel.jsx` | Mode-specific sidebar controls. `AdjustmentsPanel` owns resize, trim borders, auto-contrast, levels, descreen, dust removal, touch-up brush, and disc straight-edge controls. `ShortcutsPanel` accepts `canSave` and `imageLoaded` props and applies `.shortcut-item--disabled` to unavailable shortcuts. `ToolsPanel` is a collapsible sidebar panel between Adjustments and Shortcuts that opens the Image Compositor. |
+| `components/CornerCalibrationModal.jsx` | Isolated batch queue for source-pixel TL/TR/BR/BL ground-truth annotation, zoom/pan verification, draft navigation, and JSON export. |
 | `components/ResizeModal.jsx` | Modal for width/height or percentage resize with optional aspect lock and warning confirmation for large upscales. |
 | `components/CompositorModal.jsx` | Modal for image stitching. Manages an ordered list of image paths and an orientation selector, calls `CompositorStitch`, shows a preview, and exposes a “Load output” button that calls `CompositorLoadResult` and triggers `handleCompositorLoad`. |
 
@@ -1261,6 +1263,40 @@ A standalone planar image stitching feature. `internal/compositor` has no depend
 ### Frontend flow
 
 `handleCompositorLoad(info)` receives the `ImageInfo` from `CompositorLoadResult`, updates all image state, calls `resetImageState()`, updates `suggestedCornerParamsRef.current`, then switches to Corner mode and runs corner detection. The `CompositorModal` `onLoad` callback closes the modal **before** calling `handleCompositorLoad`.
+
+---
+
+## Corner Calibration (`app_calibration.go`)
+
+Corner Calibration is a standalone ground-truth annotation tool opened from the
+Debug tab in Options. A filesystem drop is routed to it while its modal is open, allowing
+an ordered batch of scans to be reviewed without entering the normal image
+pipeline.
+
+The backend decodes one calibration scan at a time into
+`calibrationPreviewAssets`, a dedicated one-revision `preview.Store`.
+`CalibrationLoadImage` does not read or write `originalImage`, `currentImage`,
+`warpedImage`, history, modes, or any adjustment state. The separate store is
+important: reviewing many scans cannot evict the active document's preview.
+`RenderCalibrationPreviewViewport` uses the same bounded viewport raster path as
+the main canvas, so Fit, 1:1, and 2:1 annotation remain full-source-coordinate
+operations without sending an entire raw scan over the Wails bridge.
+
+Points are recorded in strict screen-clockwise semantic order: top-left,
+top-right, bottom-right, bottom-left. Export writes schema-versioned JSON with
+source dimensions, paths relative to the dataset file where possible, explicit
+corner names, and integer source-image pixel coordinates. Backend validation
+rejects missing, out-of-bounds, degenerate, reversed, and duplicate samples.
+No scan pixels or sidecar files are modified during annotation; disk is written
+only after the user chooses **Export JSON** and confirms a save path.
+
+`app_corner_groundtruth_test.go` is the opt-in calibration evaluator. It runs
+the production `DetectCorners` request used by the UI and scores the nearest
+proposal to each labelled corner. Every fifth ordered sample is reserved as a
+stable holdout, so detector parameters can be chosen on the training scans and
+checked independently before acceptance. Dataset, split, index, and verbose
+diagnostic selection are controlled by `ATROPOS_CORNER_GROUND_TRUTH*`
+environment variables; normal repository tests skip the external corpus.
 
 
 ## State transition ownership

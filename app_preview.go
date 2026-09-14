@@ -40,7 +40,11 @@ func (a *App) imagePreviewURL(img *image.NRGBA) (string, error) {
 
 // RenderPreviewViewport is the Wails adapter for the internal preview store.
 func (a *App) RenderPreviewViewport(request PreviewViewportRequest) (PreviewViewportResponse, error) {
-	result, err := a.previewAssets.Render(a.ctx, preview.RenderRequest{
+	return a.renderPreviewViewport(a.previewAssets, request)
+}
+
+func (a *App) renderPreviewViewport(store *preview.Store, request PreviewViewportRequest) (PreviewViewportResponse, error) {
+	result, err := store.Render(a.ctx, preview.RenderRequest{
 		Preview:    request.Preview,
 		X:          request.X,
 		Y:          request.Y,

@@ -595,9 +595,37 @@ function drawVisualGuides(ctx, visual, layout, displayToImage, lineStartImgRef, 
       const p = toCanvas({ x: point.X, y: point.Y })
       drawCircle(ctx, p.x, p.y, dotImageRadius * imageScale, 'rgba(255,0,0,0.6)', 'red', 1)
     }
-    for (const point of visual.selectedCornerPts || []) {
+    const selected = visual.selectedCornerPts || []
+    if (visual.showCornerSequence && selected.length > 1) {
+      ctx.save()
+      ctx.beginPath()
+      selected.forEach((point, index) => {
+        const p = toCanvas({ x: point.X, y: point.Y })
+        if (index === 0) ctx.moveTo(p.x, p.y)
+        else ctx.lineTo(p.x, p.y)
+      })
+      if (selected.length === 4) ctx.closePath()
+      ctx.strokeStyle = 'rgba(0,255,0,0.9)'
+      ctx.lineWidth = 2
+      ctx.setLineDash([6, 4])
+      ctx.stroke()
+      ctx.restore()
+    }
+    for (const [index, point] of selected.entries()) {
       const p = toCanvas({ x: point.X, y: point.Y })
       drawCircle(ctx, p.x, p.y, selectedImageRadius * imageScale, 'rgba(0,255,0,0.6)', 'lime', 2)
+      const label = visual.cornerLabels?.[index]
+      if (label) {
+        ctx.save()
+        ctx.font = 'bold 12px sans-serif'
+        ctx.textBaseline = 'middle'
+        const textWidth = ctx.measureText(label).width
+        ctx.fillStyle = 'rgba(0,0,0,0.78)'
+        ctx.fillRect(p.x + 10, p.y - 10, textWidth + 8, 20)
+        ctx.fillStyle = '#b9ffb9'
+        ctx.fillText(label, p.x + 14, p.y)
+        ctx.restore()
+      }
     }
   }
 
@@ -678,6 +706,7 @@ export default function PreviewCanvas({
   shiftDragRef,
   displayToImage,
   lineStartImgRef,
+  renderPreviewViewport = RenderPreviewViewport,
 }) {
   const canvasRef = useRef(null)
   const [viewport, setViewport] = useState({ w: 1, h: 1 })
@@ -1030,7 +1059,7 @@ export default function PreviewCanvas({
         // authoritative image never crosses the bridge; on a typical fit view
         // this is tens of kilobytes, and at zoom it remains bounded by the
         // viewport pixel budget.
-        const response = await RenderPreviewViewport(request.rpc)
+        const response = await renderPreviewViewport(request.rpc)
         if (latestPropsRef.current?.source !== requestedSource) return
         if (!response?.dataURL) throw new Error('Viewport renderer returned no image data')
         imageSource = response.dataURL
@@ -1076,7 +1105,7 @@ export default function PreviewCanvas({
         requestTimerRef.current = window.setTimeout(() => requestRasterRef.current?.(), 0)
       }
     }
-  }, [activateRaster, displayWidth, findCoveringRaster, imageDims, optimisticCrop, pruneRasterCache, scrollRef, source])
+  }, [activateRaster, displayWidth, findCoveringRaster, imageDims, optimisticCrop, pruneRasterCache, renderPreviewViewport, scrollRef, source])
 
   // Keep scheduling stable across zoom/layout renders. The previous version
   // closed over requestRaster, whose identity changes with displayWidth; that

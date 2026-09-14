@@ -19,6 +19,11 @@ type App struct {
 	// previewAssets serves immutable, versioned full-resolution previews
 	// directly to the WebView without carrying image bytes through Wails IPC.
 	previewAssets *preview.Store
+	// calibrationPreviewAssets is deliberately separate from previewAssets.
+	// Loading ground-truth scans must not evict or replace the active document's
+	// preview revisions.
+	calibrationPreviewAssets *preview.Store
+	calibrationMu            sync.Mutex
 
 	// Image state
 	// ----------------
@@ -187,6 +192,7 @@ func NewApp() *App {
 		discCutoutPercent: 11,
 	}
 	app.previewAssets = preview.NewStore(preview.DefaultCacheSize, app.logf)
+	app.calibrationPreviewAssets = preview.NewStore(1, app.logf)
 	return app
 }
 
