@@ -42,6 +42,7 @@ export namespace main {
 	    iopaintUrl: string;
 	    warpFillMode: string;
 	    warpFillColor: string;
+	    cropEdgePixels: number;
 	    discCenterCutout: boolean;
 	    discCutoutPercent: number;
 	    cornerMaxCorners: number;
@@ -66,6 +67,7 @@ export namespace main {
 	        this.iopaintUrl = source["iopaintUrl"];
 	        this.warpFillMode = source["warpFillMode"];
 	        this.warpFillColor = source["warpFillColor"];
+	        this.cropEdgePixels = source["cropEdgePixels"];
 	        this.discCenterCutout = source["discCenterCutout"];
 	        this.discCutoutPercent = source["discCutoutPercent"];
 	        this.cornerMaxCorners = source["cornerMaxCorners"];
@@ -364,6 +366,7 @@ export namespace main {
 	}
 	export class CropRequest {
 	    direction: string;
+	    amount: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new CropRequest(source);
@@ -372,6 +375,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.direction = source["direction"];
+	        this.amount = source["amount"];
 	    }
 	}
 	export class DescreenRequest {

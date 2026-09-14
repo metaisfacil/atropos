@@ -85,6 +85,19 @@ func TestCropUsesCurrentBoundsThroughUndoAndRedo(t *testing.T) {
 	}
 }
 
+func TestCropUsesRequestedPixelAmount(t *testing.T) {
+	a := newTestApp(20, 12)
+	_, _ = a.SkipCrop()
+
+	res, err := a.Crop(CropRequest{Direction: "left", Amount: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Width != 13 || res.Height != 12 {
+		t.Fatalf("crop dimensions = %dx%d, want 13x12", res.Width, res.Height)
+	}
+}
+
 func TestFailedFourthCornerPreservesHistoryAndSelection(t *testing.T) {
 	a := newLoadedTestApp(100, 80)
 	a.selectedCorners = []image.Point{{1, 1}, {2, 1}, {2, 2}}

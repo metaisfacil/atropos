@@ -1012,6 +1012,21 @@ button.options-debug-action:hover {
   border-color: #007acc;
 }
 
+.options-number-field {
+  display: flex;
+  flex-direction: column;
+}
+
+.options-number-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.options-number-input {
+  width: 76px;
+}
+
 .options-divider {
   border-top: 1px solid #3e3e42;
   margin: 4px 0;

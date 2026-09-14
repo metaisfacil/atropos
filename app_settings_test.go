@@ -36,3 +36,20 @@ func TestSanitizeSettingsCornerParameters(t *testing.T) {
 		})
 	}
 }
+
+func TestSanitizeSettingsCropEdgePixels(t *testing.T) {
+	for _, tt := range []struct {
+		value int
+		want  int
+	}{
+		{value: 1, want: 1},
+		{value: 40, want: 40},
+		{value: 0, want: 3},
+		{value: 1001, want: 3},
+	} {
+		got := sanitizeSettings(AllSettings{CropEdgePixels: tt.value})
+		if got.CropEdgePixels != tt.want {
+			t.Errorf("sanitizeSettings CropEdgePixels(%d) = %d, want %d", tt.value, got.CropEdgePixels, tt.want)
+		}
+	}
+}

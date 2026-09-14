@@ -61,6 +61,7 @@ function makeProps(overrides = {}) {
     adjustmentSelectionActive: false,
     adjustmentRect: null,
     setAdjustmentRect: vi.fn(),
+    cropEdgePixels: 3,
     ...overrides,
   }
 }
@@ -275,7 +276,29 @@ describe('layout-independent spatial shortcuts', () => {
     })
 
     act(() => window.dispatchEvent(event))
-    await waitFor(() => expect(appMocks.Crop).toHaveBeenCalledWith({ direction }))
+    await waitFor(() => expect(appMocks.Crop).toHaveBeenCalledWith({ direction, amount: 3 }))
+  })
+
+  it('uses the configured crop amount for both optimistic geometry and the backend request', async () => {
+    const props = makeProps({
+      canSave: true,
+      cropEdgePixels: 12,
+      realImageDims: { w: 100, h: 80 },
+    })
+    renderHook(() => useKeyboardShortcuts(props))
+    const event = new KeyboardEvent('keydown', {
+      key: 'a', code: 'KeyA', bubbles: true, cancelable: true,
+    })
+
+    act(() => window.dispatchEvent(event))
+    await waitFor(() => expect(appMocks.Crop).toHaveBeenCalledWith({ direction: 'left', amount: 12 }))
+
+    expect(props.setOptimisticCrop).toHaveBeenCalledWith(expect.objectContaining({
+      direction: 'left',
+      amount: 12,
+      targetDims: { w: 88, h: 80 },
+    }))
+    expect(props.setRealImageDims).toHaveBeenCalledWith({ w: 88, h: 80 })
   })
 
   it('uses the physical Q/E positions for rotation on Dvorak', async () => {

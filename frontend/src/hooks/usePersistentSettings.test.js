@@ -34,6 +34,7 @@ describe('usePersistentSettings – compiled-in defaults', () => {
   it('returns clamp as default warp fill mode', () => {
     const { result } = renderHook(() => usePersistentSettings({ setPreview: MOCK_SET_PREVIEW }))
     expect(result.current.warpFillMode).toBe('clamp')
+    expect(result.current.cropEdgePixels).toBe(3)
   })
 
   it('disc center cutout is enabled by default', () => {
@@ -197,6 +198,14 @@ describe('usePersistentSettings – setters', () => {
     act(() => { result.current.setDiscCenterCutout(false) })
     expect(result.current.discCenterCutout).toBe(false)
     expect(SetDiscSettings).toHaveBeenCalledWith(expect.objectContaining({ centerCutout: false }))
+  })
+
+  it('persists the crop-edge keyboard amount', async () => {
+    const { result } = renderHook(() => usePersistentSettings({ setPreview: MOCK_SET_PREVIEW }))
+    await waitFor(() => expect(GetAllSettings).toHaveBeenCalled())
+    act(() => { result.current.setCropEdgePixels(12) })
+    expect(result.current.cropEdgePixels).toBe(12)
+    expect(SaveAllSettings).toHaveBeenLastCalledWith(expect.objectContaining({ cropEdgePixels: 12 }))
   })
 
   it('persists manual corner parameters', async () => {

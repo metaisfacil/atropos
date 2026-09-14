@@ -150,6 +150,7 @@ export default function App() {
     iopaintURL, setIopaintURL,
     warpFillMode, setWarpFillMode,
     warpFillColor, setWarpFillColor,
+    cropEdgePixels, setCropEdgePixels,
     syncHistoryDiscSettings,
     discCenterCutout, setDiscCenterCutout,
     discCutoutPercent, setDiscCutoutPercent,
@@ -325,6 +326,7 @@ export default function App() {
     },
     cornerState, setCornerState, setSelectedCornerPts,
     adjustmentSelectionActive, adjustmentRect, setAdjustmentRect,
+    cropEdgePixels,
   })
 
   const presentedVisual = usePresentedValue({
@@ -633,6 +635,8 @@ export default function App() {
         setWarpFillMode={setWarpFillMode}
         warpFillColor={warpFillColor}
         setWarpFillColor={setWarpFillColor}
+        cropEdgePixels={cropEdgePixels}
+        setCropEdgePixels={setCropEdgePixels}
         discCenterCutout={discCenterCutout}
         setDiscCenterCutout={setDiscCenterCutout}
         autoCornerParams={autoCornerParams}

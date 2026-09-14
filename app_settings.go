@@ -20,6 +20,8 @@ type AllSettings struct {
 	// Warp fill
 	WarpFillMode  string `json:"warpFillMode"`
 	WarpFillColor string `json:"warpFillColor"`
+	// Keyboard edge crop
+	CropEdgePixels int `json:"cropEdgePixels"`
 	// Disc
 	DiscCenterCutout  bool `json:"discCenterCutout"`
 	DiscCutoutPercent int  `json:"discCutoutPercent"`
@@ -65,6 +67,7 @@ func (a *App) GetAllSettings() AllSettings {
 		IOPaintURL:                a.iopaintURL,
 		WarpFillMode:              a.warpFillMode,
 		WarpFillColor:             fmt.Sprintf("#%02x%02x%02x", a.warpFillColor.R, a.warpFillColor.G, a.warpFillColor.B),
+		CropEdgePixels:            3,
 		DiscCenterCutout:          a.discCenterCutout,
 		DiscCutoutPercent:         a.discCutoutPercent,
 		CornerMaxCorners:          500,
@@ -114,6 +117,9 @@ func sanitizeSettings(s AllSettings) AllSettings {
 	}
 	if _, err := parseHexColor(s.WarpFillColor); err != nil {
 		s.WarpFillColor = "#ffffff"
+	}
+	if s.CropEdgePixels < 1 || s.CropEdgePixels > 1000 {
+		s.CropEdgePixels = 3
 	}
 	if s.DiscCutoutPercent < 0 || s.DiscCutoutPercent > 50 {
 		s.DiscCutoutPercent = 11

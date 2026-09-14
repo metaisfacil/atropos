@@ -79,7 +79,7 @@ This document contains the detailed system model, data flow, and operation order
 | `hooks/useKeyboardLayout.js` | Reads the platform keyboard layout map for the physical crop/rotate positions and refreshes it on `layoutchange` or window focus. Supplies QWERTY labels when the Keyboard Map API is unavailable or denied. |
 | `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, bounded preview-patch handoff, window mouseup effect, `EventsOn("touchup-done")` effect. |
 | `hooks/useZoomPan.js` | Viewport camera state: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, and scroll anchoring. `imgRef` points at the transparent logical image surface, so cursor anchoring and the existing pointer state machine use the same geometry as the canvas renderer without making image pixels a DOM `<img>`. |
-| `hooks/usePersistentSettings.js` | File-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `discCenterCutout`, `discCutoutPercent`, manual corner parameters, `autoCornerParams`, workflow flags). Loads from Go (`GetAllSettings`) on mount and persists via `SaveAllSettings` on every change. Performs one-time migrations for legacy `localStorage` and corner defaults. |
+| `hooks/usePersistentSettings.js` | File-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `cropEdgePixels`, `discCenterCutout`, `discCutoutPercent`, manual corner parameters, `autoCornerParams`, workflow flags). Loads from Go (`GetAllSettings`) on mount and persists via `SaveAllSettings` on every change. Performs one-time migrations for legacy `localStorage` and corner defaults. |
 | `hooks/useStatusMessage.js` | `imageInfo` + fade timer logic (`showStatus`). |
 | `components/PreviewCanvas.jsx` | Visible viewport renderer. Requests only the visible/overscanned image-space region at the device density needed for the current zoom, receives that small JPEG through the Wails RPC bridge as a data URL, caches recent rasters, composites touch-up patches, and draws all visible image-space guides. |
 | `components/ImageOverlays.jsx` | Transparent DOM hit targets for editable Normal/Line handles. Visible guides are drawn by `PreviewCanvas`; this component exists so the mature pointer state machine can keep DOM hit testing. |
@@ -551,7 +551,7 @@ header icon off clears it and deactivates the tool.
 ### Crop / Rotate / Resize / TrimBorders
 
 ```
-Crop(req)          validate edge; clamp to current bounds leaving at least 1 pixel; saveUndo only if changed; crop; return preview
+Crop(req)          validate edge and requested pixel amount; clamp to current bounds leaving at least 1 pixel; saveUndo only if changed; crop; return preview
 Rotate(req)        require warpedImage; saveUndo(); rotate90(flipCode 0=CCW,1=CW,2=180); return preview
 ResizeImage(req)   require image loaded; saveUndo(); resize workingImage; setWorkingImage(result)
 TrimBorders(req)   require warpedImage; saveUndo(); crop current bounds; return preview
@@ -1234,6 +1234,7 @@ Settings are persisted to `%AppData%\atropos\settings.json` (Windows) / `~/.conf
 | IOPaint URL | `iopaintUrl` | `iopaintURL` | Any non-empty URL string |
 | Warp fill mode | `warpFillMode` | `warpFillMode` | `"clamp"`, `"fill"`, `"outpaint"` |
 | Warp fill color | `warpFillColor` | `warpFillColor` | CSS hex `"#rrggbb"` |
+| Crop-edge key amount | `cropEdgePixels` | `CropRequest.amount` | Integer 1–1000 (default `3`) |
 | Disc centre cutout | `discCenterCutout` | `discCenterCutout` | `true` / `false` (default `true`) |
 | Disc cutout size | `discCutoutPercent` | `discCutoutPercent` | Integer 0–50 (default `11`) |
 | Manual maximum corners | `cornerMaxCorners` | *(frontend-only)* | `1`–`1000` (default `500`) |

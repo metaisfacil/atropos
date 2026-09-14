@@ -27,9 +27,10 @@ type undoEntry struct {
 	selectedCorners []image.Point // in-progress corner clicks at save time (corner mode only)
 }
 
-// CropRequest specifies which edge to crop.
+// CropRequest specifies which edge to crop and how many source pixels to remove.
 type CropRequest struct {
 	Direction string `json:"direction"`
+	Amount    int    `json:"amount"`
 }
 
 // RotateRequest specifies the rotation/flip operation to apply.
@@ -261,7 +262,7 @@ func (a *App) stepHistory(redo bool) (*ProcessResult, error) {
 
 // Crop removes pixels from the specified edge of the warped image.
 func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
-	a.logf("Crop: direction=%q", req.Direction)
+	a.logf("Crop: direction=%q amount=%d", req.Direction, req.Amount)
 	if a.warpedImage == nil {
 		const msg = "Crop: no warped image"
 		a.logf(msg)
@@ -269,7 +270,11 @@ func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
 	}
 	b := a.warpedImage.Bounds()
 	r := b
-	amount := max(1, a.cropAmount)
+	amount := req.Amount
+	if amount < 1 {
+		// Preserve compatibility with older callers that supplied only a direction.
+		amount = max(1, a.cropAmount)
+	}
 	switch req.Direction {
 	case "top":
 		r.Min.Y += min(amount, b.Dy()-1)

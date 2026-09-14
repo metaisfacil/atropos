@@ -15,6 +15,8 @@ export default function OptionsModal({
   setWarpFillMode,
   warpFillColor,
   setWarpFillColor,
+  cropEdgePixels,
+  setCropEdgePixels,
   discCenterCutout,
   setDiscCenterCutout,
   autoCornerParams,
@@ -183,6 +185,34 @@ export default function OptionsModal({
               Outpaint <span className="options-hint">(built-in PatchMatch)</span>
             </label>
           </DelayedHint>
+
+          <div className="options-divider" />
+
+          <DelayedHint hint="Controls how many source-image pixels the W, A, S, and D crop-edge shortcuts remove with each keypress.">
+            <div className="options-section-title" tabIndex={0}>
+              Crop edges keys
+            </div>
+          </DelayedHint>
+
+          <div className="options-number-field">
+            <div className="options-number-row">
+              <input
+                id="crop-edge-pixels"
+                aria-label="Pixels per keypress"
+                className="options-text-input options-number-input"
+                type="number"
+                min="1"
+                max="1000"
+                step="1"
+                value={cropEdgePixels}
+                onChange={(e) => {
+                  const value = Number.parseInt(e.target.value, 10)
+                  if (Number.isFinite(value)) setCropEdgePixels(Math.min(1000, Math.max(1, value)))
+                }}
+              />
+              <span className="options-hint">px (default: 3)</span>
+            </div>
+          </div>
         </>
       ),
     },

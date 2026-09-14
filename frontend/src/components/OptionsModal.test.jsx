@@ -18,6 +18,8 @@ function renderOptions(overrides = {}) {
     setWarpFillMode: vi.fn(),
     warpFillColor: '#ffffff',
     setWarpFillColor: vi.fn(),
+    cropEdgePixels: 3,
+    setCropEdgePixels: vi.fn(),
     discCenterCutout: true,
     setDiscCenterCutout: vi.fn(),
     autoCornerParams: true,
@@ -65,5 +67,18 @@ describe('OptionsModal corner parameters', () => {
 
     fireEvent.click(checkbox)
     expect(props.setAutoCornerParams).toHaveBeenCalledWith(true)
+  })
+})
+
+describe('OptionsModal crop-edge keys', () => {
+  it('edits the persistent pixels-per-keypress value', async () => {
+    const props = renderOptions()
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Fill & crop' }))
+    const input = await screen.findByRole('spinbutton', { name: 'Pixels per keypress' })
+    expect(input.value).toBe('3')
+
+    fireEvent.change(input, { target: { value: '12' } })
+    expect(props.setCropEdgePixels).toHaveBeenCalledWith(12)
   })
 })

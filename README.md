@@ -58,7 +58,7 @@ A content-aware brush for removing dust, scratches, or other blemishes. Enable i
 
 ### Crop edges
 
-The physical WASD positions trim 3 px from the top, left, bottom, and right edges of the working image. The Shortcuts panel displays the corresponding keys for the active layout (for example, ZQSD on AZERTY).
+The physical WASD positions trim the top, left, bottom, and right edges of the working image. The amount defaults to 3 source pixels per keypress and can be changed under **Options → Fill & crop → Crop edges keys**. The Shortcuts panel displays the corresponding keys for the active layout (for example, ZQSD on AZERTY).
 
 ### Rotate
 

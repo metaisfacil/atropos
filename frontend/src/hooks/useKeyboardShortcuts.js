@@ -28,6 +28,7 @@ export function useKeyboardShortcuts({
   unsavedChanges, setUnsavedChanges, confirmClose,
   cornerState, setCornerState, setSelectedCornerPts,
   adjustmentSelectionActive, adjustmentRect, setAdjustmentRect,
+  cropEdgePixels = KEYBOARD_CROP_AMOUNT,
 }) {
   useEffect(() => {
     const handleKeyDown = async (e) => {
@@ -219,14 +220,17 @@ export function useKeyboardShortcuts({
           // Hold a second crop until the first authoritative revision is
           // presented so local geometry and backend undo order stay aligned.
           if (optimisticCrop) return null
-          const targetDims = optimisticCropDimensions(realImageDims, direction)
+          const amount = Number.isFinite(cropEdgePixels)
+            ? Math.max(1, Math.trunc(cropEdgePixels))
+            : KEYBOARD_CROP_AMOUNT
+          const targetDims = optimisticCropDimensions(realImageDims, direction, amount)
           if (!targetDims || !preview) return null
           pendingCrop = {
             source: preview,
             sourceDims: { ...realImageDims },
             targetDims,
             direction,
-            amount: KEYBOARD_CROP_AMOUNT,
+            amount,
           }
           setOptimisticCrop(pendingCrop)
           setRealImageDims(targetDims)
@@ -240,7 +244,7 @@ export function useKeyboardShortcuts({
           case 'd': {
             const direction = { w: 'top', s: 'bottom', a: 'left', d: 'right' }[spatialKey]
             if (!beginOptimisticCrop(direction)) return
-            result = await Crop({ direction })
+            result = await Crop({ direction, amount: pendingCrop.amount })
             // From this point on the backend state is committed. Keep the
             // optimistic renderer alive until presentation, but do not roll
             // the frontend geometry back if an unrelated deferred save fails.
@@ -294,5 +298,5 @@ export function useKeyboardShortcuts({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, handleRedo, canSave, handleLoadImage, handlePasteImage, cornerState.cornerCount, adjustmentSelectionActive, adjustmentRect, preview, realImageDims, optimisticCrop]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, handleRedo, canSave, handleLoadImage, handlePasteImage, cornerState.cornerCount, adjustmentSelectionActive, adjustmentRect, preview, realImageDims, optimisticCrop, cropEdgePixels]) // eslint-disable-line react-hooks/exhaustive-deps
 }

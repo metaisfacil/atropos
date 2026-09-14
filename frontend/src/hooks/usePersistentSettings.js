@@ -13,6 +13,7 @@ const DEFAULTS = {
   iopaintUrl:                'http://127.0.0.1:8086/',
   warpFillMode:              'clamp',
   warpFillColor:             '#ffffff',
+  cropEdgePixels:            3,
   discCenterCutout:          true,
   discCutoutPercent:         11,
   cornerMaxCorners:          500,
@@ -104,6 +105,7 @@ export function usePersistentSettings({ setPreview }) {
   const setIopaintURL     = (v) => update('iopaintUrl', v)
   const setWarpFillMode   = (v) => update('warpFillMode', v)
   const setWarpFillColor  = (v) => update('warpFillColor', v)
+  const setCropEdgePixels = (v) => update('cropEdgePixels', v)
   const setCornerMaxCorners           = (v) => update('cornerMaxCorners', v)
   const setCornerMinDistance          = (v) => update('cornerMinDistance', v)
   const setAutoCornerParams          = (v) => update('autoCornerParams', v)
@@ -138,6 +140,7 @@ export function usePersistentSettings({ setPreview }) {
     iopaintURL:                settings.iopaintUrl,
     warpFillMode:              settings.warpFillMode,
     warpFillColor:             settings.warpFillColor,
+    cropEdgePixels:            settings.cropEdgePixels,
     discCenterCutout:          settings.discCenterCutout,
     discCutoutPercent:         settings.discCutoutPercent,
     cornerMaxCorners:          settings.cornerMaxCorners,
@@ -153,6 +156,7 @@ export function usePersistentSettings({ setPreview }) {
     setIopaintURL,
     setWarpFillMode,
     setWarpFillColor,
+    setCropEdgePixels,
     setDiscCenterCutout,
     setDiscCutoutPercent,
     setCornerMaxCorners,
