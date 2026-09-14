@@ -135,6 +135,43 @@ func BackgroundDistanceSilhouette(src *image.NRGBA) (*image.Gray, PerimeterBackg
 	return dst, background
 }
 
+// DarkBackgroundDistanceSilhouette is a secondary, more sensitive view for
+// dark scanner beds. BackgroundDistanceSilhouette intentionally rejects the
+// upper tail of perimeter texture, which can also erase dark paper whose colour
+// differs from the bed by less than that noise envelope. Blurring the raw RGB
+// distance first suppresses fine bed texture, allowing a lower range to retain
+// coherent dark-media boundaries. Callers must gate this map on background.Dark.
+func DarkBackgroundDistanceSilhouette(src *image.NRGBA, background PerimeterBackground) *image.Gray {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	distanceMap := image.NewGray(image.Rect(0, 0, w, h))
+	if w == 0 || h == 0 {
+		return distanceMap
+	}
+	for y := 0; y < h; y++ {
+		row := distanceMap.Pix[y*distanceMap.Stride : y*distanceMap.Stride+w]
+		for x := 0; x < w; x++ {
+			row[x] = raster.ClampByte(rgbDistance(src.NRGBAAt(x+b.Min.X, y+b.Min.Y), background))
+		}
+	}
+
+	// Three passes yield a compact Gaussian-like blur without softening an edge
+	// enough to materially shift its corner localization.
+	for range 3 {
+		distanceMap = BlurGray(distanceMap)
+	}
+	blackPoint := max(2, background.Noise/4)
+	whitePoint := max(blackPoint+12, background.Noise)
+	rangeWidth := whitePoint - blackPoint
+	for y := 0; y < h; y++ {
+		row := distanceMap.Pix[y*distanceMap.Stride : y*distanceMap.Stride+w]
+		for x, value := range row {
+			row[x] = raster.ClampByte((int(value) - blackPoint) * 255 / rangeWidth)
+		}
+	}
+	return distanceMap
+}
+
 func rgbDistance(pixel color.NRGBA, background PerimeterBackground) int {
 	dr := int(pixel.R) - int(background.R)
 	dg := int(pixel.G) - int(background.G)

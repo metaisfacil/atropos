@@ -63,6 +63,33 @@ type cornerDetectPass struct {
 	highlightBlackPoint int
 }
 
+type cornerDetectionProfile uint8
+
+const (
+	cornerProfileStandard cornerDetectionProfile = iota
+	cornerProfileDarkBackground
+	// The calibrated scanner-bed corpus clusters near luma 58 with perimeter
+	// noise below 40. Conservative margins keep medium-gray or image-filled
+	// perimeters on the established standard path.
+	darkBackgroundMaxLuma  = 96
+	darkBackgroundMaxNoise = 48
+)
+
+func selectCornerDetectionProfile(background cornerdetect.PerimeterBackground) cornerDetectionProfile {
+	luma := (299*int(background.R) + 587*int(background.G) + 114*int(background.B)) / 1000
+	if background.Dark && luma <= darkBackgroundMaxLuma && background.Noise <= darkBackgroundMaxNoise {
+		return cornerProfileDarkBackground
+	}
+	return cornerProfileStandard
+}
+
+func (profile cornerDetectionProfile) String() string {
+	if profile == cornerProfileDarkBackground {
+		return "dark-background"
+	}
+	return "standard"
+}
+
 // cornerDetectPasses divides the requested result budget between detail,
 // mid-scale, broad-corner, silhouette, and highlight-boundary passes. The two
 // highlight passes emulate aggressive levels curves and need only small
@@ -205,6 +232,57 @@ func dedupeCornerPoints(corners []image.Point, minDistance int) []image.Point {
 	return unique
 }
 
+const (
+	darkCandidateForegroundThreshold = 128
+	darkCandidateBoundaryContrast    = 96
+)
+
+// filterDarkBackgroundCandidates rejects feature points that only exist in
+// the scanner bed. A candidate survives when it is on dark-profile foreground
+// or when a compact neighbourhood crosses a strong silhouette boundary. This
+// runs only after the dark-background profile has been selected; the standard
+// detector and its calibrated cross-scale alternatives are untouched.
+func filterDarkBackgroundCandidates(corners []image.Point, silhouette *image.Gray, minDistance int) []image.Point {
+	if silhouette == nil || len(corners) == 0 {
+		return corners
+	}
+	b := silhouette.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w == 0 || h == 0 {
+		return corners
+	}
+	radius := minDistance / 6
+	if radius < 2 {
+		radius = 2
+	}
+	if radius > 8 {
+		radius = 8
+	}
+	filtered := make([]image.Point, 0, len(corners))
+	for _, corner := range corners {
+		x := clamp(corner.X, 0, w-1)
+		y := clamp(corner.Y, 0, h-1)
+		center := int(silhouette.Pix[y*silhouette.Stride+x])
+		if center >= darkCandidateForegroundThreshold {
+			filtered = append(filtered, corner)
+			continue
+		}
+		minValue, maxValue := 255, 0
+		for sampleY := max(0, y-radius); sampleY <= min(h-1, y+radius); sampleY++ {
+			row := silhouette.Pix[sampleY*silhouette.Stride:]
+			for sampleX := max(0, x-radius); sampleX <= min(w-1, x+radius); sampleX++ {
+				value := int(row[sampleX])
+				minValue = min(minValue, value)
+				maxValue = max(maxValue, value)
+			}
+		}
+		if maxValue-minValue >= darkCandidateBoundaryContrast {
+			filtered = append(filtered, corner)
+		}
+	}
+	return filtered
+}
+
 // refineCoarseCorner replaces a coarse-scale localization with the nearest
 // fine highlight candidate within one coarse cell. The coarse pass is good at
 // discovering broad silhouettes, but mapping its integer grid coordinate
@@ -252,11 +330,22 @@ func refineDetectedCorner(point image.Point, pass cornerDetectPass, highlight, r
 // the severe highlight curve when the measured scanner perimeter is bright.
 // In that situation a clipped white document can have a real outer corner
 // that ranks well below ordinary artwork corners, even though the curve has
-// isolated it correctly. Dark-background scans keep the established small
-// highlight share so this recovery path does not drown out their detail.
-func highlightRecoveryBudget(maxCorners int, perimeter cornerdetect.PerimeterBackground) int {
+// isolated it correctly. The dedicated dark-background profile reduces this
+// share because its sensitive silhouette supplies the missing dark-media
+// candidates; ambiguous darker perimeters retain the established full budget.
+func highlightRecoveryBudget(maxCorners int, perimeter cornerdetect.PerimeterBackground, profile cornerDetectionProfile) int {
 	if maxCorners < 1 {
 		return 1
+	}
+	if profile == cornerProfileDarkBackground {
+		budget := maxCorners / 4
+		if budget < 32 {
+			budget = 32
+		}
+		if budget > maxCorners {
+			budget = maxCorners
+		}
+		return budget
 	}
 	if perimeter.Dark {
 		return maxCorners
@@ -431,20 +520,48 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 		workColor = raster.ResizeNRGBA(source, workW, workH)
 	}
 	backgroundSilhouette, perimeter := cornerdetect.BackgroundDistanceSilhouette(workColor)
-	a.logf("DetectCorners: perimeter RGB=(%d,%d,%d) noise=%d silhouette=%d-%d dark=%v",
-		perimeter.R, perimeter.G, perimeter.B, perimeter.Noise, perimeter.BlackPoint, perimeter.WhitePoint, perimeter.Dark)
+	profile := selectCornerDetectionProfile(perimeter)
+	var darkBackgroundSilhouette *image.Gray
+	if profile == cornerProfileDarkBackground {
+		darkBackgroundSilhouette = cornerdetect.DarkBackgroundDistanceSilhouette(workColor, perimeter)
+	}
+	a.logf("DetectCorners: perimeter RGB=(%d,%d,%d) noise=%d silhouette=%d-%d profile=%s",
+		perimeter.R, perimeter.G, perimeter.B, perimeter.Noise, perimeter.BlackPoint, perimeter.WhitePoint, profile)
 	// Keep each source map's line proposals independent. A strong but
 	// distracting line in one map can otherwise consume the shared proposal
 	// budget before a partial document edge from another map is considered.
 	var lineCorners []image.Point
-	for _, lineSource := range []*image.Gray{rawGray, highlightGray240, highlightGray230, adaptiveHighlightGray, backgroundSilhouette} {
-		proposals, lineErr := cornerdetect.LineDerivedCornerProposals(ctx, []*image.Gray{lineSource}, req.MaxCorners, int(float64(req.MinDistance)*scaleFactor))
+	lineMinDistance := int(float64(req.MinDistance) * scaleFactor)
+	if lineMinDistance < 1 {
+		lineMinDistance = 1
+	}
+	lineSources := []struct {
+		gray            *image.Gray
+		darkProfileOnly bool
+	}{
+		{gray: rawGray},
+		{gray: highlightGray240},
+		{gray: highlightGray230},
+		{gray: adaptiveHighlightGray},
+		{gray: backgroundSilhouette},
+		{gray: darkBackgroundSilhouette, darkProfileOnly: true},
+	}
+	for _, lineSource := range lineSources {
+		if lineSource.gray == nil {
+			continue
+		}
+		proposals, lineErr := cornerdetect.LineDerivedCornerProposals(ctx, []*image.Gray{lineSource.gray}, req.MaxCorners, lineMinDistance)
 		if lineErr != nil {
 			return nil, lineErr
 		}
+		if lineSource.darkProfileOnly {
+			before := len(proposals)
+			proposals = filterDarkBackgroundCandidates(proposals, darkBackgroundSilhouette, lineMinDistance)
+			a.logf("DetectCorners: dark-background line filter retained %d/%d proposals", len(proposals), before)
+		}
 		lineCorners = append(lineCorners, proposals...)
 	}
-	lineCorners = dedupeCornerPoints(lineCorners, int(float64(req.MinDistance)*scaleFactor))
+	lineCorners = dedupeCornerPoints(lineCorners, lineMinDistance)
 	a.logf("DetectCorners: line boundary path proposed %d corners", len(lineCorners))
 
 	// Optionally pre-stretch contrast using percentiles to handle non-white backgrounds,
@@ -524,6 +641,23 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 		return nil, err
 	}
 	a.logf("DetectCorners: perimeter-colour silhouette got %d pts", len(backgroundCorners))
+	var darkBackgroundCorners []image.Point
+	if darkBackgroundSilhouette != nil {
+		darkSilhouetteMax := req.MaxCorners / 8
+		if darkSilhouetteMax < 32 {
+			darkSilhouetteMax = 32
+		}
+		if darkSilhouetteMax > 64 {
+			darkSilhouetteMax = 64
+		}
+		darkBackgroundCorners, err = cornerdetect.Detect(ctx, darkBackgroundSilhouette, cornerdetect.Options{MaxCorners: darkSilhouetteMax, QualityLevel: quality, MinDistance: workMinDist, BlockSize: 11})
+		if err != nil {
+			return nil, err
+		}
+		before := len(darkBackgroundCorners)
+		darkBackgroundCorners = filterDarkBackgroundCandidates(darkBackgroundCorners, darkBackgroundSilhouette, workMinDist)
+		a.logf("DetectCorners: dark-background point filter retained %d/%d proposals", len(darkBackgroundCorners), before)
+	}
 
 	// Multi-scale detection: run detector at several integer scales and
 	// accumulate results, then remove duplicates.
@@ -584,7 +718,7 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 			highlightRefinementCorners = append(highlightRefinementCorners, pts...)
 			keep := pass.maxCorners
 			if pass.highlightBlackPoint == 240 {
-				recoveryBudget := highlightRecoveryBudget(req.MaxCorners, perimeter)
+				recoveryBudget := highlightRecoveryBudget(req.MaxCorners, perimeter, profile)
 				if recoveryBudget > keep {
 					keep = recoveryBudget
 				}
@@ -619,7 +753,7 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 		// localizations on dark backgrounds. The two sources may differ by only
 		// a few working pixels, but either can be the more accurate side of a
 		// blurred physical edge. Suppress exact duplicates only.
-		for _, candidate := range backgroundCorners {
+		for _, candidate := range append(backgroundCorners, darkBackgroundCorners...) {
 			exact := false
 			for _, existing := range uniq {
 				if candidate == existing {
@@ -632,7 +766,6 @@ func (a *App) DetectCorners(req CornerDetectRequest) (*ProcessResult, error) {
 			}
 		}
 	}
-
 	a.logf("DetectCorners: %d unique corners after dedupe", len(uniq))
 
 	// Map working-space corners to full-resolution image coordinates

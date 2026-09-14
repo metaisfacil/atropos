@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"atropos/internal/cornerdetect"
 	"atropos/internal/raster"
 )
 
@@ -23,12 +24,50 @@ func TestCornerDetectorGroundTruth(t *testing.T) {
 	if datasetPath == "" {
 		t.Skip("set ATROPOS_CORNER_GROUND_TRUTH to run the real-scan evaluator")
 	}
+	runCornerDetectorGroundTruth(t, datasetPath, cornerEvalGate{
+		minAllRecall40:      94,
+		minHoldoutRecall40:  95,
+		minScansAllWithin40: 85,
+		maxAverageProposals: 690,
+	})
+}
+
+// Set ATROPOS_CORNER_DARK_GROUND_TRUTH to a corpus of difficult scans on a
+// dark scanner bed. In addition to accuracy gates, every sample must select the
+// automatic dark-background profile.
+func TestCornerDetectorDarkBackgroundGroundTruth(t *testing.T) {
+	datasetPath := os.Getenv("ATROPOS_CORNER_DARK_GROUND_TRUTH")
+	if datasetPath == "" {
+		t.Skip("set ATROPOS_CORNER_DARK_GROUND_TRUTH to run the dark-background evaluator")
+	}
+	runCornerDetectorGroundTruth(t, datasetPath, cornerEvalGate{
+		expectedProfile:     cornerProfileDarkBackground,
+		requireProfile:      true,
+		minAllRecall40:      90,
+		minHoldoutRecall40:  95,
+		minScansAllWithin40: 85,
+		maxAverageProposals: 690,
+	})
+}
+
+type cornerEvalGate struct {
+	expectedProfile     cornerDetectionProfile
+	requireProfile      bool
+	minAllRecall40      float64
+	minHoldoutRecall40  float64
+	minScansAllWithin40 float64
+	maxAverageProposals float64
+}
+
+func runCornerDetectorGroundTruth(t *testing.T, datasetPath string, gate cornerEvalGate) {
+	t.Helper()
 	dataset := loadCornerGroundTruth(t, datasetPath)
 	if len(dataset.Images) < 5 {
 		t.Fatalf("need at least 5 ground-truth images, got %d", len(dataset.Images))
 	}
 
 	var train, holdout cornerEvalMetrics
+	profileMismatches := 0
 	requestedIndex := 0
 	if value := os.Getenv("ATROPOS_CORNER_GROUND_TRUTH_INDEX"); value != "" {
 		var err error
@@ -67,6 +106,11 @@ func TestCornerDetectorGroundTruth(t *testing.T) {
 		}
 
 		suggested := suggestCornerParams(sample.Width, sample.Height)
+		background := cornerEvaluationBackground(app.currentImage)
+		profile := selectCornerDetectionProfile(background)
+		if gate.requireProfile && profile != gate.expectedProfile {
+			profileMismatches++
+		}
 		result, err := app.DetectCorners(CornerDetectRequest{
 			MaxCorners:   suggested.MaxCorners,
 			QualityLevel: 1,
@@ -87,15 +131,56 @@ func TestCornerDetectorGroundTruth(t *testing.T) {
 			split = "holdout"
 		}
 		target.add(distances, len(result.Corners))
-		t.Logf("%s %02d %-36s proposals=%3d nearest=%s", split, index+1, filepath.Base(imgPath), len(result.Corners), formatCornerDistances(distances))
+		t.Logf("%s %02d %-36s bg=%3d noise=%2d profile=%-15s proposals=%3d nearest=%s", split, index+1, filepath.Base(imgPath), cornerBackgroundLuma(background), background.Noise, profile, len(result.Corners), formatCornerDistances(distances))
 		if os.Getenv("ATROPOS_CORNER_GROUND_TRUTH_VERBOSE") != "" {
 			t.Logf("%s", formatNearestCornerMatches(sample.Corners, result.Corners))
 		}
 	}
 
+	all := mergedCornerEvalMetrics(train, holdout)
 	t.Logf("TRAIN   %s", train.summary())
 	t.Logf("HOLDOUT %s", holdout.summary())
-	t.Logf("ALL     %s elapsed=%s", mergedCornerEvalMetrics(train, holdout).summary(), time.Since(started).Round(time.Millisecond))
+	t.Logf("ALL     %s elapsed=%s", all.summary(), time.Since(started).Round(time.Millisecond))
+	if requestedIndex == 0 && requestedSplit == "" {
+		gate.check(t, all, holdout, profileMismatches)
+	}
+}
+
+func (gate cornerEvalGate) check(t *testing.T, all, holdout cornerEvalMetrics, profileMismatches int) {
+	t.Helper()
+	if gate.requireProfile && profileMismatches > 0 {
+		t.Errorf("%d samples did not select the %s profile", profileMismatches, gate.expectedProfile)
+	}
+	if recall := cornerRecall(all.distances, 40); recall < gate.minAllRecall40 {
+		t.Errorf("all-corpus 40px recall %.1f%% is below %.1f%%", recall, gate.minAllRecall40)
+	}
+	if recall := cornerRecall(holdout.distances, 40); recall < gate.minHoldoutRecall40 {
+		t.Errorf("holdout 40px recall %.1f%% is below %.1f%%", recall, gate.minHoldoutRecall40)
+	}
+	scansWithin := 100 * float64(all.allWithin40) / float64(all.scans)
+	if scansWithin < gate.minScansAllWithin40 {
+		t.Errorf("scans with all corners within 40px %.1f%% is below %.1f%%", scansWithin, gate.minScansAllWithin40)
+	}
+	averageProposals := float64(all.proposalTotal) / float64(all.scans)
+	if averageProposals > gate.maxAverageProposals {
+		t.Errorf("average proposal count %.1f exceeds %.1f", averageProposals, gate.maxAverageProposals)
+	}
+}
+
+func cornerEvaluationBackground(src *image.NRGBA) cornerdetect.PerimeterBackground {
+	const maxDimension = 1500
+	bounds := src.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	if w > maxDimension || h > maxDimension {
+		scale := math.Min(float64(maxDimension)/float64(w), float64(maxDimension)/float64(h))
+		src = raster.ResizeNRGBA(src, max(1, int(float64(w)*scale)), max(1, int(float64(h)*scale)))
+	}
+	_, background := cornerdetect.BackgroundDistanceSilhouette(src)
+	return background
+}
+
+func cornerBackgroundLuma(background cornerdetect.PerimeterBackground) int {
+	return (299*int(background.R) + 587*int(background.G) + 114*int(background.B)) / 1000
 }
 
 type cornerEvalMetrics struct {

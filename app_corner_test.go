@@ -3,6 +3,7 @@ package main
 import (
 	"image"
 	"image/color"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -127,16 +128,34 @@ func TestCornerDetectPassesHandleSmallBudget(t *testing.T) {
 }
 
 func TestHighlightRecoveryBudgetFavorsBrightPerimeterScans(t *testing.T) {
-	bright := highlightRecoveryBudget(500, cornerdetect.PerimeterBackground{Dark: false})
+	bright := highlightRecoveryBudget(500, cornerdetect.PerimeterBackground{Dark: false}, cornerProfileStandard)
 	if bright != 375 {
 		t.Fatalf("bright perimeter budget: got %d, want 375", bright)
 	}
-	dark := highlightRecoveryBudget(500, cornerdetect.PerimeterBackground{Dark: true})
-	if dark != 500 {
-		t.Fatalf("dark perimeter budget: got %d, want 500", dark)
+	dark := highlightRecoveryBudget(500, cornerdetect.PerimeterBackground{Dark: true}, cornerProfileDarkBackground)
+	if dark != 125 {
+		t.Fatalf("dark perimeter budget: got %d, want 125", dark)
 	}
-	if got := highlightRecoveryBudget(1, cornerdetect.PerimeterBackground{Dark: false}); got != 1 {
+	if got := highlightRecoveryBudget(500, cornerdetect.PerimeterBackground{Dark: true}, cornerProfileStandard); got != 500 {
+		t.Fatalf("legacy dark budget: got %d, want 500", got)
+	}
+	if got := highlightRecoveryBudget(1, cornerdetect.PerimeterBackground{}, cornerProfileStandard); got != 1 {
 		t.Fatalf("small bright budget: got %d, want 1", got)
+	}
+}
+
+func TestSelectCornerDetectionProfile(t *testing.T) {
+	if got := selectCornerDetectionProfile(cornerdetect.PerimeterBackground{R: 220, G: 220, B: 220, Noise: 20}); got != cornerProfileStandard {
+		t.Fatalf("bright background selected %s", got)
+	}
+	if got := selectCornerDetectionProfile(cornerdetect.PerimeterBackground{R: 50, G: 62, B: 65, Noise: 30, Dark: true}); got != cornerProfileDarkBackground {
+		t.Fatalf("dark background selected %s", got)
+	}
+	if got := selectCornerDetectionProfile(cornerdetect.PerimeterBackground{R: 120, G: 130, B: 125, Noise: 30, Dark: true}); got != cornerProfileStandard {
+		t.Fatalf("medium background selected %s", got)
+	}
+	if got := selectCornerDetectionProfile(cornerdetect.PerimeterBackground{R: 50, G: 62, B: 65, Noise: 60, Dark: true}); got != cornerProfileStandard {
+		t.Fatalf("variable perimeter selected %s", got)
 	}
 }
 
@@ -155,6 +174,23 @@ func TestDedupeCornerPointsPreservesDistinctScaleLocalizations(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("got %v, want %v", got, want)
 		}
+	}
+}
+
+func TestFilterDarkBackgroundCandidatesRejectsBedTexture(t *testing.T) {
+	silhouette := image.NewGray(image.Rect(0, 0, 100, 80))
+	for y := 20; y < 70; y++ {
+		for x := 30; x < 90; x++ {
+			silhouette.SetGray(x, y, color.Gray{Y: 180})
+		}
+	}
+	// A sub-threshold texture fleck should not survive on its own.
+	silhouette.SetGray(10, 10, color.Gray{Y: 70})
+	points := []image.Point{{10, 10}, {50, 40}, {29, 20}}
+	got := filterDarkBackgroundCandidates(points, silhouette, 30)
+	want := []image.Point{{50, 40}, {29, 20}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }
 

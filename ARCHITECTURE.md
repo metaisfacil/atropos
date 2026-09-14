@@ -293,6 +293,17 @@ DetectCorners(req)
          Dots are rendered by the frontend canvas overlay — never baked into the image
 ```
 
+The detector selects `dark-background` when the perimeter model is both deeply
+dark (luma at most 96) and sufficiently uniform (95th-percentile RGB-distance
+noise at most 48). That profile adds a Gaussian-smoothed, sensitive RGB-distance
+silhouette for dark paper while reducing the irrelevant severe-highlight
+candidate budget. Medium-gray and irregular/image-filled perimeters stay on the
+established path. Dark-profile-only point and line candidates that are neither
+on silhouette foreground nor across a compact silhouette boundary are rejected
+as scanner-bed texture. Established proposal sources remain untouched, so this
+decluttering cannot remove a candidate from the standard detector. Profile
+selection and filter counts are logged with each detection.
+
 ### Clicking Corners
 
 ```
@@ -1290,13 +1301,16 @@ rejects missing, out-of-bounds, degenerate, reversed, and duplicate samples.
 No scan pixels or sidecar files are modified during annotation; disk is written
 only after the user chooses **Export JSON** and confirms a save path.
 
-`app_corner_groundtruth_test.go` is the opt-in calibration evaluator. It runs
-the production `DetectCorners` request used by the UI and scores the nearest
-proposal to each labelled corner. Every fifth ordered sample is reserved as a
-stable holdout, so detector parameters can be chosen on the training scans and
-checked independently before acceptance. Dataset, split, index, and verbose
-diagnostic selection are controlled by `ATROPOS_CORNER_GROUND_TRUTH*`
-environment variables; normal repository tests skip the external corpus.
+`app_corner_groundtruth_test.go` contains opt-in evaluators for the general and
+dark-background corpora. They run the production `DetectCorners` request used
+by the UI and score the nearest proposal to each labelled corner. Every fifth
+ordered sample is reserved as a stable holdout, so detector parameters can be
+chosen on the training scans and checked independently before acceptance. Full
+runs enforce corpus and holdout accuracy gates; the dark evaluator also asserts
+that every sample automatically selects the dark-background profile. Dataset,
+split, index, and verbose diagnostic selection are controlled by
+`ATROPOS_CORNER_GROUND_TRUTH*` environment variables; normal repository tests
+skip the external corpora.
 
 
 ## State transition ownership

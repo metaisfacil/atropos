@@ -65,6 +65,32 @@ func TestBackgroundDistanceSilhouetteSeparatesColourFromDarkTexture(t *testing.T
 	}
 }
 
+func TestDarkBackgroundDistanceSilhouetteRetainsSubtleDarkMedia(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 180, 120))
+	for y := 0; y < 120; y++ {
+		for x := 0; x < 180; x++ {
+			variation := uint8((x*7 + y*11) % 17)
+			img.SetNRGBA(x, y, color.NRGBA{R: 45 + variation, G: 59 + variation, B: 62 + variation, A: 255})
+		}
+	}
+	for y := 25; y < 95; y++ {
+		for x := 35; x < 145; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 57, G: 54, B: 58, A: 255})
+		}
+	}
+	_, background := BackgroundDistanceSilhouette(img)
+	if !background.Dark {
+		t.Fatal("dark perimeter was not classified as dark")
+	}
+	sensitive := DarkBackgroundDistanceSilhouette(img, background)
+	if got := sensitive.GrayAt(90, 60).Y; got < 100 {
+		t.Fatalf("subtle dark media was suppressed: %d", got)
+	}
+	if got := sensitive.GrayAt(10, 10).Y; got > 80 {
+		t.Fatalf("smoothed background texture remained too strong: %d", got)
+	}
+}
+
 func TestLineDerivedCornerProposalsIgnoresSingleLine(t *testing.T) {
 	gray := image.NewGray(image.Rect(0, 0, 320, 240))
 	for x := 20; x < 300; x++ {
