@@ -759,6 +759,12 @@ absent, invalid, cannot be chained from the active revision, or exceeds the
 
 ### PatchMatch (`internal/patchmatch/`; used via `patchMatchChunkedFill`)
 
+Both PatchMatch call sites (`patchMatchChunkedFillLogged` and `applyWarpFill`)
+invoke the solver through the `patchMatchFill` variable in `app_touchup.go`,
+which defaults to `patchmatch.Fill`. The indirection exists so an untracked
+local file can substitute another engine at init time for side-by-side
+comparison; `patchMatchEngine` names the active engine in the touch-up logs.
+
 The built-in touch-up backend is a deterministic, translation-only, coarse-to-fine PatchMatch synthesizer tuned for small repairs on scanned print material. The implementation is deliberately ROI-first: a brush stroke is solved inside a bounded working neighbourhood rather than preprocessing the full scan, while the source search domain inside that neighbourhood remains much larger than the painted region. 
 
 **Public solver entry points:**
@@ -1013,7 +1019,7 @@ the conventional `<feature>_<arch>.go` / `.s` suffixes within their package.
 applyWarpFill(img, oobMask)
     if no OOB pixels → return img unchanged (fast path)
     if warpFillMode == "outpaint":
-        patchmatch.Fill(img, oobMask, patchSize=9, iterations=5)
+        patchMatchFill(img, oobMask, patchSize=9, iterations=5)   // defaults to patchmatch.Fill
         return out
     // warpFillMode == "fill":
     for each OOB pixel: img.SetNRGBA(x, y, warpFillColor)

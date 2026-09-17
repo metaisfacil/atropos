@@ -145,6 +145,16 @@ func patchMatchChunkedFill(ctx context.Context, src *image.NRGBA, mask *image.Al
 	return patchMatchChunkedFillLogged(ctx, src, mask, patchSize, iterations, nil)
 }
 
+// patchMatchFill is the PatchMatch solver behind both fill call sites
+// (patchMatchChunkedFillLogged and applyWarpFill). It is a variable so an
+// untracked local file can substitute another engine at init time for
+// comparison against the built-in solver; patchMatchEngine names the active
+// engine in the touch-up logs.
+var (
+	patchMatchFill   = patchmatch.Fill
+	patchMatchEngine = "patchmatch"
+)
+
 // patchMatchChunkedFillLogged is the instrumented implementation used by the
 // application. Keeping the logger optional leaves the state-free helper useful
 // to benchmarks and tests without requiring an App.
@@ -195,7 +205,7 @@ func patchMatchChunkedFillLogged(ctx context.Context, src *image.NRGBA, mask *im
 		}
 
 		phaseStarted = time.Now()
-		filled, fillErr := patchmatch.Fill(ctx, cropSrc, cropMask, patchSize, iterations)
+		filled, fillErr := patchMatchFill(ctx, cropSrc, cropMask, patchSize, iterations)
 		if fillErr != nil {
 			return nil, fillErr
 		}
@@ -514,7 +524,7 @@ func (a *App) commitTouchupResult(ctx context.Context, generation uint64, srcImg
 // use TouchUpApplyStrokes to avoid the full-image encode/decode path.
 func (a *App) TouchUpApply(maskB64 string, patchSize int, iterations int) (*ProcessResult, error) {
 	operationStarted := time.Now()
-	a.logf("TouchUpApply: backend=%q patchSize=%d iterations=%d patchKernel=%s", a.touchupBackend, patchSize, iterations, patchmatch.ActiveKernel())
+	a.logf("TouchUpApply: backend=%q patchSize=%d iterations=%d patchKernel=%s engine=%s", a.touchupBackend, patchSize, iterations, patchmatch.ActiveKernel(), patchMatchEngine)
 	if a.currentImage == nil && a.warpedImage == nil {
 		a.logf("TouchUpApply: failed before launch in %s: no image loaded", time.Since(operationStarted))
 		return nil, fmt.Errorf("no image loaded")
@@ -541,8 +551,8 @@ func (a *App) TouchUpApply(maskB64 string, patchSize int, iterations int) (*Proc
 // into a bounded mask and starts the asynchronous fill.
 func (a *App) TouchUpApplyStrokes(request TouchUpStrokeRequest) (*ProcessResult, error) {
 	started := time.Now()
-	a.logf("TouchUpApplyStrokes: backend=%q points=%d brushSize=%.1f patchSize=%d iterations=%d patchKernel=%s",
-		a.touchupBackend, len(request.Points), request.BrushSize, request.PatchSize, request.Iterations, patchmatch.ActiveKernel())
+	a.logf("TouchUpApplyStrokes: backend=%q points=%d brushSize=%.1f patchSize=%d iterations=%d patchKernel=%s engine=%s",
+		a.touchupBackend, len(request.Points), request.BrushSize, request.PatchSize, request.Iterations, patchmatch.ActiveKernel(), patchMatchEngine)
 	if a.currentImage == nil && a.warpedImage == nil {
 		a.logf("TouchUpApplyStrokes: failed before launch in %s: no image loaded", time.Since(started))
 		return nil, fmt.Errorf("no image loaded")

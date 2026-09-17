@@ -82,7 +82,7 @@ Mode switching must:
 
 ### Touch-up & Image Fill
 
-18. Using IOPaint for warp out-of-bounds fill is wrong; PatchMatch is used for `applyWarpFill`.
+18. Using IOPaint for warp out-of-bounds fill is wrong; PatchMatch is used for `applyWarpFill`. Both PatchMatch call sites go through the `patchMatchFill` variable in `app_touchup.go`; do not call `patchmatch.Fill` directly from app code.
 19. `iopaintFill` does NOT send the full source image to the IOPaint server. It crops to the bounding box of the mask (+ 128 px margin), sends that crop as JPEG, then composites only the masked pixels from the response back onto a full clone of the source. The function always returns a full-size `*image.NRGBA`. Do not assume the returned image reflects IOPaint's view of the whole image.
 20. Any operation that invalidates an active descreen session should propagate `DescreenReset` so frontend descreen UI state does not drift.
 

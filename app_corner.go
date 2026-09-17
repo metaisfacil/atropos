@@ -12,7 +12,6 @@ import (
 	"atropos/internal/raster"
 
 	"atropos/internal/cornerdetect"
-	"atropos/internal/patchmatch"
 )
 
 // suggestCornerParams returns sensible detection defaults derived from image
@@ -431,7 +430,7 @@ func (a *App) applyWarpFill(img *image.NRGBA, oobMask *image.Alpha) *image.NRGBA
 	}
 
 	if a.warpFillMode == "outpaint" {
-		out, _ := patchmatch.Fill(context.Background(), img, oobMask, 9, 5)
+		out, _ := patchMatchFill(context.Background(), img, oobMask, 9, 5)
 		if out == nil {
 			out = img
 		}
