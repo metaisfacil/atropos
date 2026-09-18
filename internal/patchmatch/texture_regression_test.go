@@ -13,8 +13,8 @@ func TestPatchMatchFillPreservesFineStochasticTexture(t *testing.T) {
 	original := image.NewNRGBA(image.Rect(0, 0, w, h))
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			fine := int(pmHash(uint32(x), uint32(y), 0x6a09e667)%51) - 25
-			coarse := int(pmHash(uint32(x/2), uint32(y/2), 0xbb67ae85)%19) - 9
+			fine := int(pmTestHash(uint32(x), uint32(y), 0x6a09e667)%51) - 25
+			coarse := int(pmTestHash(uint32(x/2), uint32(y/2), 0xbb67ae85)%19) - 9
 			base := 38 + coarse + fine
 			original.SetNRGBA(x, y, color.NRGBA{
 				R: byte(clampInt(base+fine/8, 0, 255)),
@@ -64,8 +64,8 @@ func TestPatchMatchFillPreservesTextureBesideCrossingEdge(t *testing.T) {
 		for x := 0; x < w; x++ {
 			value := color.NRGBA{R: 205, G: 184, B: 111, A: 255}
 			if y < 58 {
-				fine := int(pmHash(uint32(x), uint32(y), 0x3c6ef372)%47) - 23
-				coarse := int(pmHash(uint32(x/2), uint32(y/2), 0xa54ff53a)%15) - 7
+				fine := int(pmTestHash(uint32(x), uint32(y), 0x3c6ef372)%47) - 23
+				coarse := int(pmTestHash(uint32(x/2), uint32(y/2), 0xa54ff53a)%15) - 7
 				base := 39 + fine + coarse
 				value = color.NRGBA{
 					R: byte(clampInt(base+fine/9, 0, 255)),

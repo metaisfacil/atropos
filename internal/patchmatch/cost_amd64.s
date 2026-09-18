@@ -38,94 +38,20 @@ DATA ·pmOddTailMasks+120(SB)/4, $0xffffffff
 DATA ·pmOddTailMasks+124(SB)/4, $0
 GLOBL ·pmOddTailMasks(SB), RODATA|NOPTR, $128
 
-// pmPatchSSDAVX2 evaluates four premultiplied channels eight pixels at a time.
-// The packed rows are padded, so masked tail loads never cross an allocation.
-TEXT ·pmPatchSSDAVX2(SB), NOSPLIT, $0-12
-	MOVQ args+0(FP), BP
-	MOVQ 72(BP), SI          // packed row stride, float32 elements
-	SHLQ $2, SI              // bytes
-	MOVQ 80(BP), CX          // patch size
-	VMOVSS 88(BP), X14       // raw early-exit limit
-	VXORPS Y15, Y15, Y15     // accumulated weighted SSD
-	XORQ R12, R12            // row byte offset
-	XORQ DX, DX              // row
-
-row_loop:
-	MOVQ 0(BP), R8
-	ADDQ R12, R8
-	MOVQ 8(BP), R9
-	ADDQ R12, R9
-	MOVQ 16(BP), R10
-	ADDQ R12, R10
-	MOVQ 24(BP), R11
-	ADDQ R12, R11
-	MOVQ 64(BP), BX
-	ADDQ R12, BX
-	XORQ DI, DI              // column
-
-column_loop:
-	MOVQ CX, AX
-	SUBQ DI, AX              // remaining pixels
-	VMOVUPS (BX)(DI*4), Y0   // confidence
-	CMPQ AX, $8
-	JGE channels
-
-	// Every supported patch size is odd. Map tails 1/3/5/7 to mask slots 0..3.
-	MOVQ AX, R13
-	SHRQ $1, R13
-	SHLQ $5, R13
-	LEAQ ·pmOddTailMasks(SB), AX
-	ADDQ R13, AX
-	VMOVUPS (AX), Y3
-	VANDPS Y3, Y0, Y0
-
-channels:
-	MOVQ 32(BP), AX
-	ADDQ R12, AX
-	VMOVUPS (R8)(DI*4), Y1
-	VSUBPS (AX)(DI*4), Y1, Y1
-	VMULPS Y0, Y1, Y2
-	VFMADD231PS Y1, Y2, Y15
-
-	MOVQ 40(BP), AX
-	ADDQ R12, AX
-	VMOVUPS (R9)(DI*4), Y1
-	VSUBPS (AX)(DI*4), Y1, Y1
-	VMULPS Y0, Y1, Y2
-	VFMADD231PS Y1, Y2, Y15
-
-	MOVQ 48(BP), AX
-	ADDQ R12, AX
-	VMOVUPS (R10)(DI*4), Y1
-	VSUBPS (AX)(DI*4), Y1, Y1
-	VMULPS Y0, Y1, Y2
-	VFMADD231PS Y1, Y2, Y15
-
-	MOVQ 56(BP), AX
-	ADDQ R12, AX
-	VMOVUPS (R11)(DI*4), Y1
-	VSUBPS (AX)(DI*4), Y1, Y1
-	VMULPS Y0, Y1, Y2
-	VFMADD231PS Y1, Y2, Y15
-
-	ADDQ $8, DI
-	CMPQ DI, CX
-	JL column_loop
-
-	// Check the monotonically increasing partial sum once per patch row.
-	VEXTRACTF128 $1, Y15, X3
-	VADDPS X15, X3, X3
-	VHADDPS X3, X3, X3
-	VHADDPS X3, X3, X3
-	VUCOMISS X14, X3
-	JA done
-
-	INCQ DX
-	ADDQ SI, R12
-	CMPQ DX, CX
-	JL row_loop
-
-done:
-	VMOVSS X3, ret+8(FP)
-	VZEROUPPER
+TEXT ·synthesisEncryptCounterHardware(SB), NOSPLIT, $0-16
+	MOVQ block+0(FP), AX
+	MOVQ keys+8(FP), BX
+	MOVOU (AX), X0
+	PXOR 0(BX), X0
+	AESENC 16(BX), X0
+	AESENC 32(BX), X0
+	AESENC 48(BX), X0
+	AESENC 64(BX), X0
+	AESENC 80(BX), X0
+	AESENC 96(BX), X0
+	AESENC 112(BX), X0
+	AESENC 128(BX), X0
+	AESENC 144(BX), X0
+	AESENCLAST 160(BX), X0
+	MOVOU X0, (AX)
 	RET

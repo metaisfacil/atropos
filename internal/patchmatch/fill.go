@@ -3,6 +3,7 @@ package patchmatch
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"image"
 	"image/draw"
@@ -15,7 +16,22 @@ import (
 // src. Performance-sensitive callers should prefer FillROI or FillBounds with a known
 // dirty rectangle.
 func Fill(ctx context.Context, src *image.NRGBA, mask *image.Alpha, patchSize, iterations int) (*image.NRGBA, error) {
-	return FillBounds(ctx, src, mask, image.Rectangle{}, patchSize, iterations)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if src == nil {
+		return nil, errors.New("PatchMatch: nil source image")
+	}
+	w, h := src.Bounds().Dx(), src.Bounds().Dy()
+	if w == 0 || h == 0 || mask == nil {
+		return normalizeNRGBA(src), nil
+	}
+	localSource := normalizeNRGBA(src)
+	localMask := normalizeAlpha(mask, w, h)
+	if maskBounds(localMask).Empty() {
+		return localSource, nil
+	}
+	return patchMatchFillLocal(ctx, localSource, localMask, patchSize, iterations)
 }
 
 // FillBounds is the full-image result API with an optional
@@ -83,88 +99,269 @@ func FillROI(ctx context.Context, src *image.NRGBA, mask *image.Alpha, dirtyBoun
 	return local, workBounds, nil
 }
 
-func patchMatchFillLocal(ctx context.Context, source *image.NRGBA, targetMask *image.Alpha, patchSize, iterations int) (*image.NRGBA, error) {
-	images, targetMasks, sourceMasks := buildPatchPyramid(source, targetMask, patchSize)
-	var parent *pmSolution
+const (
+	synthesisPatchSize = 7
+	synthesisPatchHalf = synthesisPatchSize / 2
+	synthesisMinSide   = 35
 
-	for levelIndex := len(images) - 1; levelIndex >= 0; levelIndex-- {
+	// Fine-level random-search radius of the first propagation dispatch and
+	// the fixed radius of the incumbent/restart merge dispatch.
+	synthesisFineRadius      = 3
+	synthesisSecondaryRadius = 1
+)
+
+// synthesisPlaneSigma is the Gaussian of every step of the plane chain
+// (probed: the synthesis's target planes are a smooth chain, sigma about 0.55
+// per 0.7 step).
+const synthesisPlaneSigma = 0.55
+
+type pmPoint struct {
+	x int32
+	y int32
+}
+
+type synthesisLevel struct {
+	src           *image.NRGBA // plain box-reduced source sampled by costs and votes
+	plane         *image.NRGBA // opaque form of src used by the patch-cost kernel
+	seed          *image.NRGBA // masked, normalised target image that begins the E/M loop
+	mask          *image.Alpha // point-sampled hole: pixels replaced by the vote
+	targetMask    *image.Alpha // conservative coverage: target/source classification
+	w, h          int
+	painted       image.Rectangle
+	targetPainted image.Rectangle
+	active        image.Rectangle
+	fieldStride   int
+	fieldOffset   int
+	searchWindow  int   // scalar fallback proposal bound; zero means the full source region
+	window        []int // per-pixel proposal bound (the engine's window plane)
+	target        []bool
+	valid         []bool
+	sources       []pmPoint
+	nnf           []pmPoint
+	cost          []uint32
+	restartNNF    []pmPoint
+	restartCost   []uint32
+	coherence     []float32
+}
+
+type synthesisSolution struct {
+	level   *synthesisLevel
+	working *image.NRGBA
+	nnf     []pmPoint
+}
+
+// synthesisChainPlane is a colour plane with a validity weight per pixel.
+type synthesisChainPlane struct {
+	w, h   int
+	values []float32 // RGB, premultiplied by the weight
+	weight []float32
+}
+
+// synthesisRNG reproduces the counter-mode generator used by the synthesis
+// translation solver. Its AES round-key table is intentionally not a normal
+// expanded AES key: the native code reads the fixed table one byte off its
+// conventional alignment. Keeping the actual round keys is therefore both
+// simpler and exact.
+type synthesisRNG struct {
+	counter [4]uint32
+	words   [4]uint32
+	used    int
+}
+
+// synthesisDebugLevel, when set, receives every solved level (tests only).
+var synthesisDebugLevel func(levelIndex int, level *synthesisLevel, working *image.NRGBA)
+
+// synthesisDebugPeel, when set, receives the pre-healed peel image (tests only).
+var synthesisDebugPeel func(img *image.NRGBA, mask *image.Alpha)
+
+// synthesisDebugRound, when set, is called after every round (tests only).
+var synthesisDebugRound func(levelIndex, round int, phase string, level *synthesisLevel, working *image.NRGBA)
+
+func patchMatchFillLocal(ctx context.Context, source *image.NRGBA, targetMask *image.Alpha, _, _ int) (*image.NRGBA, error) {
+	// Holes that touch the image border are pre-healed ring by ring at a
+	// coarse power-of-two scale before the ordinary pyramid runs; that scale
+	// also becomes the coarsest pyramid level.
+	w, h := source.Bounds().Dx(), source.Bounds().Dy()
+	peel := maskTouchesBorder(targetMask)
+	maxDist := synthesisMaxL1Distance(targetMask)
+	minCoarse := synthesisMinSide
+	var peelScale float32
+	if peel {
+		// The peel scale sets the coarsest pyramid level (min side of the peel
+		// image, but never more than half the image).
+		peelScale = synthesisPeelScale(w, h, maxDist)
+		peelW, peelH := int(float32(w)*peelScale+0.5), int(float32(h)*peelScale+0.5)
+		minCoarse = minInt(minInt(peelW, peelH), minInt(w, h)/2)
+	}
+	levels := synthesisPyramid(source, targetMask, minCoarse)
+	active := make([]int, 0, len(levels))
+	for i, level := range levels {
+		if len(level.sources) != 0 && synthesisLevelIsUsable(level, i == len(levels)-1) {
+			active = append(active, i)
+		}
+	}
+	if len(active) == 0 {
+		return cloneNRGBA(source), nil
+	}
+
+	var parent *synthesisSolution
+	if peel {
+		peelSrc, peelMask := synthesisBlackHole(source, targetMask), targetMask
+		peelW, peelH := int(float32(w)*peelScale+0.5), int(float32(h)*peelScale+0.5)
+		if peelW != w || peelH != h {
+			if levels[0].w == peelW && levels[0].h == peelH && levels[0].src != nil && levels[0].targetMask != nil {
+				peelSrc, peelMask = levels[0].src, levels[0].targetMask
+			} else {
+				peelSrc = synthesisMaskedResize(synthesisBlackHole(source, targetMask), nil, peelW, peelH)
+				peelMask = synthesisResizeAlpha(targetMask, peelW, peelH)
+			}
+		}
+		depth := int(float32(maxDist)*peelScale + 0.5)
+		healed, field, err := synthesisPeel(ctx, peelSrc, peelMask, depth)
+		if err != nil {
+			return nil, err
+		}
+		if synthesisDebugPeel != nil {
+			synthesisDebugPeel(healed, peelMask)
+		}
+		// The pre-healed image seeds the first active level's target; its
+		// field starts from random sources like any first level (probed: the
+		// first main dispatch of a top band starts from a uniformly random
+		// field even though the peel solved the same rows).
+		_ = field
+		parent = &synthesisSolution{level: &synthesisLevel{w: peelW, h: peelH}, working: healed}
+	}
+
+	// The initializer's half-window is derived once from the full-resolution
+	// hole geometry. It is not a generic global draw: live traces show the
+	// same value at the first active pyramid level (for example 17 at scale
+	// 0.7 for a 10 px dab).
+	initWindow := synthesisSearchWindow(targetMask, maxDist, peel)
+	for _, levelIndex := range active {
+		level := levels[levelIndex]
+		level.window = synthesisWindowPlane(level, initWindow, w)
+	}
+
+	finest := active[len(active)-1]
+	ordinaryIndex := 0
+	ordinaryCount := len(active) - 1
+	for _, levelIndex := range active {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-
-		level := preparePMLevel(images[levelIndex], targetMasks[levelIndex], sourceMasks[levelIndex], patchSize)
-		// The expensive regularizers only pay off at the two finest levels. Coarse
-		// levels stay close to the plain geometric solver.
-		switch levelIndex {
-		case 0:
-			level.uniformityStrength = 1
-			level.regionEnabled = true
-		case 1:
-			level.uniformityStrength = 0.55
-			level.regionEnabled = true
+		level := levels[levelIndex]
+		primaryRadius := synthesisFineRadius
+		if ordinaryIndex < maxInt(2, len(active)-3) {
+			primaryRadius = maxInt(level.w, level.h)
 		}
-		// Search and reconstruction use source colours unmodified.
-		// Fine texture and exact colour edges only matter at full resolution.
-		// Coarse levels exist to find large displacements cheaply.
-		if levelIndex == 0 {
-			if err := pmPrepareStructureModel(ctx, level); err != nil {
+		working := synthesisSeedWorking(level, parent)
+		inherited := parent != nil && parent.nnf != nil
+		if inherited {
+			synthesisUpscaleNNF(level, parent, levelIndex)
+			// The level's first target is the vote of the inherited field on
+			// this level's plane rather than the blurry upsampled image, so
+			// the inherited entries start as exact copies and only a fresh
+			// entry that is really cheaper can displace them (probed: the
+			// synthesis's first round leaves the inherited block structure
+			// unchanged).
+			synthesisRefreshCosts(level, working)
+			voted, err := synthesisVote(ctx, level, working)
+			if err != nil {
 				return nil, err
 			}
-			pmPrepareTextureModel(level)
+			working = voted
 		}
-		if len(level.sources) == 0 || level.active.Empty() {
+
+		if levelIndex == finest && inherited {
+			// The finest level runs a single round without proposals: one
+			// propagation dispatch on the inherited field, then a vote.
+			synthesisRefreshCosts(level, working)
+			if synthesisDebugRound != nil {
+				synthesisDebugRound(levelIndex, 0, "proposed", level, working)
+			}
+			synthesisSearchDispatch(level, working, 0, levelIndex, 0, 0, nil, nil)
+			if synthesisDebugRound != nil {
+				synthesisDebugRound(levelIndex, 0, "searched", level, working)
+			}
+			var err error
+			working, err = synthesisVote(ctx, level, working)
+			if err != nil {
+				return nil, err
+			}
+			parent = &synthesisSolution{level: level, working: working, nnf: append([]pmPoint(nil), level.nnf...)}
+			if synthesisDebugLevel != nil {
+				synthesisDebugLevel(levelIndex, level, working)
+			}
 			continue
 		}
 
-		working := seedPMWorking(level, parent)
-		rounds := pmEMRounds(levelIndex, parent == nil)
-
-		var nnf []pmPoint
-		var costs []float32
-		var err error
-		seed := parent
-		settledRounds := 0
-		progress := newPMEMProgress()
+		rounds := 25
+		if ordinaryIndex == 0 || ordinaryIndex == ordinaryCount-1 || ordinaryCount <= 1 {
+			rounds = 30
+		}
+		// Probed schedule: the primary dispatch spans the level on the early
+		// active levels and uses radius 3 on the last three; the merge dispatch
+		// always uses radius 1.
+		// The last ordinary levels freeze the interiors of coherent blocks
+		// of the incumbent field (probed: a three-state map appears on the
+		// last three active levels only).
+		freezing := ordinaryIndex >= ordinaryCount-2
 		for round := 0; round < rounds; round++ {
-			var stats pmSolveStats
-			nnf, costs, stats, err = solvePMLevel(ctx, level, working, seed, iterations, round)
-			if err != nil {
+			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			previous := working
-			working, err = reconstructPMLevel(ctx, level, working, nnf, costs)
-			if err != nil {
-				return nil, err
-			}
-			seed = &pmSolution{level: level, working: working, nnf: nnf}
-
-			change := pmReconstructionChange(previous, working, level.mask, level.painted)
-			exhausted := progress.observe(change.mean)
-			if round < 2 {
-				// A converged search is not enough on its own, because repainting
-				// changes what the next search matches against. Ignore both stop
-				// conditions for two rounds while confidence is still ramping up.
-				continue
-			}
-			if change.settled() {
-				settledRounds++
-				// On flat areas the search keeps swapping between source patches
-				// that score the same, so it may never call itself converged. Two
-				// unchanged repaints in a row are enough on their own.
-				if stats.stable || settledRounds >= 2 {
-					break
-				}
+			// The field persists across rounds. Every round after the first
+			// solves a fresh restart field - uniform random sources refined
+			// by the primary dispatch - and the second dispatch merges it into
+			// the incumbent pixel by pixel (probed on the synthesis engine: the
+			// entry buffer is re-randomised, searched, and the prior field
+			// returns in the first pass of the second dispatch with only the
+			// cheaper restart entries kept). Only the very first round of a
+			// level without an inherited field starts from scratch; an
+			// inherited field is never random-searched with the primary
+			// radius itself (probed: a level's first round takes the fresh
+			// field from 38 offsets per 7x7 footprint to the inherited 6 and
+			// the rounds keep it there, whereas searching the inherited field
+			// directly against the blurry upsampled target fragments it).
+			var restart []pmPoint
+			var frozen []bool
+			if round == 0 && !inherited {
+				synthesisRandomInitialize(level, working, levelIndex, round, initWindow, false, false)
 			} else {
-				settledRounds = 0
+				synthesisRefreshCosts(level, working)
+				if freezing && round != 0 {
+					frozen = synthesisFrozen(level)
+				}
+				restart = synthesisRestartField(level, working, levelIndex, round, initWindow, primaryRadius, frozen)
 			}
-			// Some levels never get that quiet, so also stop once the rounds have
-			// stopped improving the result.
-			if exhausted {
-				break
+			if synthesisDebugRound != nil {
+				synthesisDebugRound(levelIndex, round, "proposed", level, working)
+			}
+			if restart == nil {
+				synthesisSearchDispatch(level, working, primaryRadius, levelIndex, round, 0, nil, frozen)
+			}
+			if ordinaryIndex != 0 || round != 0 {
+				synthesisSearchDispatch(level, working, synthesisSecondaryRadius, levelIndex, round, 1, restart, frozen)
+			}
+			if synthesisDebugRound != nil {
+				synthesisDebugRound(levelIndex, round, "searched", level, working)
+			}
+			var err error
+			working, err = synthesisVote(ctx, level, working)
+			if err != nil {
+				return nil, err
 			}
 		}
-
-		parent = &pmSolution{level: level, working: working, nnf: nnf}
+		parent = &synthesisSolution{level: level, working: working, nnf: append([]pmPoint(nil), level.nnf...)}
+		// Restart buffers are level-local workspace. Release them once this
+		// level has been collapsed into the parent solution so coarse levels do
+		// not retain a second full-resolution field for the rest of the fill.
+		level.restartNNF = nil
+		level.restartCost = nil
+		ordinaryIndex++
+		if synthesisDebugLevel != nil {
+			synthesisDebugLevel(levelIndex, level, working)
+		}
 	}
 
 	if parent == nil {
@@ -173,100 +370,976 @@ func patchMatchFillLocal(ctx context.Context, source *image.NRGBA, targetMask *i
 	return parent.working, nil
 }
 
-// pmEMRounds is the maximum number of search-and-repaint rounds for one level.
-// These are not the search passes controlled by the iterations argument.
-// Atropos keeps three rounds at full resolution instead of one, because its
-// pyramid steps are wider and only the finest level models texture and edges:
-// with a single round the result would be whatever the first repaint produced.
-func pmEMRounds(levelIndex int, firstSolved bool) int {
-	if firstSolved || levelIndex == 1 {
-		return 30
+// synthesisPyramid builds the coarse-to-fine levels: scales step by 0.7 from
+// full resolution while the shorter side stays at least minCoarse, and a
+// final level clamped to exactly minCoarse is added when the next step would
+// fall below it.
+func synthesisPyramid(source *image.NRGBA, targetMask *image.Alpha, minCoarse int) []*synthesisLevel {
+	w, h := source.Bounds().Dx(), source.Bounds().Dy()
+	minSide := minInt(w, h)
+	scales := []float32{1}
+	for minSide > minCoarse {
+		last := scales[len(scales)-1]
+		next := last * 0.7
+		if int(float32(minSide)*next+0.5) < minCoarse {
+			next = float32(minCoarse) / float32(minSide)
+		}
+		lastW, lastH := int(float32(w)*last+0.5), int(float32(h)*last+0.5)
+		nextW, nextH := int(float32(w)*next+0.5), int(float32(h)*next+0.5)
+		if nextW == lastW && nextH == lastH {
+			break
+		}
+		scales = append(scales, next)
+		if next == float32(minCoarse)/float32(minSide) {
+			break
+		}
 	}
-	if levelIndex == 0 {
-		return 3
+
+	// The source and target pyramids are distinct. Candidate patches and
+	// reconstruction votes use a plain box reduction of the black-hole source.
+	// The evolving target starts from a masked, normalised Gaussian chain that
+	// extrapolates known colour a little way into the hole. Fine to coarse,
+	// then reversed.
+	blackSource := synthesisBlackHole(source, targetMask)
+	chain := newSynthesisChainPlane(source, targetMask)
+	fine := make([]*synthesisLevel, 0, len(scales))
+	for i, scale := range scales {
+		lw := maxInt(synthesisPatchSize, int(float32(w)*scale+0.5))
+		lh := maxInt(synthesisPatchSize, int(float32(h)*scale+0.5))
+		if i == 0 {
+			level := newSynthesisLevel(source, targetMask, nil)
+			level.plane = blackSource
+			level.seed = blackSource
+			fine = append(fine, level)
+			continue
+		}
+		chain = chain.reduce(lw, lh, synthesisPlaneSigma)
+		pointMask := synthesisPointMask(targetMask, lw, lh)
+		pointPainted := maskBounds(pointMask)
+		if pointPainted.Dx() < synthesisPatchSize || pointPainted.Dy() < synthesisPatchSize {
+			// The schedule skips levels whose downscaled hole cannot contain a
+			// complete patch. Keep only their geometry: the Gaussian chain must
+			// still advance through this scale, but source planes, classification
+			// maps and NNF storage are never observed.
+			fine = append(fine, &synthesisLevel{
+				mask: pointMask, w: lw, h: lh, painted: pointPainted, targetPainted: pointPainted,
+			})
+			continue
+		}
+		sourcePlane := synthesisMaskedResize(blackSource, nil, lw, lh)
+		coverageMask := synthesisResizeAlpha(targetMask, lw, lh)
+		targetLevelMask := synthesisAreaMask(targetMask, lw, lh)
+		level := newSynthesisLevelWithPainted(sourcePlane, targetLevelMask, coverageMask, pointPainted)
+		// The native target view uses the point-sampled mask's bounds but a
+		// filtered mask for per-centre activity. Source patches are rejected
+		// against every coarse pixel touched by the original hole.
+		level.mask = pointMask
+		level.painted = pointPainted
+		level.targetMask = coverageMask
+		level.seed = chain.image()
+		fine = append(fine, level)
 	}
-	return 25
-}
-
-const (
-	// The level has settled: the last round changed the filled pixels by less
-	// than this on average, in 0-255 units, and moved no channel by more than
-	// one unit.
-	pmEMSettledMean = 0.05
-	// Some levels never settle. They keep changing by a small amount that stops
-	// getting smaller, because the search swaps between source patches that
-	// score the same. A round counts as an improvement only if it beats the
-	// smallest change so far by this factor; after this many rounds without
-	// one, and with less than pmEMResidualCeiling still moving, the level stops.
-	// On the 43px stroke that cut the second-finest level from 28 rounds to 7
-	// and left the repeated-printing and colour-edge test outputs unchanged.
-	pmEMProgressFactor  = 0.9
-	pmEMStalledRounds   = 2
-	pmEMResidualCeiling = 0.25
-)
-
-// pmRoundChange is how far one round moved the filled pixels, in 0-255 units:
-// mean is the coverage-weighted average per channel, peak the largest single
-// change. Whether that counts as finished is decided by settled and
-// pmEMProgress; this type only measures.
-type pmRoundChange struct {
-	mean float64
-	peak int
-}
-
-// settled reports that the reconstruction has stopped moving. Both limits are
-// needed: a one-unit drift across the whole hole still changes what the next
-// search matches against, and a single pixel jumping on its own barely moves
-// the mean.
-func (c pmRoundChange) settled() bool {
-	return c.peak <= 1 && c.mean <= pmEMSettledMean
-}
-
-// pmEMProgress tracks whether a level's rounds are still improving the result.
-// It tolerates one round that fails to improve, because the change per round
-// bounces around while a level is still converging.
-type pmEMProgress struct {
-	best    float64
-	stalled int
-}
-
-func newPMEMProgress() pmEMProgress {
-	return pmEMProgress{best: math.Inf(1)}
-}
-
-// observe records one round's mean change and reports whether the level has
-// stopped improving.
-func (p *pmEMProgress) observe(mean float64) bool {
-	if mean < p.best*pmEMProgressFactor {
-		p.best = mean
-		p.stalled = 0
-	} else {
-		p.stalled++
+	levels := make([]*synthesisLevel, 0, len(fine))
+	for i := len(fine) - 1; i >= 0; i-- {
+		levels = append(levels, fine[i])
 	}
-	return mean <= pmEMResidualCeiling && p.stalled >= pmEMStalledRounds
+	return levels
 }
 
-func pmReconstructionChange(previous, next *image.NRGBA, mask *image.Alpha, bounds image.Rectangle) pmRoundChange {
-	var difference, weight int64
-	peak := 0
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			coverage := int64(mask.Pix[y*mask.Stride+x])
-			if coverage == 0 {
+func newSynthesisChainPlane(src *image.NRGBA, mask *image.Alpha) *synthesisChainPlane {
+	w, h := src.Bounds().Dx(), src.Bounds().Dy()
+	p := &synthesisChainPlane{w: w, h: h, values: make([]float32, w*h*3), weight: make([]float32, w*h)}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if mask.Pix[y*mask.Stride+x] != 0 {
 				continue
 			}
-			for c := 0; c < 4; c++ {
-				d := absInt(int(previous.Pix[y*previous.Stride+x*4+c]) - int(next.Pix[y*next.Stride+x*4+c]))
-				difference += coverage * int64(d)
-				weight += coverage
-				peak = maxInt(peak, d)
+			i := y*w + x
+			p.weight[i] = 1
+			for c := 0; c < 3; c++ {
+				p.values[i*3+c] = float32(src.Pix[y*src.Stride+x*4+c])
 			}
 		}
 	}
-	if weight == 0 {
-		return pmRoundChange{}
+	return p
+}
+
+// reduce area-averages the plane to w x h (weights and premultiplied values
+// alike) and then blurs both with a Gaussian, so the normalised result is the
+// known content's average where known pixels reach and black elsewhere.
+func (p *synthesisChainPlane) reduce(w, h int, sigma float64) *synthesisChainPlane {
+	box := &synthesisChainPlane{w: w, h: h, values: make([]float32, w*h*3), weight: make([]float32, w*h)}
+	sx, sy := float64(w)/float64(p.w), float64(h)/float64(p.h)
+	// Gather each output cell from its overlapping source cells. This visits a
+	// cell's contributors in the same y/x order as the former scatter loop, so
+	// its floating-point sums are bit-for-bit identical, but independent output
+	// rows can run concurrently without atomics.
+	_ = parallelRowsSized(context.Background(), 0, h, p.w, func(oy int) {
+		sourceY0 := maxInt(0, int(float64(oy)/sy))
+		sourceY1 := minInt(p.h, int(math.Ceil(float64(oy+1)/sy)))
+		for ox := 0; ox < w; ox++ {
+			sourceX0 := maxInt(0, int(float64(ox)/sx))
+			sourceX1 := minInt(p.w, int(math.Ceil(float64(ox+1)/sx)))
+			oi := oy*w + ox
+			for y := sourceY0; y < sourceY1; y++ {
+				y0, y1 := float64(y)*sy, float64(y+1)*sy
+				cy := minFloat64(y1, float64(oy+1)) - maxFloat64(y0, float64(oy))
+				if cy <= 0 {
+					continue
+				}
+				for x := sourceX0; x < sourceX1; x++ {
+					i := y*p.w + x
+					if p.weight[i] == 0 {
+						continue
+					}
+					x0, x1 := float64(x)*sx, float64(x+1)*sx
+					cx := minFloat64(x1, float64(ox+1)) - maxFloat64(x0, float64(ox))
+					if cx <= 0 {
+						continue
+					}
+					wgt := float32(cx * cy)
+					for c := 0; c < 3; c++ {
+						box.values[oi*3+c] += wgt * p.values[i*3+c]
+					}
+					box.weight[oi] += wgt * p.weight[i]
+				}
+			}
+		}
+	})
+	radius := int(math.Ceil(sigma * 2))
+	kernel := make([]float32, 2*radius+1)
+	for i := range kernel {
+		d := float64(i - radius)
+		kernel[i] = float32(math.Exp(-d * d / (2 * sigma * sigma)))
 	}
-	return pmRoundChange{mean: float64(difference) / float64(weight), peak: peak}
+	out := &synthesisChainPlane{w: w, h: h, values: make([]float32, w*h*3), weight: make([]float32, w*h)}
+	tmp := &synthesisChainPlane{w: w, h: h, values: make([]float32, w*h*3), weight: make([]float32, w*h)}
+	_ = parallelRowsSized(context.Background(), 0, h, w*(2*radius+1), func(y int) {
+		for x := 0; x < w; x++ {
+			oi := y*w + x
+			for k := -radius; k <= radius; k++ {
+				nx := x + k
+				if nx < 0 || nx >= w {
+					continue
+				}
+				ni := y*w + nx
+				g := kernel[k+radius]
+				tmp.weight[oi] += g * box.weight[ni]
+				for c := 0; c < 3; c++ {
+					tmp.values[oi*3+c] += g * box.values[ni*3+c]
+				}
+			}
+		}
+	})
+	_ = parallelRowsSized(context.Background(), 0, h, w*(2*radius+1), func(y int) {
+		for x := 0; x < w; x++ {
+			oi := y*w + x
+			for k := -radius; k <= radius; k++ {
+				ny := y + k
+				if ny < 0 || ny >= h {
+					continue
+				}
+				ni := ny*w + x
+				g := kernel[k+radius]
+				out.weight[oi] += g * tmp.weight[ni]
+				for c := 0; c < 3; c++ {
+					out.values[oi*3+c] += g * tmp.values[ni*3+c]
+				}
+			}
+		}
+	})
+	return out
+}
+
+func (p *synthesisChainPlane) image() *image.NRGBA {
+	out := image.NewNRGBA(image.Rect(0, 0, p.w, p.h))
+	for i := 0; i < p.w*p.h; i++ {
+		di := i * 4
+		if p.weight[i] > 1e-6 {
+			for c := 0; c < 3; c++ {
+				out.Pix[di+c] = byte(clampInt(int(p.values[i*3+c]/p.weight[i]+0.5), 0, 255))
+			}
+		}
+		out.Pix[di+3] = 255
+	}
+	return out
+}
+
+// newSynthesisLevel prepares the target/source classification of one level.
+// Centres whose 7x7 patch overlaps mask are targets; centres whose patch
+// overlaps neither mask nor exclude are valid sources. exclude may be nil.
+func newSynthesisLevel(src *image.NRGBA, mask *image.Alpha, exclude *image.Alpha) *synthesisLevel {
+	return newSynthesisLevelWithPainted(src, mask, exclude, maskBounds(mask))
+}
+
+func newSynthesisLevelWithPainted(src *image.NRGBA, mask *image.Alpha, exclude *image.Alpha, targetPainted image.Rectangle) *synthesisLevel {
+	w, h := src.Bounds().Dx(), src.Bounds().Dy()
+	level := &synthesisLevel{src: src, plane: src, seed: src, mask: mask, targetMask: mask, w: w, h: h}
+	if !src.Opaque() {
+		// The patch cost reads RGB only; an opaque copy lets the SIMD
+		// kernel score transparent (outpaint) sources too.
+		level.plane = cloneNRGBA(src)
+		for i := 3; i < len(level.plane.Pix); i += 4 {
+			level.plane.Pix[i] = 255
+		}
+	}
+	level.painted = maskBounds(mask)
+	level.targetPainted = targetPainted
+	if level.targetPainted.Empty() || w < synthesisPatchSize || h < synthesisPatchSize {
+		return level
+	}
+	level.active = image.Rect(
+		maxInt(synthesisPatchHalf, level.targetPainted.Min.X-synthesisPatchHalf),
+		maxInt(synthesisPatchHalf, level.targetPainted.Min.Y-synthesisPatchHalf),
+		minInt(w-synthesisPatchHalf, level.targetPainted.Max.X+synthesisPatchHalf),
+		minInt(h-synthesisPatchHalf, level.targetPainted.Max.Y+synthesisPatchHalf),
+	)
+	level.fieldStride = level.active.Dx()
+	level.fieldOffset = -level.active.Min.Y*level.fieldStride - level.active.Min.X
+
+	maskIntegral := maskedIntegral(mask)
+	var excludeIntegral []int
+	if exclude != nil {
+		excludeIntegral = maskedIntegral(exclude)
+	}
+	level.valid = make([]bool, w*h)
+	fieldSize := level.active.Dx() * level.active.Dy()
+	level.target = make([]bool, fieldSize)
+	level.nnf = make([]pmPoint, fieldSize)
+	level.cost = make([]uint32, fieldSize)
+	for i := range level.nnf {
+		level.nnf[i] = pmPoint{x: -1, y: -1}
+		level.cost[i] = math.MaxUint32
+	}
+	for y := synthesisPatchHalf; y < h-synthesisPatchHalf; y++ {
+		for x := synthesisPatchHalf; x < w-synthesisPatchHalf; x++ {
+			x0, y0 := x-synthesisPatchHalf, y-synthesisPatchHalf
+			x1, y1 := x+synthesisPatchHalf+1, y+synthesisPatchHalf+1
+			covered := integralRectSum(maskIntegral, w+1, x0, y0, x1, y1) != 0
+			excluded := excludeIntegral != nil && integralRectSum(excludeIntegral, w+1, x0, y0, x1, y1) != 0
+			switch {
+			case covered:
+				if synthesisFieldContains(level, x, y) {
+					level.target[synthesisFieldID(level, x, y)] = true
+				}
+			case !covered && !excluded:
+				level.valid[y*w+x] = true
+				level.sources = append(level.sources, pmPoint{x: int32(x), y: int32(y)})
+			}
+		}
+	}
+	return level
+}
+
+func synthesisFieldContains(level *synthesisLevel, x, y int) bool {
+	return x >= level.active.Min.X && x < level.active.Max.X && y >= level.active.Min.Y && y < level.active.Max.Y
+}
+
+func synthesisFieldID(level *synthesisLevel, x, y int) int {
+	return y*level.fieldStride + x + level.fieldOffset
+}
+
+func synthesisTargetAt(level *synthesisLevel, x, y int) bool {
+	return synthesisFieldContains(level, x, y) && level.target[synthesisFieldID(level, x, y)]
+}
+
+func synthesisLevelIsUsable(level *synthesisLevel, finest bool) bool {
+	if level.targetPainted.Empty() || level.active.Empty() || len(level.sources) == 0 {
+		return false
+	}
+	if finest {
+		return true
+	}
+	return level.targetPainted.Dx() >= synthesisPatchSize && level.targetPainted.Dy() >= synthesisPatchSize
+}
+
+func synthesisSeedWorking(level *synthesisLevel, parent *synthesisSolution) *image.NRGBA {
+	if parent == nil {
+		return cloneNRGBA(level.seed)
+	}
+	out := cloneNRGBA(level.seed)
+	for y := level.painted.Min.Y; y < level.painted.Max.Y; y++ {
+		for x := level.painted.Min.X; x < level.painted.Max.X; x++ {
+			if level.mask.Pix[y*level.mask.Stride+x] == 0 {
+				continue
+			}
+			sample := pmBilinearParent(parent.working, level.w, level.h, x, y)
+			i := y*out.Stride + x*4
+			for c := 0; c < 4; c++ {
+				out.Pix[i+c] = sample[c]
+			}
+		}
+	}
+	return out
+}
+
+// synthesisWindowAt returns the proposal bound for a target centre. The engine
+// keeps a per-pixel window plane (EM state+0x528); the scalar is only the
+// fallback the initializer uses when that plane is absent.
+func synthesisWindowAt(level *synthesisLevel, x, y int) int {
+	if level.window != nil {
+		return level.window[synthesisFieldID(level, x, y)]
+	}
+	return level.searchWindow
+}
+
+// synthesisWindowPlane reproduces the engine's window plane: the
+// full-resolution half-window scaled into this level, plus each pixel's
+// Manhattan distance into the hole, so centres deep inside the hole search
+// farther than the boundary. Verified against native planes: C = int(hswHalf *
+// scale) matched every probed level exactly, and the ramp is
+// PM2_ManhattanDistanceTransform of the level's hole.
+func synthesisWindowPlane(level *synthesisLevel, hswHalf, fullWidth int) []int {
+	if hswHalf <= 0 || fullWidth <= 0 {
+		return nil
+	}
+	c := int(float64(hswHalf) * float64(level.w) / float64(fullWidth))
+	if c < 1 {
+		c = 1
+	}
+	dist := synthesisHoleDistance(level.targetMask, level.w, level.h)
+	out := make([]int, level.active.Dx()*level.active.Dy())
+	for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
+		for x := level.active.Min.X; x < level.active.Max.X; x++ {
+			out[synthesisFieldID(level, x, y)] = c + dist[y*level.w+x]
+		}
+	}
+	return out
+}
+
+// synthesisHoleDistance is the Manhattan distance of every hole pixel to the
+// nearest pixel outside the hole (zero outside), by the usual two-pass chamfer.
+func synthesisHoleDistance(mask *image.Alpha, w, h int) []int {
+	const far = 1 << 20
+	d := make([]int, w*h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if mask.Pix[y*mask.Stride+x] != 0 {
+				d[y*w+x] = far
+			}
+		}
+	}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			i := y*w + x
+			if d[i] == 0 {
+				continue
+			}
+			if x > 0 && d[i-1]+1 < d[i] {
+				d[i] = d[i-1] + 1
+			}
+			if y > 0 && d[i-w]+1 < d[i] {
+				d[i] = d[i-w] + 1
+			}
+		}
+	}
+	for y := h - 1; y >= 0; y-- {
+		for x := w - 1; x >= 0; x-- {
+			i := y*w + x
+			if d[i] == 0 {
+				continue
+			}
+			if x < w-1 && d[i+1]+1 < d[i] {
+				d[i] = d[i+1] + 1
+			}
+			if y < h-1 && d[i+w]+1 < d[i] {
+				d[i] = d[i+w] + 1
+			}
+		}
+	}
+	return d
+}
+
+// synthesisRandomInitialize draws one random source per target centre. With
+// propose set, the candidate replaces the incumbent only when its cost is
+// lower; otherwise the field is (re)initialised. Candidates are drawn within
+// the hole search window around the current match when the field was
+// inherited from a coarser level, else around the target pixel.
+func synthesisRandomInitialize(level *synthesisLevel, working *image.NRGBA, levelIndex, round, window int, aroundMatch, propose bool) {
+	_ = parallelRowsSized(context.Background(), level.active.Min.Y, level.active.Max.Y, level.active.Dx()*synthesisPatchSize, func(y int) {
+		rng := newSynthesisRNG(level.active.Min.X-synthesisPatchHalf, y-synthesisPatchHalf, 0, synthesisPatchHalf)
+		for x := level.active.Min.X; x < level.active.Max.X; x++ {
+			id := synthesisFieldID(level, x, y)
+			if !level.target[id] {
+				continue
+			}
+			cx, cy := x, y
+			if aroundMatch && synthesisValid(level, level.nnf[id]) {
+				cx, cy = int(level.nnf[id].x), int(level.nnf[id].y)
+			}
+			candidate, ok := synthesisRandomSource(level, &rng, cx, cy, synthesisWindowAt(level, x, y))
+			if !ok {
+				continue
+			}
+			if propose {
+				if candidate == level.nnf[id] {
+					continue
+				}
+				cost := synthesisPatchCost(level, working, x, y, candidate, level.cost[id])
+				if cost < level.cost[id] {
+					level.nnf[id], level.cost[id] = candidate, cost
+				}
+				continue
+			}
+			level.nnf[id] = candidate
+			level.cost[id] = synthesisPatchCost(level, working, x, y, candidate, math.MaxUint32)
+		}
+	})
+}
+
+// synthesisRandomSource draws a valid source centre inside the window around
+// (cx, cy), falling back to any valid source after a few misses.
+func synthesisRandomSource(level *synthesisLevel, rng *synthesisRNG, cx, cy, window int) (pmPoint, bool) {
+	rng.beginCandidate()
+	// The native field and its sampling window are expressed in patch top-left
+	// coordinates. The Go solver stores patch centres, so translate both the
+	// incumbent and every generated candidate at this boundary.
+	cx -= synthesisPatchHalf
+	cy -= synthesisPatchHalf
+	minX, maxX := 0, level.w-synthesisPatchSize+1
+	minY, maxY := 0, level.h-synthesisPatchSize+1
+	if window > 0 {
+		minX, maxX = maxInt(minX, cx-window), minInt(maxX, cx+window)
+		minY, maxY = maxInt(minY, cy-window), minInt(maxY, cy+window)
+	}
+	if maxX > minX && maxY > minY {
+		for attempt := 0; attempt < 32; attempt++ {
+			word := rng.next()
+			lo, hi := uint32(uint16(word)), uint32(uint16(word>>16))
+			x := minX + int((lo+hi)%uint32(maxX-minX))
+			y := minY + int((lo-hi)%uint32(maxY-minY))
+			p := pmPoint{x: int32(x + synthesisPatchHalf), y: int32(y + synthesisPatchHalf)}
+			if synthesisValid(level, p) {
+				return p, true
+			}
+		}
+	}
+	if len(level.sources) == 0 {
+		return pmPoint{}, false
+	}
+	return synthesisDrawPoint(level, rng)
+}
+
+func synthesisDrawPoint(level *synthesisLevel, rng *synthesisRNG) (pmPoint, bool) {
+	minX, maxX := synthesisPatchHalf, level.w-synthesisPatchHalf
+	minY, maxY := synthesisPatchHalf, level.h-synthesisPatchHalf
+	for rowAttempt := 0; rowAttempt < 32; rowAttempt++ {
+		y := minY + int(rng.nextBlockFirst()%uint32(maxY-minY))
+		for xAttempt := 0; xAttempt < 16; xAttempt++ {
+			if xAttempt&3 == 0 {
+				rng.beginCandidate()
+			}
+			x := minX + int(rng.next()%uint32(maxX-minX))
+			p := pmPoint{x: int32(x), y: int32(y)}
+			if synthesisValid(level, p) {
+				return p, true
+			}
+		}
+	}
+	for y := minY; y < maxY; y++ {
+		for x := minX; x < maxX; x++ {
+			p := pmPoint{x: int32(x), y: int32(y)}
+			if synthesisValid(level, p) {
+				return p, true
+			}
+		}
+	}
+	return pmPoint{}, false
+}
+
+func synthesisUpscaleNNF(level *synthesisLevel, parent *synthesisSolution, _ int) {
+	pw, ph := parent.level.w, parent.level.h
+	repaired := make([]bool, len(level.nnf))
+	for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
+		for x := level.active.Min.X; x < level.active.Max.X; x++ {
+			id := synthesisFieldID(level, x, y)
+			if !level.target[id] {
+				continue
+			}
+			px := clampInt(int((float64(x)+0.5)*float64(pw)/float64(level.w)), 0, pw-1)
+			py := clampInt(int((float64(y)+0.5)*float64(ph)/float64(level.h)), 0, ph-1)
+			q := pmPoint{x: -1, y: -1}
+			if synthesisFieldContains(parent.level, px, py) {
+				q = parent.nnf[synthesisFieldID(parent.level, px, py)]
+			}
+			if q.x >= 0 && q.y >= 0 {
+				dx, dy := float64(q.x)-float64(px), float64(q.y)-float64(py)
+				candidate := pmPoint{
+					x: int32(math.Round(float64(x) + dx*float64(level.w)/float64(pw))),
+					y: int32(math.Round(float64(y) + dy*float64(level.h)/float64(ph))),
+				}
+				if synthesisValid(level, candidate) {
+					level.nnf[id] = candidate
+					repaired[id] = true
+					continue
+				}
+			}
+		}
+	}
+
+	// The native upsampler marks a correspondence invalid when its scaled
+	// source falls outside the legal source mask. It then runs the same repair
+	// operation twice: take a nearby valid field entry, continue that entry's
+	// translation to this target, and use it when the translated source is
+	// legal. In particular, it does not put an unrelated random source at an
+	// invalid inherited entry. Search expanding square rings here; the native
+	// implementation has fast paths for the adjacent ring before doing the
+	// same outward search.
+	for pass := 0; pass < 2; pass++ {
+		for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
+			for x := level.active.Min.X; x < level.active.Max.X; x++ {
+				id := synthesisFieldID(level, x, y)
+				if !level.target[id] || repaired[id] {
+					continue
+				}
+				if candidate, ok := synthesisRepairInherited(level, repaired, x, y); ok {
+					level.nnf[id] = candidate
+					repaired[id] = true
+				}
+			}
+		}
+	}
+
+	// Degenerate masks can leave an island with no inherited neighbour to
+	// repair from. The native routine ultimately falls back to its default
+	// valid correspondence in this case; choose the first legal source rather
+	// than introducing another random stream into field upsampling.
+	if len(level.sources) != 0 {
+		fallback := level.sources[0]
+		for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
+			for x := level.active.Min.X; x < level.active.Max.X; x++ {
+				id := synthesisFieldID(level, x, y)
+				if level.target[id] && !repaired[id] {
+					level.nnf[id] = fallback
+				}
+			}
+		}
+	}
+}
+
+func synthesisRepairInherited(level *synthesisLevel, repaired []bool, x, y int) (pmPoint, bool) {
+	maxRadius := maxInt(level.active.Dx(), level.active.Dy())
+	for radius := 1; radius <= maxRadius; radius++ {
+		minX := maxInt(level.active.Min.X, x-radius)
+		maxX := minInt(level.active.Max.X-1, x+radius)
+		minY := maxInt(level.active.Min.Y, y-radius)
+		maxY := minInt(level.active.Max.Y-1, y+radius)
+		for ny := minY; ny <= maxY; ny++ {
+			for nx := minX; nx <= maxX; nx++ {
+				if nx != minX && nx != maxX && ny != minY && ny != maxY {
+					continue
+				}
+				nid := synthesisFieldID(level, nx, ny)
+				if !repaired[nid] {
+					continue
+				}
+				q := level.nnf[nid]
+				candidate := pmPoint{x: q.x + int32(x-nx), y: q.y + int32(y-ny)}
+				if synthesisValid(level, candidate) {
+					return candidate, true
+				}
+				// Some native repair paths copy the neighbour unchanged if
+				// continuing its translation crosses the source-region mask.
+				if synthesisValid(level, q) {
+					return q, true
+				}
+			}
+		}
+	}
+	return pmPoint{}, false
+}
+
+func synthesisRefreshCosts(level *synthesisLevel, working *image.NRGBA) {
+	_ = parallelRowsSized(context.Background(), level.active.Min.Y, level.active.Max.Y, level.active.Dx()*synthesisPatchSize, func(y int) {
+		for x := level.active.Min.X; x < level.active.Max.X; x++ {
+			id := synthesisFieldID(level, x, y)
+			if !level.target[id] || !synthesisValid(level, level.nnf[id]) {
+				level.cost[id] = math.MaxUint32
+				continue
+			}
+			level.cost[id] = synthesisPatchCost(level, working, x, y, level.nnf[id], math.MaxUint32)
+		}
+	})
+}
+
+// synthesisRestartField solves a fresh field for the level: every target
+// centre that is not frozen draws a uniformly random source (within the hole
+// search window around the target), the field is refined by one primary
+// dispatch, and the result is returned as per-pixel candidates for the
+// incumbent. Frozen centres keep the incumbent's entry. The level's own field
+// is left untouched.
+func synthesisRestartField(level *synthesisLevel, working *image.NRGBA, levelIndex, round, window, primaryRadius int, frozen []bool) []pmPoint {
+	nnf, cost := level.nnf, level.cost
+	if cap(level.restartNNF) < len(nnf) {
+		level.restartNNF = make([]pmPoint, len(nnf))
+	} else {
+		level.restartNNF = level.restartNNF[:len(nnf)]
+	}
+	if cap(level.restartCost) < len(cost) {
+		level.restartCost = make([]uint32, len(cost))
+	} else {
+		level.restartCost = level.restartCost[:len(cost)]
+	}
+	copy(level.restartNNF, nnf)
+	copy(level.restartCost, cost)
+	level.nnf, level.cost = level.restartNNF, level.restartCost
+	_ = parallelRowsSized(context.Background(), level.active.Min.Y, level.active.Max.Y, level.active.Dx()*synthesisPatchSize, func(y int) {
+		rng := newSynthesisRNG(level.active.Min.X-synthesisPatchHalf, y-synthesisPatchHalf, 0, synthesisPatchHalf)
+		for x := level.active.Min.X; x < level.active.Max.X; x++ {
+			id := synthesisFieldID(level, x, y)
+			if !level.target[id] || (frozen != nil && frozen[id]) {
+				continue
+			}
+			cx, cy := x, y
+			if synthesisValid(level, nnf[id]) {
+				cx, cy = int(nnf[id].x), int(nnf[id].y)
+			}
+			candidate, ok := synthesisRandomSource(level, &rng, cx, cy, synthesisWindowAt(level, x, y))
+			if !ok {
+				continue
+			}
+			level.nnf[id] = candidate
+			level.cost[id] = synthesisPatchCost(level, working, x, y, candidate, math.MaxUint32)
+		}
+	})
+	synthesisSearchDispatch(level, working, primaryRadius, levelIndex, round, 0, nil, frozen)
+	restart := level.nnf
+	level.restartNNF, level.restartCost = level.nnf, level.cost
+	level.nnf, level.cost = nnf, cost
+	return restart
+}
+
+// synthesisFrozen marks the target centres whose entry the restart field keeps:
+// the interiors of coherent blocks of the incumbent. A centre is a seed when
+// one side of its 3x3 neighbourhood (the left, right, top or bottom triple)
+// holds no neighbour with the same offset; seeds and non-target centres are
+// dilated by a 3 px square and everything else is frozen. This reproduces the
+// observed post-classifier active map, including its morphology.
+func synthesisFrozen(level *synthesisLevel) []bool {
+	same := func(x, y int, dx, dy int32) bool {
+		nx, ny := x+int(dx), y+int(dy)
+		if !synthesisTargetAt(level, nx, ny) {
+			return false
+		}
+		p := level.nnf[synthesisFieldID(level, x, y)]
+		q := level.nnf[synthesisFieldID(level, nx, ny)]
+		return q.x-p.x == dx && q.y-p.y == dy
+	}
+	seed := make([]bool, len(level.nnf))
+	for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
+		for x := level.active.Min.X; x < level.active.Max.X; x++ {
+			id := synthesisFieldID(level, x, y)
+			if !level.target[id] {
+				seed[id] = true
+				continue
+			}
+			// A side is coherent when any of its three neighbours continues
+			// the match.
+			side := func(dx, dy, ax, ay int32) bool {
+				for k := int32(-1); k <= 1; k++ {
+					nx, ny := dx+ax*k, dy+ay*k
+					if same(x, y, nx, ny) {
+						return true
+					}
+				}
+				return false
+			}
+			if !side(-1, 0, 0, 1) || !side(1, 0, 0, 1) || !side(0, -1, 1, 0) || !side(0, 1, 1, 0) {
+				seed[id] = true
+			}
+		}
+	}
+	frozen := make([]bool, len(level.nnf))
+	for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
+		for x := level.active.Min.X; x < level.active.Max.X; x++ {
+			id := synthesisFieldID(level, x, y)
+			if !level.target[id] {
+				continue
+			}
+			keep := true
+			for ny := y - 3; ny <= y+3 && keep; ny++ {
+				for nx := x - 3; nx <= x+3; nx++ {
+					if !synthesisTargetAt(level, nx, ny) || seed[synthesisFieldID(level, nx, ny)] {
+						keep = false
+						break
+					}
+				}
+			}
+			frozen[id] = keep
+		}
+	}
+	return frozen
+}
+
+func synthesisSearchDispatch(level *synthesisLevel, working *image.NRGBA, radius, levelIndex, round, dispatch int, restart []pmPoint, skip []bool) {
+	synthesisSearchSweep(level, working, radius, levelIndex, round, dispatch, false, restart, skip)
+	synthesisSearchSweep(level, working, radius, levelIndex, round, dispatch, true, restart, skip)
+}
+
+func synthesisSearchSweep(level *synthesisLevel, working *image.NRGBA, radius, levelIndex, round, dispatch int, reverse bool, restart []pmPoint, skip []bool) {
+	y0, yStep := level.active.Min.Y, 1
+	x0, xStep := level.active.Min.X, 1
+	if reverse {
+		y0, yStep = level.active.Max.Y-1, -1
+		x0, xStep = level.active.Max.X-1, -1
+	}
+	// A pixel reads only the two predecessors of this pass, so the dependency
+	// graph admits a wavefront: tile the active rect and walk the anti-diagonals
+	// of the TILE grid. A tile's only predecessors are the tiles to its left and
+	// above, which both sit on the previous tile diagonal, so tiles on one
+	// diagonal are independent while each tile is still swept in scan order
+	// internally. That keeps the 7x7 compare windows overlapping column-wise
+	// inside a tile - a per-pixel diagonal would stride memory by w-1 and lose
+	// that reuse - and costs one barrier per tile diagonal instead of one per
+	// pixel diagonal. This is the engine's dependency-scheduled block graph, and
+	// the result is identical to a plain scan either way.
+	width, height := level.active.Dx(), level.active.Dy()
+	pixel := func(px, py int) {
+		synthesisSearchPixel(level, working, x0+px*xStep, y0+py*yStep, radius, levelIndex, round, xStep, yStep, reverse, restart, skip)
+	}
+	const synthesisSweepTile = 16
+	workers := minInt(maxInt(1, runtime.GOMAXPROCS(0)-1), 8)
+	tilesX := (width + synthesisSweepTile - 1) / synthesisSweepTile
+	tilesY := (height + synthesisSweepTile - 1) / synthesisSweepTile
+	if workers < 2 || minInt(tilesX, tilesY) < 2 {
+		for py := 0; py < height; py++ {
+			for px := 0; px < width; px++ {
+				pixel(px, py)
+			}
+		}
+		return
+	}
+	sweepTile := func(bx, by int) {
+		xEnd := minInt(width, (bx+1)*synthesisSweepTile)
+		yEnd := minInt(height, (by+1)*synthesisSweepTile)
+		for py := by * synthesisSweepTile; py < yEnd; py++ {
+			for px := bx * synthesisSweepTile; px < xEnd; px++ {
+				pixel(px, py)
+			}
+		}
+	}
+	type tileJob struct{ x, y int }
+	jobs := make(chan tileJob, workers-1)
+	var workerWG sync.WaitGroup
+	var diagonalWG sync.WaitGroup
+	workerWG.Add(workers - 1)
+	for i := 0; i < workers-1; i++ {
+		go func() {
+			defer workerWG.Done()
+			for job := range jobs {
+				sweepTile(job.x, job.y)
+				diagonalWG.Done()
+			}
+		}()
+	}
+	for d := 0; d < tilesX+tilesY-1; d++ {
+		lo := maxInt(0, d-(tilesX-1))
+		hi := minInt(d, tilesY-1)
+		if lo == hi {
+			sweepTile(d-lo, lo)
+			continue
+		}
+		diagonalWG.Add(hi - lo)
+		for by := lo + 1; by <= hi; by++ {
+			jobs <- tileJob{x: d - by, y: by}
+		}
+		sweepTile(d-lo, lo)
+		diagonalWG.Wait()
+	}
+	close(jobs)
+	workerWG.Wait()
+}
+
+// synthesisSearchPixel is one invocation of the engine's search kernel: the two
+// axial predecessors of the pass, then random search around the current best
+// with the radius halving to zero.
+func synthesisSearchPixel(level *synthesisLevel, working *image.NRGBA, x, y, radius, levelIndex, round, xStep, yStep int, reverse bool, restart []pmPoint, skip []bool) {
+	id := synthesisFieldID(level, x, y)
+	if !level.target[id] || skip != nil && skip[id] || !synthesisValid(level, level.nnf[id]) {
+		return
+	}
+	if restart != nil {
+		synthesisTry(level, working, x, y, restart[id], id)
+	}
+	if nx := x - xStep; nx >= level.active.Min.X && nx < level.active.Max.X {
+		q := level.nnf[synthesisFieldID(level, nx, y)]
+		synthesisTry(level, working, x, y, pmPoint{x: q.x + int32(xStep), y: q.y}, id)
+	}
+	if ny := y - yStep; ny >= level.active.Min.Y && ny < level.active.Max.Y {
+		q := level.nnf[synthesisFieldID(level, x, ny)]
+		synthesisTry(level, working, x, y, pmPoint{x: q.x, y: q.y + int32(yStep)}, id)
+	}
+	rng := newSynthesisSearchRNG(x-level.active.Min.X, y-level.active.Min.Y, levelIndex, round, reverse)
+	for r := radius; r >= 1; r /= 2 {
+		best := level.nnf[id]
+		minX := maxInt(synthesisPatchHalf, int(best.x)-r)
+		maxX := minInt(level.w-synthesisPatchHalf-1, int(best.x)+r)
+		minY := maxInt(synthesisPatchHalf, int(best.y)-r)
+		maxY := minInt(level.h-synthesisPatchHalf-1, int(best.y)+r)
+		// The kernel draws inside the valid rect only: the window is
+		// enforced as a rejection in synthesisTry, not by narrowing the
+		// draw range (narrowing it would change the modulo and so the
+		// drawn coordinate). Only the initializer clips its draw range.
+		if minX > maxX || minY > maxY {
+			continue
+		}
+		word := rng.next()
+		lo, hi := uint32(uint16(word)), uint32(uint16(word>>16))
+		sx := minX + int((lo+hi)%uint32(maxX-minX+1))
+		sy := minY + int((lo-hi)%uint32(maxY-minY+1))
+		synthesisTry(level, working, x, y, pmPoint{x: int32(sx), y: int32(sy)}, id)
+	}
+}
+
+func synthesisTry(level *synthesisLevel, working *image.NRGBA, tx, ty int, candidate pmPoint, id int) {
+	if win := synthesisWindowAt(level, tx, ty); win > 0 &&
+		(absInt(int(candidate.x)-tx) >= win || absInt(int(candidate.y)-ty) >= win) {
+		return
+	}
+	if !synthesisValid(level, candidate) || candidate == level.nnf[id] {
+		return
+	}
+	cost := synthesisPatchCost(level, working, tx, ty, candidate, level.cost[id])
+	if cost < level.cost[id] {
+		level.nnf[id], level.cost[id] = candidate, cost
+	}
+}
+
+func synthesisPatchCost(level *synthesisLevel, target *image.NRGBA, tx, ty int, source pmPoint, limit uint32) uint32 {
+	sx, sy := int(source.x), int(source.y)
+	if pmOpaqueKernelAvailable() {
+		// Same raw RGB SSD in float32 (exact below 2^24), with the same
+		// early exit once the running sum reaches the limit.
+		args := pmOpaqueKernelArgs{
+			target:           &target.Pix[(ty-synthesisPatchHalf)*target.Stride+(tx-synthesisPatchHalf)*4],
+			source:           &level.plane.Pix[(sy-synthesisPatchHalf)*level.plane.Stride+(sx-synthesisPatchHalf)*4],
+			confidence:       &synthesisUnitConfidence[0],
+			targetStride:     target.Stride,
+			sourceStride:     level.plane.Stride,
+			confidenceStride: synthesisPatchSize,
+			patchSize:        synthesisPatchSize,
+			limit:            float32(limit),
+		}
+		return uint32(pmRunSynthesisOpaqueKernel(&args))
+	}
+	var sum uint32
+	for py := -synthesisPatchHalf; py <= synthesisPatchHalf; py++ {
+		ti := (ty+py)*target.Stride + (tx-synthesisPatchHalf)*4
+		si := (sy+py)*level.plane.Stride + (sx-synthesisPatchHalf)*4
+		for px := 0; px < synthesisPatchSize; px++ {
+			for c := 0; c < 3; c++ {
+				d := int32(target.Pix[ti+px*4+c]) - int32(level.plane.Pix[si+px*4+c])
+				sum += uint32(d * d)
+			}
+		}
+		if sum >= limit {
+			return sum
+		}
+	}
+	return sum
+}
+
+var synthesisUnitConfidence = func() [synthesisPatchSize * synthesisPatchSize]float32 {
+	var values [synthesisPatchSize * synthesisPatchSize]float32
+	for i := range values {
+		values[i] = 1
+	}
+	return values
+}()
+
+func synthesisVote(ctx context.Context, level *synthesisLevel, working *image.NRGBA) (*image.NRGBA, error) {
+	synthesisCoherence(level)
+	out := cloneNRGBA(working)
+	err := parallelRowsSized(ctx, level.painted.Min.Y, level.painted.Max.Y, level.painted.Dx()*synthesisPatchSize, func(y int) {
+		for x := level.painted.Min.X; x < level.painted.Max.X; x++ {
+			if level.mask.Pix[y*level.mask.Stride+x] == 0 {
+				continue
+			}
+			var sum [4]float64
+			var total float64
+			for cy := maxInt(level.active.Min.Y, y-synthesisPatchHalf); cy <= minInt(level.active.Max.Y-1, y+synthesisPatchHalf); cy++ {
+				fieldRow := (cy-level.active.Min.Y)*level.fieldStride - level.active.Min.X
+				deltaY := y - cy
+				for cx := maxInt(level.active.Min.X, x-synthesisPatchHalf); cx <= minInt(level.active.Max.X-1, x+synthesisPatchHalf); cx++ {
+					id := fieldRow + cx
+					weight := float64(level.coherence[id])
+					if weight == 0 {
+						continue
+					}
+					sx := int(level.nnf[id].x) + x - cx
+					sy := int(level.nnf[id].y) + deltaY
+					si := sy*level.src.Stride + sx*4
+					for c := 0; c < 4; c++ {
+						sum[c] += weight * float64(level.src.Pix[si+c])
+					}
+					total += weight
+				}
+			}
+			if total == 0 {
+				continue
+			}
+			// Every covered pixel is replaced outright (the synthesis treats
+			// any mask coverage as hole and never blends the hole's own
+			// pixels back in, so a feathered brush edge cannot leave a rim
+			// of the removed content).
+			di := y*out.Stride + x*4
+			for c := 0; c < 4; c++ {
+				out.Pix[di+c] = byte(clampInt(int(sum[c]/total+0.5), 0, 255))
+			}
+		}
+	})
+	return out, err
+}
+
+func synthesisCoherence(level *synthesisLevel) {
+	fieldSize := level.active.Dx() * level.active.Dy()
+	if cap(level.coherence) < fieldSize {
+		level.coherence = make([]float32, fieldSize)
+	} else {
+		level.coherence = level.coherence[:fieldSize]
+		clear(level.coherence)
+	}
+	table := [...]float32{0.1, 0.2, 0.3, 0.6, 1}
+	diagonals := [...]image.Point{{X: -1, Y: -1}, {X: 1, Y: -1}, {X: -1, Y: 1}, {X: 1, Y: 1}}
+	for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
+		for x := level.active.Min.X; x < level.active.Max.X; x++ {
+			id := synthesisFieldID(level, x, y)
+			match := level.nnf[id]
+			if !level.target[id] || !synthesisValid(level, match) {
+				continue
+			}
+			coherent, available := 0, 0
+			for _, d := range diagonals {
+				nx, ny := x+d.X, y+d.Y
+				if nx < level.active.Min.X || ny < level.active.Min.Y || nx >= level.active.Max.X || ny >= level.active.Max.Y {
+					continue
+				}
+				nid := synthesisFieldID(level, nx, ny)
+				neighbor := level.nnf[nid]
+				if !level.target[nid] || !synthesisValid(level, neighbor) {
+					continue
+				}
+				available++
+				if neighbor.x == match.x+int32(d.X) && neighbor.y == match.y+int32(d.Y) {
+					coherent++
+				}
+			}
+			if available == 0 {
+				level.coherence[id] = table[0]
+				continue
+			}
+			position := float32(4*coherent) / float32(available)
+			lo := clampInt(int(position), 0, 4)
+			hi := minInt(4, lo+1)
+			fraction := position - float32(lo)
+			level.coherence[id] = table[lo] + (table[hi]-table[lo])*fraction
+		}
+	}
+}
+
+func synthesisValid(level *synthesisLevel, p pmPoint) bool {
+	x, y := int(p.x), int(p.y)
+	return x >= 0 && y >= 0 && x < level.w && y < level.h && level.valid[y*level.w+x]
 }
 
 // pmWorkingROI chooses the part of the source image to work in. Its size comes
@@ -328,86 +1401,6 @@ func maskBoundsInImage(mask *image.Alpha, w, h int) image.Rectangle {
 	return image.Rect(minX, minY, maxX, maxY)
 }
 
-type pmPoint struct {
-	x int32
-	y int32
-}
-
-type pmLevel struct {
-	src        *image.NRGBA
-	mask       *image.Alpha // target coverage; preserves antialiasing/partial coverage
-	sourceMask *image.Alpha // conservative binary source exclusion
-	w          int
-	h          int
-	patchSize  int
-	half       int
-	active     image.Rectangle
-	// painted is the bounding box of the non-zero target mask. The mask never
-	// changes once the level is built, and several steps need this rectangle on
-	// every round, so it is computed here once instead of rescanned each time.
-	painted image.Rectangle
-
-	valid   []bool
-	sources []pmPoint
-
-	// NNF and cost storage is allocated once and reused by every round at this
-	// level.
-	nnf        []pmPoint
-	costs      []float32
-	rowChanges []int
-
-	srcPlanes    pmPackedPlanes
-	targetPlanes pmPackedPlanes
-
-	// Texture synthesis state. textureEnergy measures local high-frequency
-	// gradient RMS in source space; textureGuide carries the surrounding
-	// texture level through the hole independently of provisional RGB.
-	textureEnergy []float32
-	textureGuide  []float32
-
-	// Colour-aware low-frequency structure fields. structureGuide is derived
-	// only from image content outside the brush mask.
-	structureSource pmStructureField
-	structureGuide  pmStructureField
-
-	confidence  []float32
-	confStride  int
-	confSum     []float32
-	insideDepth []int
-
-	searchRadius int
-	coherence    []float32
-	voteFactors  []pmVoteFactor
-
-	// Bounded gain/bias is estimated per active correspondence and cached for
-	// reconstruction. The PatchMatch cost uses the same transform model.
-	photo            []pmPhotoTransform
-	photoSourceStats pmPhotoIntegral
-	photoTargetStats pmPhotoIntegral
-	photoEnabled     bool
-	regionEnabled    bool
-
-	// Source-occurrence regularization. occurrenceRaw stores the current source
-	// density and occurrenceIntegral makes candidate pressure O(1).
-	uniformityStrength float32
-	occurrenceRaw      []float32
-	occurrenceIntegral []float32
-	occurrenceCost     []float32
-	occurrenceReady    bool
-	maskIntegral       []int
-
-	// Connected coherent-region state, rebuilt after each search step.
-	regionIDs        []int32
-	regionConfidence []float32
-	regionQueue      []int
-}
-
-type pmSolution struct {
-	level   *pmLevel
-	working *image.NRGBA
-	nnf     []pmPoint
-}
-
 func normalizePatchSize(patchSize, w, h int) int {
 	if patchSize < 3 {
 		patchSize = 3
@@ -431,423 +1424,6 @@ func normalizePatchSize(patchSize, w, h int) int {
 	return patchSize
 }
 
-func preparePMLevel(src *image.NRGBA, targetMask, sourceMask *image.Alpha, requestedPatchSize int) *pmLevel {
-	w, h := src.Bounds().Dx(), src.Bounds().Dy()
-	patchSize := normalizePatchSize(requestedPatchSize, w, h)
-	half := patchSize / 2
-	level := &pmLevel{
-		src:        src,
-		mask:       targetMask,
-		sourceMask: sourceMask,
-		w:          w,
-		h:          h,
-		patchSize:  patchSize,
-		half:       half,
-		valid:      make([]bool, w*h),
-		srcPlanes:  packPMPixels(src),
-	}
-	level.confidence, level.confStride, level.confSum = packPMConfidence(targetMask)
-	level.insideDepth = pmMaskInteriorDistance(targetMask)
-	level.maskIntegral = maskedIntegral(targetMask)
-
-	// A source center is valid only when the entire search/vote patch avoids the
-	// conservative source exclusion mask. No center-only fallback is allowed.
-	integral := maskedIntegral(sourceMask)
-	for y := half; y < h-half; y++ {
-		for x := half; x < w-half; x++ {
-			if integralRectSum(integral, w+1, x-half, y-half, x+half+1, y+half+1) != 0 {
-				continue
-			}
-			id := y*w + x
-			level.valid[id] = true
-			level.sources = append(level.sources, pmPoint{x: int32(x), y: int32(y)})
-		}
-	}
-	bounds := maskBounds(targetMask)
-	level.painted = bounds
-	if !bounds.Empty() {
-		// Only centers whose patches can overlap a painted output pixel need an
-		// NNF. One extra cell keeps the coherence neighborhood available.
-		padding := half + 1
-		level.active = image.Rect(
-			maxInt(half, bounds.Min.X-padding),
-			maxInt(half, bounds.Min.Y-padding),
-			minInt(w-half, bounds.Max.X+padding),
-			minInt(h-half, bounds.Max.Y+padding),
-		)
-		level.searchRadius = maxInt(w, h)
-	}
-	return level
-}
-
-type pmSolveStats struct {
-	passes      int
-	lastChanges int
-	active      int
-	stable      bool
-}
-
-func solvePMLevel(ctx context.Context, level *pmLevel, working *image.NRGBA, seed *pmSolution, iterations, round int) ([]pmPoint, []float32, pmSolveStats, error) {
-	updatePMConfidence(level, round, seed != nil)
-	if pmOpaqueKernelAvailable() && level.srcPlanes.opaque && !level.photoEnabled && working.Opaque() {
-		// Byte matching needs no full-ROI float repack on every EM round.
-		level.targetPlanes = pmPackedPlanes{raw: working, opaque: true}
-	} else {
-		level.targetPlanes = packPMPixelsInto(working, level.targetPlanes)
-	}
-	if level.photoEnabled {
-		pmPreparePhotoTargetStats(level, &level.targetPlanes)
-	}
-
-	size := level.w * level.h
-	if cap(level.nnf) < size {
-		level.nnf = make([]pmPoint, size)
-	} else {
-		level.nnf = level.nnf[:size]
-	}
-	if cap(level.costs) < size {
-		level.costs = make([]float32, size)
-	} else {
-		level.costs = level.costs[:size]
-	}
-	nnf, costs := level.nnf, level.costs
-
-	sameLevelSeed := seed != nil && seed.level == level && len(seed.nnf) == size
-	activeWidth := level.active.Dx()
-	activeRows := level.active.Dy()
-	stats := pmSolveStats{active: maxInt(1, activeWidth*activeRows)}
-
-	if sameLevelSeed {
-		// Keep the exact NNF from the previous EM round, but recompute its cost
-		// against the newly reconstructed target. No reinitialization or copy is
-		// required because seed.nnf and level.nnf intentionally alias.
-		if err := parallelRowsSized(ctx, level.active.Min.Y, level.active.Max.Y, activeWidth*level.patchSize, func(y int) {
-			for x := level.active.Min.X; x < level.active.Max.X; x++ {
-				id := y*level.w + x
-				if !validPMPoint(level, nnf[id]) {
-					costs[id] = float32(math.Inf(1))
-					continue
-				}
-				costs[id] = pmPatchCost(level, &level.targetPlanes, x, y, nnf[id], float32(math.Inf(1)))
-			}
-		}); err != nil {
-			return nil, nil, stats, err
-		}
-	} else {
-		// Initialization is independent per center and therefore parallel.
-		if err := parallelRowsSized(ctx, level.active.Min.Y, level.active.Max.Y, activeWidth*level.patchSize, func(y int) {
-			for x := level.active.Min.X; x < level.active.Max.X; x++ {
-				id := y*level.w + x
-				nnf[id] = pmPoint{x: -1, y: -1}
-				costs[id] = float32(math.Inf(1))
-				best, ok := pmInitialCandidate(level, seed, x, y)
-				if !ok {
-					continue
-				}
-				bestCost := pmPatchCost(level, &level.targetPlanes, x, y, best, float32(math.Inf(1)))
-
-				// A second, deterministic nearby guess stops an ambiguous interior
-				// from starting every center off towards the same side of the hole.
-				state := pmHash(uint32(x), uint32(y), uint32(round+1))
-				altRadius := level.searchRadius
-				if seed != nil {
-					altRadius = maxInt(16, level.searchRadius/2)
-				}
-				if alternative, ok := pmRandomValidNear(level, x, y, altRadius, &state); ok {
-					candidateCost := pmPatchCost(level, &level.targetPlanes, x, y, alternative, bestCost)
-					if candidateCost < bestCost {
-						best, bestCost = alternative, candidateCost
-					}
-				}
-				nnf[id], costs[id] = best, bestCost
-			}
-		}); err != nil {
-			return nil, nil, stats, err
-		}
-	}
-
-	// Each search pass scores uniformity against a frozen source-occurrence
-	// field. Build it from the freshly initialized NNF, then rescore the stored
-	// best costs so they use the same objective the candidates will see.
-	pmCaptureOccurrenceCosts(level, nnf)
-	pmUpdateOccurrence(level, nnf)
-	pmRefreshOccurrenceCosts(level, nnf, costs)
-
-	if cap(level.rowChanges) < activeRows {
-		level.rowChanges = make([]int, activeRows)
-	} else {
-		level.rowChanges = level.rowChanges[:activeRows]
-	}
-
-	for pass := 0; pass < iterations; pass++ {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, stats, err
-		}
-		changes := 0
-
-		// In-place directional propagation, as in the original PatchMatch paper. It
-		// stays sequential because carrying a good displacement along the sweep is
-		// the whole point; the costlier random-search phase below is parallel.
-		if pass&1 == 0 {
-			for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
-				for x := level.active.Min.X; x < level.active.Max.X; x++ {
-					id := y*level.w + x
-					if x > level.active.Min.X {
-						q := nnf[id-1]
-						if pmTryCandidate(level, &level.targetPlanes, x, y, pmPoint{x: q.x + 1, y: q.y}, &nnf[id], &costs[id]) {
-							changes++
-						}
-					}
-					if y > level.active.Min.Y {
-						q := nnf[id-level.w]
-						if pmTryCandidate(level, &level.targetPlanes, x, y, pmPoint{x: q.x, y: q.y + 1}, &nnf[id], &costs[id]) {
-							changes++
-						}
-					}
-				}
-			}
-		} else {
-			for y := level.active.Max.Y - 1; y >= level.active.Min.Y; y-- {
-				for x := level.active.Max.X - 1; x >= level.active.Min.X; x-- {
-					id := y*level.w + x
-					if x+1 < level.active.Max.X {
-						q := nnf[id+1]
-						if pmTryCandidate(level, &level.targetPlanes, x, y, pmPoint{x: q.x - 1, y: q.y}, &nnf[id], &costs[id]) {
-							changes++
-						}
-					}
-					if y+1 < level.active.Max.Y {
-						q := nnf[id+level.w]
-						if pmTryCandidate(level, &level.targetPlanes, x, y, pmPoint{x: q.x, y: q.y - 1}, &nnf[id], &costs[id]) {
-							changes++
-						}
-					}
-				}
-			}
-		}
-
-		startRadius := pmRandomSearchStartRadius(level.searchRadius, pass, round, seed != nil)
-		clear(level.rowChanges)
-		if err := parallelRowsSized(ctx, level.active.Min.Y, level.active.Max.Y, activeWidth*level.patchSize, func(y int) {
-			rowChanges := 0
-			for x := level.active.Min.X; x < level.active.Max.X; x++ {
-				id := y*level.w + x
-				best := nnf[id]
-				bestCost := costs[id]
-				if !validPMPoint(level, best) {
-					continue
-				}
-				state := pmHash(uint32(x), uint32(y), uint32(pass+1+round*iterations))
-				for radius := startRadius; radius >= 1; radius /= 2 {
-					state = pmNext(state)
-					dx := int(state%uint32(2*radius+1)) - radius
-					state = pmNext(state)
-					dy := int(state%uint32(2*radius+1)) - radius
-					candidate := pmPoint{x: best.x + int32(dx), y: best.y + int32(dy)}
-					if pmTryCandidate(level, &level.targetPlanes, x, y, candidate, &best, &bestCost) {
-						rowChanges++
-					}
-				}
-				nnf[id], costs[id] = best, bestCost
-			}
-			level.rowChanges[y-level.active.Min.Y] = rowChanges
-		}); err != nil {
-			return nil, nil, stats, err
-		}
-		for _, n := range level.rowChanges {
-			changes += n
-		}
-
-		// Freeze a fresh source-occurrence field for the next pass and rescore the
-		// stored costs against it. Freezing keeps parallel random search free of
-		// races and order dependence, while later passes still get steered away
-		// from source material that is already heavily reused.
-		pmUpdateOccurrence(level, nnf)
-		pmRefreshOccurrenceCosts(level, nnf, costs)
-
-		stats.passes = pass + 1
-		stats.lastChanges = changes
-		// Require at least one forward and one reverse pass. Thereafter stop when
-		// fewer than roughly 0.4% of active centers improve. This preserves hard
-		// cases while avoiding two redundant passes on the common easy brush dab.
-		stableThreshold := maxInt(2, stats.active/250)
-		if pass >= 1 && changes <= stableThreshold {
-			// If the NNF is still materially crowding one source neighborhood, spend
-			// one more configured pass so uniformity gets a chance to resolve it.
-			if pmOccurrencePressure(level) < 5.5 || pass+1 >= iterations {
-				stats.stable = true
-				break
-			}
-		}
-	}
-	// Winning candidates were scored against the full objective; the occurrence
-	// refresh above keeps the one term that changes between passes in sync.
-	return nnf, costs, stats, nil
-}
-
-func pmRandomSearchStartRadius(searchRadius, pass, round int, haveSeed bool) int {
-	radius := maxInt(1, searchRadius)
-	if haveSeed {
-		if round > 0 {
-			radius = minInt(radius, maxInt(20, searchRadius/4))
-		} else if pass > 0 {
-			radius = minInt(radius, maxInt(28, searchRadius/2))
-		}
-	}
-	if pass >= 2 {
-		radius = minInt(radius, 32)
-	}
-	return maxInt(1, radius)
-}
-
-func pmInitialCandidate(level *pmLevel, seed *pmSolution, x, y int) (pmPoint, bool) {
-	id := y*level.w + x
-	// An unpainted pixel that is a legal source is its own best match.
-	if level.valid[id] && level.mask.Pix[y*level.mask.Stride+x] == 0 {
-		return pmPoint{x: int32(x), y: int32(y)}, true
-	}
-	if seed != nil && len(seed.nnf) != 0 {
-		if candidate, ok := pmSeedFromSolution(level, seed, x, y); ok && validPMPoint(level, candidate) {
-			return candidate, true
-		}
-	}
-	if candidate, ok := pmNearbyValidSource(level, x, y); ok {
-		return candidate, true
-	}
-	if len(level.sources) != 0 {
-		// Extremely large/fully covered local holes may have no nearby legal
-		// center. A deterministic source-list fallback is sufficient to bootstrap
-		// random search without building a full-image Voronoi field.
-		state := pmHash(uint32(x), uint32(y), 0x243f6a88)
-		return level.sources[int(state%uint32(len(level.sources)))], true
-	}
-	return pmPoint{}, false
-}
-
-func pmNearbyValidSource(level *pmLevel, x, y int) (pmPoint, bool) {
-	maxRadius := minInt(64, maxInt(level.w, level.h))
-	for radius := 1; radius <= maxRadius; radius++ {
-		left, right := x-radius, x+radius
-		top, bottom := y-radius, y+radius
-		for sx := left; sx <= right; sx++ {
-			for _, sy := range [...]int{top, bottom} {
-				p := pmPoint{x: int32(sx), y: int32(sy)}
-				if validPMPoint(level, p) {
-					return p, true
-				}
-			}
-		}
-		for sy := top + 1; sy < bottom; sy++ {
-			for _, sx := range [...]int{left, right} {
-				p := pmPoint{x: int32(sx), y: int32(sy)}
-				if validPMPoint(level, p) {
-					return p, true
-				}
-			}
-		}
-	}
-	return pmPoint{}, false
-}
-
-// pmSeedFromSolution upsamples displacement, not absolute source coordinates.
-// This preserves a constant motion field across odd/even child pixels and
-// avoids the one-pixel checkerboard phase error produced by q_child=scale*q_parent.
-func pmSeedFromSolution(level *pmLevel, seed *pmSolution, x, y int) (pmPoint, bool) {
-	if seed == nil || seed.level == nil || len(seed.nnf) == 0 {
-		return pmPoint{}, false
-	}
-	pw, ph := seed.level.w, seed.level.h
-	if pw == level.w && ph == level.h {
-		id := y*level.w + x
-		if id < 0 || id >= len(seed.nnf) {
-			return pmPoint{}, false
-		}
-		return seed.nnf[id], true
-	}
-
-	px := clampInt(int((float64(x)+0.5)*float64(pw)/float64(level.w)), 0, pw-1)
-	py := clampInt(int((float64(y)+0.5)*float64(ph)/float64(level.h)), 0, ph-1)
-	q := seed.nnf[py*pw+px]
-	if q.x < 0 || q.y < 0 {
-		return pmPoint{}, false
-	}
-	dx := float64(q.x) - float64(px)
-	dy := float64(q.y) - float64(py)
-	sx := float64(level.w) / float64(pw)
-	sy := float64(level.h) / float64(ph)
-	return pmPoint{
-		x: int32(math.Round(float64(x) + dx*sx)),
-		y: int32(math.Round(float64(y) + dy*sy)),
-	}, true
-}
-
-func pmTryCandidate(level *pmLevel, target *pmPackedPlanes, tx, ty int, candidate pmPoint, best *pmPoint, bestCost *float32) bool {
-	// In a coherent field, propagation keeps proposing the current best. Its
-	// score is already up to date, so rescoring it would be wasted work.
-	if candidate == *best {
-		return false
-	}
-	if !validPMPoint(level, candidate) {
-		return false
-	}
-	cost := pmPatchCost(level, target, tx, ty, candidate, *bestCost)
-	if cost < *bestCost {
-		*best = candidate
-		*bestCost = cost
-		id := ty*level.w + tx
-		if id >= 0 && id < len(level.occurrenceCost) {
-			level.occurrenceCost[id] = pmOccurrencePenaltyForTarget(level, tx, ty, candidate)
-		}
-		return true
-	}
-	return false
-}
-
-func pmRandomValidNear(level *pmLevel, tx, ty, radius int, state *uint32) (pmPoint, bool) {
-	for attempt := 0; attempt < 12; attempt++ {
-		*state = pmNext(*state)
-		dx := int(*state%uint32(2*radius+1)) - radius
-		*state = pmNext(*state)
-		dy := int(*state%uint32(2*radius+1)) - radius
-		candidate := pmPoint{x: int32(tx + dx), y: int32(ty + dy)}
-		if validPMPoint(level, candidate) {
-			return candidate, true
-		}
-	}
-	return pmPoint{}, false
-}
-
-func validPMPoint(level *pmLevel, p pmPoint) bool {
-	x, y := int(p.x), int(p.y)
-	return x >= 0 && y >= 0 && x < level.w && y < level.h && level.valid[y*level.w+x]
-}
-
-func seedPMWorking(level *pmLevel, parent *pmSolution) *image.NRGBA {
-	if parent == nil {
-		// The first round's confidence ignores masked pixels, so leaving the
-		// original source bytes in place here is harmless.
-		return cloneNRGBA(level.src)
-	}
-	out := cloneNRGBA(level.src)
-	bounds := level.painted
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			alpha := level.mask.Pix[y*level.mask.Stride+x]
-			if alpha == 0 {
-				continue
-			}
-			sample := pmBilinearParent(parent.working, level.w, level.h, x, y)
-			si := y*level.src.Stride + x*4
-			di := y*out.Stride + x*4
-			a := int(alpha)
-			for c := 0; c < 4; c++ {
-				out.Pix[di+c] = byte((int(level.src.Pix[si+c])*(255-a) + int(sample[c])*a + 127) / 255)
-			}
-		}
-	}
-	return out
-}
-
 func pmBilinearParent(src *image.NRGBA, dstW, dstH, x, y int) [4]byte {
 	sw, sh := src.Bounds().Dx(), src.Bounds().Dy()
 	fx := (float64(x)+0.5)*float64(sw)/float64(dstW) - 0.5
@@ -869,257 +1445,6 @@ func pmBilinearParent(src *image.NRGBA, dstW, dstH, x, y int) [4]byte {
 		out[c] = byte(clampFloat32(v0 + (v1-v0)*ty))
 	}
 	return out
-}
-
-// buildPatchPyramid keeps two different mask semantics:
-//   - targetMasks preserve fractional coverage for confidence and compositing;
-//   - sourceMasks conservatively mark any covered fine pixel as unusable source.
-func buildPatchPyramid(src *image.NRGBA, mask *image.Alpha, patchSize int) ([]*image.NRGBA, []*image.Alpha, []*image.Alpha) {
-	images := []*image.NRGBA{src}
-	targetMasks := []*image.Alpha{mask}
-	sourceMasks := []*image.Alpha{binarySourceMask(mask)}
-	minSide := maxInt(32, patchSize*4)
-	const maxLevels = 7
-	for len(images) < maxLevels {
-		last := images[len(images)-1]
-		w, h := last.Bounds().Dx(), last.Bounds().Dy()
-		if minInt(w, h) <= minSide {
-			break
-		}
-		nextW := maxInt(1, (w+1)/2)
-		nextH := maxInt(1, (h+1)/2)
-		images = append(images, downsampleNRGBA(last, nextW, nextH))
-		targetMasks = append(targetMasks, downsampleTargetMask(targetMasks[len(targetMasks)-1], nextW, nextH))
-		sourceMasks = append(sourceMasks, downsampleSourceMask(sourceMasks[len(sourceMasks)-1], nextW, nextH))
-	}
-	return images, targetMasks, sourceMasks
-}
-
-// downsampleNRGBA uses a separable binomial low-pass before resampling. This
-// avoids aliasing halftone dots, thin typography, line art, and print grain into
-// misleading coarse-level structures.
-func downsampleNRGBA(src *image.NRGBA, w, h int) *image.NRGBA {
-	sw, sh := src.Bounds().Dx(), src.Bounds().Dy()
-	if sw == w && sh == h {
-		return cloneNRGBA(src)
-	}
-	weights := [...]int{1, 4, 6, 4, 1}
-	// Premultiplied working channels, scaled by 16 after horizontal filtering.
-	tmp := make([]int64, sw*sh*4)
-	for y := 0; y < sh; y++ {
-		for x := 0; x < sw; x++ {
-			var sum [4]int64
-			for k := -2; k <= 2; k++ {
-				sx := clampInt(x+k, 0, sw-1)
-				i := y*src.Stride + sx*4
-				a := int64(src.Pix[i+3])
-				weight := int64(weights[k+2])
-				sum[0] += int64(src.Pix[i]) * a * weight
-				sum[1] += int64(src.Pix[i+1]) * a * weight
-				sum[2] += int64(src.Pix[i+2]) * a * weight
-				sum[3] += a * 255 * weight
-			}
-			base := (y*sw + x) * 4
-			copy(tmp[base:base+4], sum[:])
-		}
-	}
-
-	out := image.NewNRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		sy := clampInt(int(math.Round((float64(y)+0.5)*float64(sh)/float64(h)-0.5)), 0, sh-1)
-		for x := 0; x < w; x++ {
-			sx := clampInt(int(math.Round((float64(x)+0.5)*float64(sw)/float64(w)-0.5)), 0, sw-1)
-			var sum [4]int64
-			for k := -2; k <= 2; k++ {
-				yy := clampInt(sy+k, 0, sh-1)
-				base := (yy*sw + sx) * 4
-				weight := int64(weights[k+2])
-				for c := 0; c < 4; c++ {
-					sum[c] += tmp[base+c] * weight
-				}
-			}
-			di := y*out.Stride + x*4
-			alphaNumerator := sum[3]
-			if alphaNumerator > 0 {
-				out.Pix[di] = byte(clampInt(int((sum[0]*255+alphaNumerator/2)/alphaNumerator), 0, 255))
-				out.Pix[di+1] = byte(clampInt(int((sum[1]*255+alphaNumerator/2)/alphaNumerator), 0, 255))
-				out.Pix[di+2] = byte(clampInt(int((sum[2]*255+alphaNumerator/2)/alphaNumerator), 0, 255))
-			}
-			// 256 is the total 2-D binomial weight; sum[3] contains alpha*255.
-			out.Pix[di+3] = byte(clampInt(int((alphaNumerator+255*128)/(255*256)), 0, 255))
-		}
-	}
-	return out
-}
-
-func binarySourceMask(src *image.Alpha) *image.Alpha {
-	w, h := src.Bounds().Dx(), src.Bounds().Dy()
-	out := image.NewAlpha(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			if src.Pix[y*src.Stride+x] != 0 {
-				out.Pix[y*out.Stride+x] = 255
-			}
-		}
-	}
-	return out
-}
-
-func downsampleTargetMask(src *image.Alpha, w, h int) *image.Alpha {
-	out := image.NewAlpha(image.Rect(0, 0, w, h))
-	sw, sh := src.Bounds().Dx(), src.Bounds().Dy()
-	for y := 0; y < h; y++ {
-		y0 := y * sh / h
-		y1 := maxInt(y0+1, (y+1)*sh/h)
-		for x := 0; x < w; x++ {
-			x0 := x * sw / w
-			x1 := maxInt(x0+1, (x+1)*sw/w)
-			sum, count := 0, 0
-			for sy := y0; sy < y1; sy++ {
-				for sx := x0; sx < x1; sx++ {
-					sum += int(src.Pix[sy*src.Stride+sx])
-					count++
-				}
-			}
-			out.Pix[y*out.Stride+x] = byte((sum + count/2) / count)
-		}
-	}
-	return out
-}
-
-func downsampleSourceMask(src *image.Alpha, w, h int) *image.Alpha {
-	out := image.NewAlpha(image.Rect(0, 0, w, h))
-	sw, sh := src.Bounds().Dx(), src.Bounds().Dy()
-	for y := 0; y < h; y++ {
-		y0 := y * sh / h
-		y1 := maxInt(y0+1, (y+1)*sh/h)
-		for x := 0; x < w; x++ {
-			x0 := x * sw / w
-			x1 := maxInt(x0+1, (x+1)*sw/w)
-			covered := false
-			for sy := y0; sy < y1 && !covered; sy++ {
-				for sx := x0; sx < x1; sx++ {
-					if src.Pix[sy*src.Stride+sx] != 0 {
-						covered = true
-						break
-					}
-				}
-			}
-			if covered {
-				out.Pix[y*out.Stride+x] = 255
-			}
-		}
-	}
-	return out
-}
-
-func pmNearestValidSource(valid []bool, w, h int) []pmPoint {
-	nearest := make([]pmPoint, w*h)
-	distance := make([]int, w*h)
-	queue := make([]int, 0, w*h/4)
-	for id := range nearest {
-		nearest[id] = pmPoint{x: -1, y: -1}
-		distance[id] = -1
-		if valid[id] {
-			x, y := id%w, id/w
-			nearest[id] = pmPoint{x: int32(x), y: int32(y)}
-			distance[id] = 0
-			queue = append(queue, id)
-		}
-	}
-	for head := 0; head < len(queue); head++ {
-		id := queue[head]
-		x, y := id%w, id/w
-		neighbors := [4]int{-1, -1, -1, -1}
-		if x > 0 {
-			neighbors[0] = id - 1
-		}
-		if x+1 < w {
-			neighbors[1] = id + 1
-		}
-		if y > 0 {
-			neighbors[2] = id - w
-		}
-		if y+1 < h {
-			neighbors[3] = id + w
-		}
-		for _, next := range neighbors {
-			if next < 0 || distance[next] >= 0 {
-				continue
-			}
-			distance[next] = distance[id] + 1
-			nearest[next] = nearest[id]
-			queue = append(queue, next)
-		}
-	}
-	return nearest
-}
-
-// pmMaskInteriorDistance returns distance (in pixels) from each fully/partly
-// covered target pixel to known image content. It is used only to taper
-// provisional EM confidence; it never changes source validity.
-func pmMaskInteriorDistance(mask *image.Alpha) []int {
-	w, h := mask.Bounds().Dx(), mask.Bounds().Dy()
-	distance := make([]int, w*h)
-	bounds := maskBounds(mask)
-	if bounds.Empty() {
-		return distance
-	}
-	queue := make([]int, 0, bounds.Dx()*bounds.Dy())
-
-	// Only covered pixels are enqueued, so the cost scales with the brush rather
-	// than with the whole working image.
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			if mask.Pix[y*mask.Stride+x] == 0 {
-				continue
-			}
-			id := y*w + x
-			distance[id] = -1
-			boundary := mask.Pix[y*mask.Stride+x] < 255
-			if !boundary {
-				for _, d := range [...]image.Point{{X: -1}, {X: 1}, {Y: -1}, {Y: 1}} {
-					nx, ny := x+d.X, y+d.Y
-					if nx < 0 || ny < 0 || nx >= w || ny >= h || mask.Pix[ny*mask.Stride+nx] < 255 {
-						boundary = true
-						break
-					}
-				}
-			}
-			if boundary {
-				distance[id] = 1
-				queue = append(queue, id)
-			}
-		}
-	}
-	if len(queue) == 0 {
-		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-			for x := bounds.Min.X; x < bounds.Max.X; x++ {
-				if mask.Pix[y*mask.Stride+x] != 0 {
-					distance[y*w+x] = 1
-				}
-			}
-		}
-		return distance
-	}
-	for head := 0; head < len(queue); head++ {
-		id := queue[head]
-		x, y := id%w, id/w
-		nextDistance := distance[id] + 1
-		for _, d := range [...]image.Point{{X: -1}, {X: 1}, {Y: -1}, {Y: 1}} {
-			nx, ny := x+d.X, y+d.Y
-			if nx < bounds.Min.X || ny < bounds.Min.Y || nx >= bounds.Max.X || ny >= bounds.Max.Y {
-				continue
-			}
-			nid := ny*w + nx
-			if mask.Pix[ny*mask.Stride+nx] == 0 || distance[nid] >= 0 {
-				continue
-			}
-			distance[nid] = nextDistance
-			queue = append(queue, nid)
-		}
-	}
-	return distance
 }
 
 func maskedIntegral(mask *image.Alpha) []int {
@@ -1161,17 +1486,6 @@ func maskBounds(mask *image.Alpha) image.Rectangle {
 	return image.Rect(minX, minY, maxX, maxY)
 }
 
-func pmHash(x, y, salt uint32) uint32 {
-	value := x*0x9e3779b1 ^ y*0x85ebca77 ^ salt*0xc2b2ae3d ^ 0x27d4eb2f
-	value ^= value >> 16
-	value *= 0x7feb352d
-	value ^= value >> 15
-	value *= 0x846ca68b
-	return value ^ (value >> 16)
-}
-
-func pmNext(state uint32) uint32 { return state*1664525 + 1013904223 }
-
 func normalizeNRGBA(src *image.NRGBA) *image.NRGBA {
 	out := image.NewNRGBA(image.Rect(0, 0, src.Bounds().Dx(), src.Bounds().Dy()))
 	draw.Draw(out, out.Bounds(), src, src.Bounds().Min, draw.Src)
@@ -1192,12 +1506,297 @@ func cloneNRGBA(src *image.NRGBA) *image.NRGBA {
 	return out
 }
 
-func parallelRows(ctx context.Context, start, end int, fn func(y int)) error {
-	return parallelRowsSized(ctx, start, end, 256, fn)
+// synthesisBlackHole returns an opaque copy of src with every masked pixel
+// black.
+func synthesisBlackHole(src *image.NRGBA, mask *image.Alpha) *image.NRGBA {
+	out := cloneNRGBA(src)
+	w, h := src.Bounds().Dx(), src.Bounds().Dy()
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			i := y*out.Stride + x*4
+			if mask.Pix[y*mask.Stride+x] != 0 {
+				out.Pix[i], out.Pix[i+1], out.Pix[i+2] = 0, 0, 0
+			}
+			out.Pix[i+3] = 255
+		}
+	}
+	return out
 }
 
-// parallelRowsSized avoids goroutine setup on tiny brush regions and uses the
-// existing row-parallel strategy only when there is enough work to amortize it.
+// synthesisMaskedResize area-averages src. With a non-nil mask it averages
+// known pixels only and renormalises their weights; with a nil mask every
+// pixel participates, including black pixels in an already-cleared hole.
+// An output pixel with no contributor is black. The result is opaque.
+func synthesisMaskedResize(src *image.NRGBA, mask *image.Alpha, w, h int) *image.NRGBA {
+	out := image.NewNRGBA(image.Rect(0, 0, w, h))
+	sw, sh := src.Bounds().Dx(), src.Bounds().Dy()
+	sx, sy := float64(w)/float64(sw), float64(h)/float64(sh)
+	// Gather rather than scatter: each output pixel sums the source pixels its
+	// cell overlaps. The contributing pixels are visited in the same source scan
+	// order as the old scatter, so the accumulation is bit-identical, but the
+	// writes are private to one output row and the rows can run in parallel.
+	// (Precomputing the per-axis overlap weights was tried and is slower: the
+	// indirection costs more than the min/max it removes.)
+	invX, invY := float64(sw)/float64(w), float64(sh)/float64(h)
+	_ = parallelRowsSized(context.Background(), 0, h, w, func(oy int) {
+		yLo := maxInt(0, int(float64(oy)*invY)-1)
+		yHi := minInt(sh-1, int(float64(oy+1)*invY)+1)
+		for ox := 0; ox < w; ox++ {
+			xLo := maxInt(0, int(float64(ox)*invX)-1)
+			xHi := minInt(sw-1, int(float64(ox+1)*invX)+1)
+			var sum [3]float64
+			var weight float64
+			for y := yLo; y <= yHi; y++ {
+				y0, y1 := float64(y)*sy, float64(y+1)*sy
+				cy := minFloat64(y1, float64(oy+1)) - maxFloat64(y0, float64(oy))
+				if cy <= 0 {
+					continue
+				}
+				row := y * src.Stride
+				for x := xLo; x <= xHi; x++ {
+					if mask != nil && mask.Pix[y*mask.Stride+x] != 0 {
+						continue
+					}
+					x0, x1 := float64(x)*sx, float64(x+1)*sx
+					cx := minFloat64(x1, float64(ox+1)) - maxFloat64(x0, float64(ox))
+					if cx <= 0 {
+						continue
+					}
+					wgt := cx * cy
+					si := row + x*4
+					for c := 0; c < 3; c++ {
+						sum[c] += wgt * float64(src.Pix[si+c])
+					}
+					weight += wgt
+				}
+			}
+			di := oy*out.Stride + ox*4
+			if weight > 0 {
+				for c := 0; c < 3; c++ {
+					out.Pix[di+c] = byte(clampInt(int(sum[c]/weight+0.5), 0, 255))
+				}
+			}
+			out.Pix[di+3] = 255
+		}
+	})
+	return out
+}
+
+func synthesisResizeAlpha(src *image.Alpha, w, h int) *image.Alpha {
+	out := image.NewAlpha(image.Rect(0, 0, w, h))
+	sw, sh := src.Bounds().Dx(), src.Bounds().Dy()
+	sx, sy := float64(w)/float64(sw), float64(h)/float64(sh)
+	for y := 0; y < sh; y++ {
+		y0, y1 := float64(y)*sy, float64(y+1)*sy
+		for x := 0; x < sw; x++ {
+			if src.Pix[y*src.Stride+x] == 0 {
+				continue
+			}
+			x0, x1 := float64(x)*sx, float64(x+1)*sx
+			for oy := int(y0); oy < h && float64(oy) < y1; oy++ {
+				for ox := int(x0); ox < w && float64(ox) < x1; ox++ {
+					out.Pix[oy*out.Stride+ox] = 255
+				}
+			}
+		}
+	}
+	return out
+}
+
+// synthesisAreaMask reduces the hole by exact footprint coverage. A small
+// non-zero threshold reproduces the filtered target activity observed in the
+// native coarse-level view without expanding to the conservative source mask.
+func synthesisAreaMask(src *image.Alpha, w, h int) *image.Alpha {
+	out := image.NewAlpha(image.Rect(0, 0, w, h))
+	sw, sh := src.Bounds().Dx(), src.Bounds().Dy()
+	coverage := make([]float64, w*h)
+	sx, sy := float64(w)/float64(sw), float64(h)/float64(sh)
+	for y := 0; y < sh; y++ {
+		y0, y1 := float64(y)*sy, float64(y+1)*sy
+		for x := 0; x < sw; x++ {
+			alpha := float64(src.Pix[y*src.Stride+x]) / 255
+			if alpha == 0 {
+				continue
+			}
+			x0, x1 := float64(x)*sx, float64(x+1)*sx
+			for oy := int(y0); oy < h && float64(oy) < y1; oy++ {
+				cy := minFloat64(y1, float64(oy+1)) - maxFloat64(y0, float64(oy))
+				for ox := int(x0); ox < w && float64(ox) < x1; ox++ {
+					cx := minFloat64(x1, float64(ox+1)) - maxFloat64(x0, float64(ox))
+					if cx > 0 && cy > 0 {
+						coverage[oy*w+ox] += alpha * cx * cy
+					}
+				}
+			}
+		}
+	}
+	for i, value := range coverage {
+		if value >= 0.1 {
+			out.Pix[i] = 255
+		}
+	}
+	return out
+}
+
+// synthesisPointMask samples the full-resolution hole at each coarse pixel
+// centre. It is intentionally narrower than synthesisResizeAlpha: the latter
+// conservatively classifies every coarse pixel touched by the hole, while this
+// mask controls which pixels the vote actually replaces.
+func synthesisPointMask(src *image.Alpha, w, h int) *image.Alpha {
+	out := image.NewAlpha(image.Rect(0, 0, w, h))
+	sw, sh := src.Bounds().Dx(), src.Bounds().Dy()
+	for y := 0; y < h; y++ {
+		sy := clampInt(int((float64(y)+0.5)*float64(sh)/float64(h)), 0, sh-1)
+		for x := 0; x < w; x++ {
+			sx := clampInt(int((float64(x)+0.5)*float64(sw)/float64(w)), 0, sw-1)
+			if src.Pix[sy*src.Stride+sx] != 0 {
+				out.Pix[y*out.Stride+x] = 255
+			}
+		}
+	}
+	return out
+}
+
+func newSynthesisRNG(x, y, level, parameter int) synthesisRNG {
+	return synthesisRNG{
+		counter: [4]uint32{
+			uint32(x) + 0xbeefdead,
+			uint32(y) + 0xcafebead,
+			0x56781234 + uint32(level),
+			0xcdef90ab + uint32(parameter),
+		},
+		used: 4,
+	}
+}
+
+func newSynthesisSearchRNG(x, y, level, round int, reverse bool) synthesisRNG {
+	pass := uint32(0)
+	if reverse {
+		pass = 1
+	}
+	return synthesisRNG{
+		counter: [4]uint32{
+			uint32(x) + 0xdeadaeef,
+			uint32(y) + 0xbeadcafe,
+			0x12345678 + uint32(level)*0x10000 + pass,
+			0x90abcdef + uint32(level)*0x10000 + uint32(round),
+		},
+		used: 4,
+	}
+}
+
+func (r *synthesisRNG) next() uint32 {
+	if r.used == len(r.words) {
+		var block [16]byte
+		for i, word := range r.counter {
+			binary.LittleEndian.PutUint32(block[i*4:], word)
+		}
+		synthesisEncryptCounter(&block)
+		for i := range r.words {
+			r.words[i] = binary.LittleEndian.Uint32(block[i*4:])
+		}
+		r.counter[0]++
+		if r.counter[0] == 0 {
+			r.counter[1]++
+		}
+		r.used = 0
+	}
+	word := r.words[r.used]
+	r.used++
+	return word
+}
+
+// beginCandidate discards unused words from the previous pixel. The native
+// initializer always requests a fresh 128-bit block for attempt zero, then
+// consumes the other three words only when that pixel needs retries.
+func (r *synthesisRNG) beginCandidate() {
+	r.used = len(r.words)
+}
+
+func (r *synthesisRNG) nextBlockFirst() uint32 {
+	r.beginCandidate()
+	return r.next()
+}
+
+var synthesisRoundKeys = [11][16]byte{
+	{0x11, 0x11, 0x11, 0x22, 0x22, 0x22, 0x22, 0x33, 0x33, 0x33, 0x33, 0x44, 0x44, 0x44, 0x44, 0x0b},
+	{0x0a, 0x0a, 0x0a, 0x29, 0x28, 0x28, 0x28, 0x1a, 0x1b, 0x1b, 0x1b, 0x5e, 0x5f, 0x5f, 0x5f, 0xc6},
+	{0xc5, 0xc5, 0x52, 0xef, 0xed, 0xed, 0x7a, 0xf5, 0xf6, 0xf6, 0x61, 0xab, 0xa9, 0xa9, 0x3e, 0x11},
+	{0x16, 0x77, 0x30, 0xfe, 0xfb, 0x9a, 0x4a, 0x0b, 0x0d, 0x6c, 0x2b, 0xa0, 0xa4, 0xc5, 0x15, 0x50},
+	{0xb0, 0x2e, 0xd0, 0xae, 0x4b, 0xb4, 0x9a, 0xa5, 0x46, 0xd8, 0xb1, 0x05, 0xe2, 0x1d, 0xa4, 0xd8},
+	{0x14, 0x67, 0xbb, 0x76, 0x5f, 0xd3, 0x21, 0xd3, 0x19, 0x0b, 0x90, 0xd6, 0xfb, 0x16, 0x34, 0xf7},
+	{0x53, 0x7f, 0x4d, 0x81, 0x0c, 0xac, 0x6c, 0x52, 0x15, 0xa7, 0xfc, 0x84, 0xee, 0xb1, 0xc8, 0x9f},
+	{0x9b, 0x97, 0x12, 0x1e, 0x97, 0x3b, 0x7e, 0x4c, 0x82, 0x9c, 0x82, 0xc8, 0x6c, 0x2d, 0x4a, 0x4f},
+	{0x43, 0x41, 0xfa, 0x51, 0xd4, 0x7a, 0x84, 0x1d, 0x56, 0xe6, 0x06, 0xd5, 0x3a, 0xcb, 0x4c, 0xd4},
+	{0x5c, 0x68, 0xf9, 0x85, 0x88, 0x12, 0x7d, 0x98, 0xde, 0xf4, 0x7b, 0x4d, 0xe4, 0x3f, 0x37, 0x8b},
+	{0x29, 0xf2, 0x1a, 0x0e, 0xa1, 0xe0, 0x67, 0x96, 0x7f, 0x14, 0x1c, 0xdb, 0x9b, 0x2b, 0x2b, 0x11},
+}
+
+func synthesisEncryptCounter(block *[16]byte) {
+	if synthesisUseAESHardware {
+		synthesisEncryptCounterHardware(block, &synthesisRoundKeys)
+		return
+	}
+	synthesisEncryptCounterScalar(block)
+}
+
+func synthesisEncryptCounterScalar(block *[16]byte) {
+	for i := range block {
+		block[i] ^= synthesisRoundKeys[0][i]
+	}
+	for round := 1; round < len(synthesisRoundKeys); round++ {
+		synthesisAESRound(block, &synthesisRoundKeys[round], round == len(synthesisRoundKeys)-1)
+	}
+}
+
+func synthesisAESRound(block, key *[16]byte, last bool) {
+	var state [16]byte
+	for column := 0; column < 4; column++ {
+		for row := 0; row < 4; row++ {
+			state[column*4+row] = synthesisSBox[block[((column+row)&3)*4+row]]
+		}
+	}
+	if !last {
+		for column := 0; column < 4; column++ {
+			i := column * 4
+			a, b, c, d := state[i], state[i+1], state[i+2], state[i+3]
+			state[i] = synthesisGMul2(a) ^ synthesisGMul2(b) ^ b ^ c ^ d
+			state[i+1] = a ^ synthesisGMul2(b) ^ synthesisGMul2(c) ^ c ^ d
+			state[i+2] = a ^ b ^ synthesisGMul2(c) ^ synthesisGMul2(d) ^ d
+			state[i+3] = synthesisGMul2(a) ^ a ^ b ^ c ^ synthesisGMul2(d)
+		}
+	}
+	for i := range block {
+		block[i] = state[i] ^ key[i]
+	}
+}
+
+func synthesisGMul2(x byte) byte {
+	if x&0x80 != 0 {
+		return x<<1 ^ 0x1b
+	}
+	return x << 1
+}
+
+var synthesisSBox = [256]byte{
+	0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
+	0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
+	0xb7, 0xfd, 0x93, 0x26, 0x36, 0x3f, 0xf7, 0xcc, 0x34, 0xa5, 0xe5, 0xf1, 0x71, 0xd8, 0x31, 0x15,
+	0x04, 0xc7, 0x23, 0xc3, 0x18, 0x96, 0x05, 0x9a, 0x07, 0x12, 0x80, 0xe2, 0xeb, 0x27, 0xb2, 0x75,
+	0x09, 0x83, 0x2c, 0x1a, 0x1b, 0x6e, 0x5a, 0xa0, 0x52, 0x3b, 0xd6, 0xb3, 0x29, 0xe3, 0x2f, 0x84,
+	0x53, 0xd1, 0x00, 0xed, 0x20, 0xfc, 0xb1, 0x5b, 0x6a, 0xcb, 0xbe, 0x39, 0x4a, 0x4c, 0x58, 0xcf,
+	0xd0, 0xef, 0xaa, 0xfb, 0x43, 0x4d, 0x33, 0x85, 0x45, 0xf9, 0x02, 0x7f, 0x50, 0x3c, 0x9f, 0xa8,
+	0x51, 0xa3, 0x40, 0x8f, 0x92, 0x9d, 0x38, 0xf5, 0xbc, 0xb6, 0xda, 0x21, 0x10, 0xff, 0xf3, 0xd2,
+	0xcd, 0x0c, 0x13, 0xec, 0x5f, 0x97, 0x44, 0x17, 0xc4, 0xa7, 0x7e, 0x3d, 0x64, 0x5d, 0x19, 0x73,
+	0x60, 0x81, 0x4f, 0xdc, 0x22, 0x2a, 0x90, 0x88, 0x46, 0xee, 0xb8, 0x14, 0xde, 0x5e, 0x0b, 0xdb,
+	0xe0, 0x32, 0x3a, 0x0a, 0x49, 0x06, 0x24, 0x5c, 0xc2, 0xd3, 0xac, 0x62, 0x91, 0x95, 0xe4, 0x79,
+	0xe7, 0xc8, 0x37, 0x6d, 0x8d, 0xd5, 0x4e, 0xa9, 0x6c, 0x56, 0xf4, 0xea, 0x65, 0x7a, 0xae, 0x08,
+	0xba, 0x78, 0x25, 0x2e, 0x1c, 0xa6, 0xb4, 0xc6, 0xe8, 0xdd, 0x74, 0x1f, 0x4b, 0xbd, 0x8b, 0x8a,
+	0x70, 0x3e, 0xb5, 0x66, 0x48, 0x03, 0xf6, 0x0e, 0x61, 0x35, 0x57, 0xb9, 0x86, 0xc1, 0x1d, 0x9e,
+	0xe1, 0xf8, 0x98, 0x11, 0x69, 0xd9, 0x8e, 0x94, 0x9b, 0x1e, 0x87, 0xe9, 0xce, 0x55, 0x28, 0xdf,
+	0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16,
+}
+
 func parallelRowsSized(ctx context.Context, start, end, width int, fn func(y int)) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -1267,6 +1866,24 @@ func minInt(a, b int) int {
 }
 
 func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// minFloat64/maxFloat64 replace math.Min/math.Max in the resampling loops.
+// Those are assembly calls that do not inline because of their NaN and signed
+// zero semantics; every overlap term here is an ordinary finite positive, so a
+// plain comparison is identical and much cheaper.
+func minFloat64(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxFloat64(a, b float64) float64 {
 	if a > b {
 		return a
 	}

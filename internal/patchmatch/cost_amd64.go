@@ -5,22 +5,19 @@ package patchmatch
 import "golang.org/x/sys/cpu"
 
 var pmUseAVX2 = cpu.X86.HasAVX2 && cpu.X86.HasFMA
+var synthesisUseAESHardware = cpu.X86.HasAES
 
 func pmOpaqueKernelAvailable() bool { return pmUseAVX2 }
 
-func pmRunOpaqueKernel(args *pmOpaqueKernelArgs) float32 {
-	return pmPatchSSDOpaqueAVX2(args)
+func pmRunSynthesisOpaqueKernel(args *pmOpaqueKernelArgs) float32 {
+	return pmPatchSSD7OpaqueAVX2(args)
 }
 
 //go:noescape
-func pmPatchSSDOpaqueAVX2(args *pmOpaqueKernelArgs) float32
+func pmPatchSSD7OpaqueAVX2(args *pmOpaqueKernelArgs) float32
 
-func pmRunPatchKernel(args *pmKernelArgs) float32 {
-	if pmUseAVX2 {
-		return pmPatchSSDAVX2(args)
-	}
-	return pmPatchSSDScalar(args)
-}
+//go:noescape
+func synthesisEncryptCounterHardware(block *[16]byte, keys *[11][16]byte)
 
 func pmActivePatchKernel() string {
 	if pmUseAVX2 {
@@ -28,6 +25,3 @@ func pmActivePatchKernel() string {
 	}
 	return "scalar"
 }
-
-//go:noescape
-func pmPatchSSDAVX2(args *pmKernelArgs) float32

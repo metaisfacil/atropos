@@ -1,4 +1,4 @@
-# Atropos — Architecture Reference
+# Atropos - Architecture Reference
 
 This document contains the detailed system model, data flow, and operation ordering for Atropos. It is intended to be read after `AGENTS.md`.
 
@@ -21,8 +21,8 @@ This document contains the detailed system model, data flow, and operation order
   - [`RecropImage`](#recropimage-app_iogo)
 - [Line Mode](#line-mode-app_linego)
 - [Disc Mode](#disc-mode-app_discgo--app_adjustgo)
-  - [`DrawDisc` — Entry Point](#drawdisc--entry-point)
-  - [`redrawDisc` — The Full Disc Pipeline](#redrawdisc--the-full-disc-pipeline)
+  - [`DrawDisc` - Entry Point](#drawdisc--entry-point)
+  - [`redrawDisc` - The Full Disc Pipeline](#redrawdisc--the-full-disc-pipeline)
   - [Operations that trigger `redrawDisc`](#operations-that-trigger-redrawdisc)
   - [`ResetDisc`](#resetdisc)
 - [Normal Mode](#normal-mode-app_normalgo)
@@ -166,7 +166,7 @@ Always writes to `warpedImage`. This ensures `SaveImage` always has a result, ev
 
 Delegates to `saveUndo()`. All entries now snapshot `rotationAngle` and post-disc levels; `StraightEdgeRotate` retains this helper so existing call sites remain explicit. Both paths invalidate levels and descreen sessions.
 
-**Rule:** Every operation that commits a permanent change must call `saveUndo()` first — except `SetLevels` and intra-session `Descreen` parameter changes (to avoid flooding undo entries during live parameter tuning). This includes warp-entry operations (`ClickCorner` on the 4th click, `ProcessLines`, `DrawDisc`) and most post-crop adjustments. `StraightEdgeRotate` uses `saveDiscRotationUndo()` instead.
+**Rule:** Every operation that commits a permanent change must call `saveUndo()` first - except `SetLevels` and intra-session `Descreen` parameter changes (to avoid flooding undo entries during live parameter tuning). This includes warp-entry operations (`ClickCorner` on the 4th click, `ProcessLines`, `DrawDisc`) and most post-crop adjustments. `StraightEdgeRotate` uses `saveDiscRotationUndo()` instead.
 
 ---
 
@@ -214,7 +214,7 @@ LoadImage(req)
          TIFF  → try ImageMagick first, fall back to Go decoder
          Other → Go stdlib decoder, fall back to ImageMagick for exotic formats
     3. toNRGBA(src)           convert to NRGBA (RGBA un-premultiply is parallelized)
-    4. originalImage = result (no extra allocation — reuse toNRGBA output)
+    4. originalImage = result (no extra allocation - reuse toNRGBA output)
        currentImage  = cloneImage(originalImage)
     5. Clear ALL transient state:
          warpedImage = nil
@@ -263,7 +263,7 @@ if autoDetect && mode === 'corner':
 setLoading(false)
 ```
 
-**File dialog defaults:** `OpenImageDialog` and `OpenSaveDialog` derive their default directory from the last loaded file path. Before passing the directory to Wails, they check `os.Stat(dir)` — if the directory no longer exists (e.g. a removable drive), they fall back to an empty string (system default) rather than erroring.
+**File dialog defaults:** `OpenImageDialog` and `OpenSaveDialog` derive their default directory from the last loaded file path. Before passing the directory to Wails, they check `os.Stat(dir)` - if the directory no longer exists (e.g. a removable drive), they fall back to an empty string (system default) rather than erroring.
 
 ---
 
@@ -290,7 +290,7 @@ DetectCorners(req)
     8. Append line-derived proposals after point candidates so deduplication preserves established point localization
     9. Deduplicate corners, map back to full-resolution coordinates, and store in detectedCorners
     10. Return clean currentImage preview + Corners array
-         Dots are rendered by the frontend canvas overlay — never baked into the image
+         Dots are rendered by the frontend canvas overlay - never baked into the image
 ```
 
 The detector selects `dark-background` when the perimeter model is both deeply
@@ -315,7 +315,7 @@ ClickCorner(req)
            use raw click coordinate
     2. Append pt to selectedCorners
     3. If selectedCorners.length < 4:
-           return SnappedX/SnappedY/Count/Message only — NO preview
+           return SnappedX/SnappedY/Count/Message only - NO preview
     4. On 4th corner → saveUndo() → store first 3 selected corners into newest undo entry → warpFromCorners(selectedCorners[:4]):
            sortVertices (→ TL, TR, BL, BR)
            compute outW = max(widthTop, widthBot)
@@ -346,13 +346,13 @@ ResetCorners()
 
 RestoreCornerOverlay({dotRadius})
     if detectedCorners empty → error "no cached corners"
-    return clean currentImage preview + Corners + "Detected N corners — click 4 corners"
+    return clean currentImage preview + Corners + "Detected N corners - click 4 corners"
 
 SkipCrop()
     require currentImage != nil
     warpedImage     = cloneImage(currentImage)
     selectedCorners = nil
-    return dims + "Crop skipped — image ready to save"
+    return dims + "Crop skipped - image ready to save"
 ```
 
 `SkipCrop` deliberately does not publish a preview revision: its committed
@@ -422,7 +422,7 @@ ClearLines()
 
 Disc mode is the most stateful mode. Every re-render replays the full pipeline from `discBaseImage`.
 
-### DrawDisc — Entry Point
+### DrawDisc - Entry Point
 
 ```
 DrawDisc(req)
@@ -438,7 +438,7 @@ DrawDisc(req)
     redrawDisc()
 ```
 
-### redrawDisc — The Full Disc Pipeline
+### redrawDisc - The Full Disc Pipeline
 
 ```
 redrawDisc()
@@ -463,13 +463,13 @@ redrawDisc()
 
 ### Operations that trigger redrawDisc
 
-- `RotateDisc(angle)` — adds angle to rotationAngle, calls redrawDisc
-- `ShiftDisc(dx, dy)` — adjusts discCenter, calls redrawDisc
-- `SetFeatherRadius(radius)` — updates discRadius and crop dimensions, calls redrawDisc
-- `SetFeatherSize(size)` — updates featherSize, calls redrawDisc if discRadius > 0
-- `GetPixelColor(x, y)` — sets bgColor from discBaseImage pixel, calls redrawDisc
-- `SetLevels(...)` — stores values in postDiscBlack/White, calls redrawDisc
-- `AutoContrast()` — computes + stores values in postDiscBlack/White, calls redrawDisc
+- `RotateDisc(angle)` - adds angle to rotationAngle, calls redrawDisc
+- `ShiftDisc(dx, dy)` - adjusts discCenter, calls redrawDisc
+- `SetFeatherRadius(radius)` - updates discRadius and crop dimensions, calls redrawDisc
+- `SetFeatherSize(size)` - updates featherSize, calls redrawDisc if discRadius > 0
+- `GetPixelColor(x, y)` - sets bgColor from discBaseImage pixel, calls redrawDisc
+- `SetLevels(...)` - stores values in postDiscBlack/White, calls redrawDisc
+- `AutoContrast()` - computes + stores values in postDiscBlack/White, calls redrawDisc
 
 ### ResetDisc
 
@@ -528,7 +528,7 @@ ResetNormal()
 | State | Meaning |
 |-------|---------|
 | `normalRect` | `{x1,y1,x2,y2}` image-space selection, or `null` |
-| `normalCropApplied` | `true` after first crop or Skip crop — unlocks touch-up |
+| `normalCropApplied` | `true` after first crop or Skip crop - unlocks touch-up |
 | `adjustmentRect` | Persistent image-space rectangle limiting adjustment effects, or `null` |
 | `adjustmentSelectionActive` | Whether the Adjustments marquee tool is active |
 
@@ -765,7 +765,11 @@ which defaults to `patchmatch.Fill`. The indirection exists so an untracked
 local file can substitute another engine at init time for side-by-side
 comparison; `patchMatchEngine` names the active engine in the touch-up logs.
 
-The built-in touch-up backend is a deterministic, translation-only, coarse-to-fine PatchMatch synthesizer tuned for small repairs on scanned print material. The implementation is deliberately ROI-first: a brush stroke is solved inside a bounded working neighbourhood rather than preprocessing the full scan, while the source search domain inside that neighbourhood remains much larger than the painted region. 
+The built-in touch-up backend is a deterministic, translation-only,
+coarse-to-fine synthesizer content-aware fill engine. A brush stroke is
+solved inside a bounded working neighbourhood rather than preprocessing the
+full scan, while the source search domain inside that neighbourhood remains
+much larger than the painted region.
 
 **Public solver entry points:**
 
@@ -783,180 +787,173 @@ patchmatch.FillROI(ctx, src, mask, dirtyBounds, patchSize, iterations)
     // the caller may composite that ROI directly into a document/tile buffer.
 ```
 
-`dirtyBounds` is expressed relative to the top-left of `src` and must contain every non-zero mask pixel. `patchmatch.FillROI` budgets a roughly square source region with nominal side `ceil(4 * sqrt(max(50, maskWidth) * max(50, maskHeight)))`, expanded if necessary to contain the mask plus `patchSize + 8` pixels of support on each side. The window shifts inward at document edges to retain context, then clips to the image dimensions. All expensive pyramids, packed planes, validity maps, structure descriptors, texture fields, NNF state, and reconstruction buffers use these local coordinates. The initial search radius spans the working ROI. The app's `patchMatchChunkedFill` also applies its existing outer crop and connected-region grouping before entering this solver.
+`dirtyBounds` is expressed relative to the top-left of `src` and must contain
+every non-zero mask pixel. `patchmatch.FillROI` budgets a roughly square source
+region with nominal side `ceil(4 * sqrt(max(50, maskWidth) * max(50, maskHeight)))`,
+expanded if necessary to contain the mask plus `patchSize + 8` pixels of support
+on each side. The window shifts inward at document edges to retain context, then
+clips to the image dimensions. All pyramids, planes, validity maps, field state
+and vote buffers use these local coordinates. The app's `patchMatchChunkedFill`
+also applies its existing outer crop and connected-region grouping before
+entering this solver.
 
-Within each level, the active NNF rectangle is smaller: only patch centres whose patches can overlap a painted output pixel are solved. It is approximately the mask bounds expanded by `patchRadius + 1`. Source candidates may come from anywhere in the working ROI.
+`patchSize` and `iterations` are caller hints rather than solver knobs. The
+engine always matches 7x7 patches (`synthesisPatchSize`) and runs a fixed
+per-level round schedule, so `patchSize` survives only as the ROI halo term
+above and `iterations` is ignored entirely. Both remain in the signatures
+because the app, its settings, and the replay harnesses pass them.
 
-**Pyramid and mask semantics**
+**Pyramid**
 
-`buildPatchPyramid` keeps image appearance, target coverage, and source exclusion separate:
+`synthesisPyramid` steps the scale by 0.7 from full resolution while the shorter
+side stays at least `minCoarse` (35 px by default), adding a final level clamped
+to exactly `minCoarse` when the next step would fall below it. Every level is
+resampled from full resolution rather than from its parent, which is why the
+pyramid is the most expensive single stage of a small dab.
 
-* The image pyramid uses a separable `[1 4 6 4 1]` binomial low-pass in premultiplied-alpha space before each approximately 2× reduction. This prevents halftone dots, fine type, line art, scanner grain, and other print texture from aliasing into misleading coarse structures.
+Each level carries four images:
 
-* `targetMasks` preserve fractional/antialiased coverage by area averaging. They control confidence and the final soft compositing edge.
+* `src` - a plain area-reduced source, sampled by patch costs and by the vote;
+* `plane` - the opaque form of `src` handed to the SIMD cost kernel;
+* `seed` - the masked, normalised target image the level's rounds start from,
+  built by `synthesisChainPlane`: a colour plane with a per-pixel validity
+  weight that is area-reduced and Gaussian-blurred (`synthesisPlaneSigma`,
+  0.55 per 0.7 step), so the result is the known content's average wherever
+  known pixels reach and black elsewhere;
+* `mask` / `targetMask` - two different hole semantics.
 
-* `sourceMasks` are conservative binary masks: if any represented fine pixel is painted, the coarse source pixel is excluded.
+**Mask semantics**
 
-* A source centre is valid only when the entire search/vote patch avoids the source-exclusion mask. There is no centre-only validity fallback, so damaged content cannot re-enter the fill when a coarse patch centre lies outside the brush but part of its patch does not.
+* `targetMask` is the conservative coverage mask (`synthesisAreaMask`) and
+  drives the target/source classification. A centre whose 7x7 patch overlaps it
+  is a target; a centre whose patch overlaps neither it nor the exclusion mask
+  is a valid source. There is no centre-only validity fallback, so damaged
+  content cannot re-enter the fill.
+* `mask` is the point-sampled hole (`synthesisPointMask`) and decides which
+  pixels the vote overwrites. Every covered pixel is replaced outright: the
+  engine never blends the hole's own pixels back in, so a feathered brush edge
+  cannot leave a rim of the removed content.
 
-Patch size is normalized to an odd value in the range 3–15. The normal touch-up setting is 7×7. The pyramid has at most seven levels and stops when its shortest side reaches `max(32, patchSize*4)`. Levels with no legal source patches or no active target centres are skipped; source validity is not relaxed.
+**Onion-peel pre-heal (`internal/patchmatch/reconstruct.go`)**
 
-**Per-level solve and EM loop**
+Holes that touch the image border are pre-healed before the ordinary pyramid
+runs. `synthesisPeelScale` picks a power-of-two coarse scale from the hole depth
+(bounded by `peelMaxCoarseSize` and `peelMaxDimension`), and that scale also
+becomes the coarsest pyramid level. The hole is then grown inward from the known
+content in 2 px rings; each ring gets a diffused initial guess
+(`synthesisDiffuseFill`) and a short single-level solve before the next ring is
+taken. Peel rings use a flat hole search window of `10 + 4*i` with no depth
+ramp. The pre-healed coarse image seeds the first active level's target, but its
+field is not inherited: a top band's first main dispatch starts from a uniformly
+random field even where the peel already solved those rows.
+
+**Hole search window**
+
+`synthesisSearchWindow` reproduces the engine's automatic half-window from the
+hole's pixel count and its depth - the L1 `maxDist` for interior holes, half of
+it for holes touching the border. `synthesisWindowPlane` turns that scalar into
+the per-pixel window plane the engine keeps alongside its state: the half-window
+scaled into the level, plus each pixel's Manhattan distance into the hole, so
+centres deep inside the hole may search farther than the boundary does.
+
+The window is a rejection test, not a draw-range clip. Random search draws from
+`best ± radius` clipped only to the valid rect, and `synthesisTry` then rejects
+any candidate at or beyond the window. Narrowing the draw range instead would
+change the modulo and therefore the drawn coordinate.
+
+**Per-level round schedule**
 
 ```text
-local source + target/source masks
-        |
-        v
-build image/mask pyramid
-        |
-        v
 for level = coarse -> fine
         |
-        +-- prepare strict source validity + active target centres
-        +-- seed working image from source / bilinear parent result
-        +-- at finest level only: build structure + texture models
+        +-- seed the working image (source, peel result, or parent vote)
+        +-- upscale the parent field by displacement, refresh costs, vote
         |
-        +-- EM round (maximum 30 first/penultimate, 25 intermediate, 3 final)
-        |      |
-        |      +-- update target confidence
-        |      +-- initialize/reuse NNF
-        |      +-- alternating PatchMatch propagation + random search
-        |      +-- structure-aware patch vote
-        |      +-- coherent texture-detail restoration
-        |      +-- soft-compose result through target mask
+        +-- round 0..N            (N = 30 on the first and penultimate
+        |      |                   active levels, 25 otherwise)
+        |      +-- solve a fresh restart field: uniform random sources
+        |      |   refined by one primary dispatch
+        |      +-- merge dispatch at radius 1 keeps the cheaper of the
+        |      |   restart entry and the incumbent, pixel by pixel
+        |      +-- coherence-weighted patch vote
         |
-        +-- carry working image + NNF to next finer level
+        +-- carry the working image and field to the next finer level
 ```
 
-The first/coarsest working image is the local source clone. Covered pixels have zero confidence in round zero, so the original dust or damage does not contribute to target SSD. Finer levels bilinearly upsample the previous reconstruction only inside the target mask, leaving known source pixels untouched.
+The field persists across rounds; what restarts is the proposal. Only the very
+first round of a level with no inherited field starts from scratch. An inherited
+field is never random-searched at the primary radius itself.
 
-Known pixels retain their confidence from the antialiased target mask. Reconstructed pixels acquire provisional confidence in later EM rounds. That confidence is attenuated by distance into the hole, local texture strength, and structural-edge strength. This limits the influence of a smooth or blurred initial reconstruction in the next E-step.
+The primary dispatch spans the whole level on the early active levels and drops
+to `synthesisFineRadius` (3) on the last three; the merge dispatch always uses
+`synthesisSecondaryRadius` (1). The last ordinary levels additionally freeze the
+interiors of coherent blocks of the incumbent (`synthesisFrozen`). The finest
+level, when it inherits a field, runs a single round with no proposal at all:
+one propagation dispatch, then a vote.
 
-The NNF and cost buffers are allocated once per level and reused across EM rounds. On a same-level EM round, the previous NNF is retained and only its costs are recomputed against the updated working image. The first solved level receives the 30-round budget even when coarser levels were skipped. These synthesis rounds are separate from the public `iterations` search-pass limit.
+**Search kernel and RNG**
 
-The painted mask bounding box is scanned once in `preparePMLevel` and cached as `level.painted`. The level mask does not change, and voting, texture warping, structure blending, seeding, and convergence measurement all use that rectangle on every round.
-
-The 30/25 schedule follows observed Content-Aware Spot Healing calls. Atropos retains three native-resolution rounds because using Photoshop's final single round reduced quality in repeated-printing and edge regressions with Atropos's wider pyramid spacing and native-only detail models.
-
-These counts are maxima. After round two, once provisional confidence has reached its plateau, `pmReconstructionChange` measures the change in covered pixels. A level may terminate under either of two conditions:
-
-* **Settled.** No masked channel moved by more than one code value, and the coverage-weighted mean change is at most 0.05 code values. One such round ends the level if the NNF also converged. Two consecutive settled rounds end it regardless, because equivalent donor assignments can continue changing on flat paper after the reconstructed appearance has stopped changing.
-
-* **Insufficient progress.** `pmEMProgress` records the smallest mean change so far. A round counts as progress only if it improves on that value by 10%. Two consecutive rounds that fail to do so terminate the level when the remaining movement is below 0.25 code values. One stalled round is tolerated because mean change can oscillate while a level is still converging.
-
-The second condition handles levels that do not reach the settled threshold. In the traced 43px stroke, the penultimate level ran its full 28-round allowance while mean change remained between 0.045 and 0.115 code values without falling further. It now terminates after seven rounds, with an identical change series through that point. Repeated-printing and colour-edge regression outputs are bit-identical, and masked error against the real scan pixels hidden by the replay mask changes by less than 0.1%.
-
-**NNF initialization and PatchMatch search**
-
-The NNF stores an absolute source centre, but coarse-to-fine seeding upsamples the displacement `source - target`, not the absolute source coordinate. This preserves a constant translation field across odd/even child pixels and avoids the one-pixel phase/checkerboard error caused by scaling absolute source coordinates.
-
-Initialization is deterministic:
-
-1. An unpainted target centre whose full patch is legal maps to itself.
-2. Otherwise, use the displacement-preserving parent NNF seed when available.
-3. Otherwise, search outward in deterministic local rings for a legal source.
-4. For unusually large holes with no nearby legal centre, choose a deterministic entry from the legal source list to bootstrap random search.
-
-There is no full-ROI nearest-source/Voronoi preprocessing in the active path.
-
-Each requested PatchMatch pass uses two execution modes:
-
-* Propagation uses classic in-place directional PatchMatch. Even passes scan top-left → bottom-right and test transported left/up matches; odd passes scan bottom-right → top-left and test right/down. Propagation is sequential so a good displacement can cascade through a coherent region within a single pass.
-
-* Random search is row-parallel. Each target centre samples successively smaller windows around its current winner. The PRNG uses a deterministic coordinate/pass hash, so parallel scheduling does not change the result.
-
-`iterations` is a maximum rather than guaranteed work. At least one forward and one reverse pass are performed. After that, the level stops when fewer than about 0.4% of active centres improve. The random-search radius is adaptive: an uncertain first pass retains the broad search, while seeded later passes and EM rounds start from progressively smaller radii.
+`synthesisSearchPixel` is one invocation of the engine's kernel: the two axial
+predecessors of the current pass, then random search around the current best
+with the radius halving to zero. `synthesisSearchSweep` runs the level as a
+tiled anti-diagonal wavefront - the dependency graph allows it, and tiling
+rather than per-pixel scheduling keeps the 7x7 column reuse in cache and the
+barrier count low. Small or narrow levels stay serial.
 
 **Patch cost (`internal/patchmatch/cost.go`)**
 
-Pixels are packed as premultiplied RGBA structure-of-arrays planes, with alpha downweighted relative to RGB. The confidence-weighted patch SSD hot path dispatches to the retained AVX2/FMA or NEON assembly kernel when available, with a scalar fallback.
+The cost is a raw RGB sum of squared differences over the 7x7 patch, with an
+early exit once the running sum reaches the incumbent's cost.
 
-Production fills use raw translation matching and untransformed source colours at every level. Runtime Spot Healing traces consistently disabled gain/bias despite retaining populated transform bounds, so source and target photometric statistics and transform arrays are not allocated in the production solve.
+On AVX2/FMA machines `pmPatchSSD7OpaqueAVX2` computes the same SSD in float32
+(exact below 2^24) with the same early exit. `pmOpaqueKernelArgs` is the ABI
+shared with that kernel, and `ActiveKernel()` reports which path was selected
+for the touch-up logs. Other architectures use the scalar loop.
 
-On AVX2/FMA machines, fully opaque source and target images use a packed-byte SSD kernel. It expands four RGBA pixels to integers, accumulates exact squared channel differences, then applies the existing float confidence weights. This preserves patch size, source validity, normalization, regularizers, and voting. Tail loads are masked because image rows do not have the padding used by float planes. Opaque EM rounds also skip the full-ROI target float repack. Translucent images, other CPU paths, and photometric target statistics retain the existing packed float planes. The new reduction order can change near-tied matches at floating-point precision; quality tests and real-scan replay comparisons cover that boundary.
+**Vote (`synthesisVote`)**
 
-The complete candidate cost is:
-
-```text
-confidence-normalized premultiplied RGBA SSD
-    + weak locality prior where target evidence is missing
-    + source-occurrence penalty on the two finest levels
-    + fine-texture energy mismatch penalty
-    + low-frequency structure mismatch penalty
-```
-
-The internal, separately tested photometric model remains available for investigation but is not enabled by the public fill path. It uses float64 integral statistics and bounded moment-based gain/bias corrections with consistent candidate scoring and reconstruction.
-
-Fractional reconstruction votes are clamped without a rounding offset; rounding occurs when the final byte is written. The locality prior decreases as a target patch gains observed or reconstructed evidence. The source-occurrence field is fixed during each search pass to preserve deterministic parallel evaluation. After each pass, incumbent costs are adjusted to the refreshed field.
-
-**Fine-level structure model (`internal/patchmatch/structure.go`)**
-
-Low-frequency structure is computed only at native resolution. Coarse levels handle large displacement rather than exact colour-edge placement.
-
-`pmStructureGuideImage` builds a guide through the painted region using observed pixels only. Mask-boundary colours seed the hole, onion-peel propagation provides an initial value throughout it, and bounded relaxation continues the surrounding low-frequency colour field while known pixels remain fixed constraints.
-
-The source image and guide image are then low-passed with repeated separable 5-tap binomial filtering and converted to a compact three-plane structure field:
-
-```text
-strength = low-frequency edge magnitude mapped to 0..1
-orientX  = (Jxx - Jyy) / (Jxx + Jyy)
-orientY  = 2*Jxy / (Jxx + Jyy)
-```
-
-`orientX/orientY` are coherence-weighted double-angle edge orientation, so an undirected edge has the same representation in either tangent direction. The PatchMatch structure penalty samples the centre, axial points, and diagonals and penalizes both missing/extra structure and orientation disagreement. Tensor normalization is performed once during descriptor construction rather than once per candidate.
-
-**Fine-level texture model (`internal/patchmatch/texture.go`)**
-
-Texture is modeled independently of provisional reconstructed RGB. The source texture field is local RMS gradient energy computed only from legal, unpainted source pixels. Integral images make the neighbourhood energy query inexpensive. The field responds to scanner noise, plastic or paper speckle, fibres, and halftone microtexture while remaining low on smooth colour fields.
-
-A scalar texture guide is propagated from known pixels through the brush region and harmonically relaxed. The E-step compares source texture energy with this guide, preventing ordinary patch averaging from causing a smooth first-pass reconstruction to validate itself and progressively remove native grain.
-
-**Reconstruction (`internal/patchmatch/reconstruct.go`)**
-
-The M-step handles flat appearance, structural edges, and stochastic detail separately.
-
-First, `pmNNFCoherenceWeights` scores each NNF centre by local agreement between its translation and those of its four neighbouring centres, allowing ±1 px drift. Ordinary overlapping-patch voting uses the same patch support as search and weights each contribution by:
-
-```text
-Gaussian spatial patch weight
-    * NNF coherence
-    * amount of target evidence in the matched patch
-    * inverse match cost
-```
-
-This weighted average is retained in flat and texture regions, where combining plausible patches provides stable low-frequency colour. At a structural edge, averaging sharp source edges that are misaligned by one pixel would produce blur. Reconstruction therefore hashes overlapping votes into exact displacement clusters.
-
-Nearby ±1 px buckets may contribute to selection of the dominant family, but the rendered structural sample comes from a single exact winning displacement. As structural strength and support increase, reconstruction progressively switches from the ordinary average to that direct source sample, preserving colour-edge position and sharpness.
-
-Texture detail is restored afterward from a separate coherent displacement field stored only over the painted rectangle. Overlapping NNF hypotheses are clustered by displacement, the dominant texture warp is smoothed only across compatible colour/structure neighbourhoods, and the high-frequency source residual is transferred onto the voted low-frequency result.
-
-Flat stochastic areas use a linear low-pass residual decomposition so the full texture phase remains available; near colour edges, the base becomes edge-aware. Texture mixing decreases continuously with structure strength and is disabled at very strong structural pixels, so the detail pass does not re-soften an edge preserved by the structure-aware vote.
-
-Only target-mask pixels are replaced. Antialiased or partial mask coverage soft-composites the synthesized result with the original source, while known pixels remain byte-for-byte source content.
+Every target centre whose patch covers a hole pixel contributes its matched
+source colour, weighted by `synthesisCoherence` - a 0.1/0.2/0.3/0.6/1 table
+keyed on how many of the four diagonal neighbours carry the same displacement.
+The weighted average is written to the covered pixel; uncovered pixels keep
+byte-for-byte source content.
 
 **Performance and cancellation invariants**
 
-Processing is local:
-
 * all expensive processing operates on the working ROI rather than the full scan;
-* the active NNF exists only around patch centres capable of affecting the painted output;
-* NNF/cost/coherence storage is reused within a level;
-* texture-warp storage is mask-bounds-sized rather than working-image-sized;
-* structure/texture relaxation updates only covered pixels and does not copy known ROI pixels on every iteration;
-* row-parallel work has a size threshold, so small dabs remain serial to avoid goroutine/`WaitGroup` overhead;
-* independent initialization, descriptor passes, random search, voting, and reconstruction are parallelized where useful, while directional propagation remains sequential for correctness.
+* the field exists only over `level.active`, the centres capable of affecting
+  painted output;
+* field, cost and coherence storage is reused within a level, and the restart
+  buffers are released as soon as the level collapses into the parent solution,
+  so coarse levels do not retain a second field for the rest of the fill;
+* `parallelRowsSized` applies a size threshold, so small dabs stay serial and
+  avoid goroutine/`WaitGroup` overhead;
+* resampling, search sweeps and voting are parallel; the wavefront synchronises
+  once per tile diagonal rather than once per pixel;
+* `ctx.Err()` is checked at entry and throughout pyramid, peel, round and vote
+  work so an in-flight touch-up can be cancelled.
 
-`patchmatch.FillBounds` is preferred when the caller already knows the stroke bounds. `patchmatch.FillROI` is preferred when the editor can composite the returned rectangle itself, because it also avoids the final full-document clone. `ctx.Err()` is checked at entry and throughout pyramid, search, and reconstruction work so an in-flight touch-up can be cancelled.
+`patchmatch.FillBounds` is preferred when the caller already knows the stroke
+bounds. `patchmatch.FillROI` is preferred when the editor can composite the
+returned rectangle itself, because it also avoids the final full-document clone.
 
-The normal scanned-print setting is `patchSize=7`, `iterations=5`; iterations are a maximum because stable levels terminate early. Regression coverage includes displacement-preserving pyramid seeding, strict whole-patch source validity, separate target/source mask semantics, local working-ROI behavior, supplied-bounds equivalence, basic defect completion, repeated printing through thin scratches and larger dabs, reconstruction convergence, slow-decay round termination, transparent edge outpainting with nonzero image origins, stochastic texture retention, texture beside a crossing edge, and sharp slanted colour-edge preservation.
-
-Architecture-specific tests additionally verify AVX2/NEON SSD equivalence, early-exit behavior, dispatch, and the `pmKernelArgs` assembly layout.
+Regression coverage is behavioural rather than component-level, because the
+solver no longer has separable photometric, structure or texture components:
+basic defect completion, supplied-bounds equivalence, local working-ROI
+behaviour, working-ROI context at document edges, repeated printing through thin
+scratches and larger dabs, transparent edge outpainting with nonzero image
+origins, flat colour and known-pixel preservation, stochastic texture retention,
+texture beside a crossing edge, sharp slanted colour-edge preservation, the RNG
+known-answer vector, the `parallelRowsSized` scheduling and cancellation
+contract, and a logged real-scan replay. Architecture-specific tests verify the
+AVX2 SSD kernel's equivalence to the scalar loop, its early exit, and the
+`pmOpaqueKernelArgs` assembly layout.
 
 ### iopaintFill (`app_iopaint.go`)
 
 **Does not send the full image.** Crops to the bounding box of the mask plus a 128 px margin, encodes the crop as JPEG (fast; iopaint does not need lossless input), sends it with the cropped grayscale PNG mask to `{iopaintURL}/api/v1/inpaint`. On success, composites only the masked pixels from the response patch back onto a full clone of the source image and returns a full-size `*image.NRGBA`.
 
-**Outpaint (warp fill) always uses PatchMatch** — IOPaint is an inpainting model and produces black for outpainting.
+**Outpaint (warp fill) always uses PatchMatch** - IOPaint is an inpainting model and produces black for outpainting.
 
 ---
 
@@ -964,7 +961,7 @@ Architecture-specific tests additionally verify AVX2/NEON SSD equivalence, early
 
 ### The Four Modes Are Mutually Exclusive
 
-Switching modes always resets the warp result. `setMode(m)` is called at the **top** of `handleModeSwitch` — before any async operations — so the mode button updates immediately.
+Switching modes always resets the warp result. `setMode(m)` is called at the **top** of `handleModeSwitch` - before any async operations - so the mode button updates immediately.
 
 ### Mode Switch Handler (`useImageActions.js:handleModeSwitch`)
 
@@ -1157,8 +1154,8 @@ backed at approximately `clientWidth × devicePixelRatio` by
 logical surface, then requests an appropriate LOD raster for that rectangle.
 
 `fitWidth` is recalculated by:
-1. `handleImgLoad(dims)` — now called when `PreviewCanvas` presents a decoded revision
-2. `ResizeObserver` on `canvasRef` — fires when the viewport container is resized
+1. `handleImgLoad(dims)` - now called when `PreviewCanvas` presents a decoded revision
+2. `ResizeObserver` on `canvasRef` - fires when the viewport container is resized
 
 Do not zero `fitWidth` while waiting for raster decode. Preserve the prior
 presented geometry until the replacement revision is ready, then update fit
@@ -1223,7 +1220,7 @@ This file is auto-generated by Wails during `wails dev` / `wails build`.
 
 - **Recoverable errors** (invalid state, bad args): Go returns `(nil, error)` → Wails rejects the JS promise → `catch` block in the frontend handler → `ErrorModal`
 - **Touch-up failure**: `ErrorModal` with user-friendly message; if IOPaint backend, includes a hint to check the server
-- **WASDQE before crop**: guarded in `useKeyboardShortcuts` — calls `showStatus(...)` instead of forwarding to Go (prevents error modal)
+- **WASDQE before crop**: guarded in `useKeyboardShortcuts` - calls `showStatus(...)` instead of forwarding to Go (prevents error modal)
 - **Destructive confirmation** (Re-crop): `ConfirmationModal` (Cancel / Continue) before calling `RecropImage`. Use this pattern for any future action that irreversibly discards session state.
 - **Warp outpaint failure**: hard error; no fallback
 - **Ctrl+W / Cmd+W**: fires before the `imageLoaded` guard, so quitting works even when no image is loaded
@@ -1253,7 +1250,7 @@ Settings are persisted to `%AppData%\atropos\settings.json` (Windows) / `~/.conf
 | Straight edge remains active | `straightEdgeRemainsActive` | *(frontend-only)* | `true` / `false` (default `true`) |
 | Auto-detect corners on mode switch | `autoDetectOnModeSwitch` | *(frontend-only)* | `true` / `false` (default `true`) |
 
-`closeAfterSave` has no Go counterpart — consumed entirely in the frontend `handleSaveImage` handler.
+`closeAfterSave` has no Go counterpart - consumed entirely in the frontend `handleSaveImage` handler.
 
 ---
 
@@ -1270,11 +1267,11 @@ A standalone planar image stitching feature. `internal/compositor` has no depend
 
 ### Wails-facing methods
 
-- **`CompositorOpenFilesDialog()`** — multi-file picker returning selected paths
-- **`CompositorStitch(req)`** — decodes all images, reverses path order for `"rtl"`/`"btt"` orientations, runs `stitchImages`, caches result, returns preview + dimensions
-- **`CompositorLoadResult()`** — promotes the cached result into the main editing pipeline (full state reset, sets `originalImage`/`currentImage`, returns `ImageInfo`)
-- **`CompositorSave(req)`** — encodes cached result to disk
-- **`CompositorOpenSaveDialog()`** — save-file dialog
+- **`CompositorOpenFilesDialog()`** - multi-file picker returning selected paths
+- **`CompositorStitch(req)`** - decodes all images, reverses path order for `"rtl"`/`"btt"` orientations, runs `stitchImages`, caches result, returns preview + dimensions
+- **`CompositorLoadResult()`** - promotes the cached result into the main editing pipeline (full state reset, sets `originalImage`/`currentImage`, returns `ImageInfo`)
+- **`CompositorSave(req)`** - encodes cached result to disk
+- **`CompositorOpenSaveDialog()`** - save-file dialog
 
 ### Stitching pipeline (`internal/compositor/stitch.go`)
 

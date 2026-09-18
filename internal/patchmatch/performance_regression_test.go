@@ -24,7 +24,7 @@ func pmBrushPerformanceFixture(long bool) (*image.NRGBA, *image.Alpha) {
 	mask := image.NewAlpha(src.Bounds())
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			grain := int(pmHash(uint32(x), uint32(y), 41)%29) - 14
+			grain := int(pmTestHash(uint32(x), uint32(y), 41)%29) - 14
 			v := 90 + grain + int(25*math.Sin(float64(x+2*y)/80))
 			if y < 250+x/5 {
 				v += 70

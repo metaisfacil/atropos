@@ -6,73 +6,22 @@ import (
 	"testing"
 )
 
-func TestSeedFromSolutionUpsamplesDisplacement(t *testing.T) {
-	parentLevel := &pmLevel{w: 8, h: 8}
-	parentNNF := make([]pmPoint, 64)
-	for y := 0; y < 8; y++ {
-		for x := 0; x < 8; x++ {
-			parentNNF[y*8+x] = pmPoint{x: int32(x + 2), y: int32(y + 1)}
-		}
-	}
-	seed := &pmSolution{level: parentLevel, nnf: parentNNF}
-	child := &pmLevel{w: 16, h: 16}
-	for y := 2; y < 14; y++ {
-		for x := 2; x < 14; x++ {
-			q, ok := pmSeedFromSolution(child, seed, x, y)
-			if !ok {
-				t.Fatalf("seed failed at %d,%d", x, y)
-			}
-			if dx, dy := int(q.x)-x, int(q.y)-y; dx != 4 || dy != 2 {
-				t.Fatalf("child %d,%d displacement=(%d,%d), want (4,2)", x, y, dx, dy)
-			}
-		}
-	}
+func pmTestHash(x, y, salt uint32) uint32 {
+	value := x*0x9e3779b1 ^ y*0x85ebca77 ^ salt*0xc2b2ae3d ^ 0x27d4eb2f
+	value ^= value >> 16
+	value *= 0x7feb352d
+	value ^= value >> 15
+	value *= 0x846ca68b
+	return value ^ (value >> 16)
 }
 
-func TestPreparePMLevelNeverFallsBackToCenterOnlyValidity(t *testing.T) {
-	src := image.NewNRGBA(image.Rect(0, 0, 9, 9))
-	targetMask := image.NewAlpha(image.Rect(0, 0, 9, 9))
-	sourceMask := image.NewAlpha(image.Rect(0, 0, 9, 9))
-	// With a 7x7 patch, this central exclusion intersects every legal source
-	// patch although several patch centers themselves remain unmasked.
-	sourceMask.Pix[4*sourceMask.Stride+4] = 255
-	level := preparePMLevel(src, targetMask, sourceMask, 7)
-	if len(level.sources) != 0 {
-		t.Fatalf("got %d legal sources; expected none", len(level.sources))
-	}
-}
-
-func TestPyramidSeparatesTargetCoverageFromSourceExclusion(t *testing.T) {
-	src := image.NewNRGBA(image.Rect(0, 0, 64, 64))
-	mask := image.NewAlpha(image.Rect(0, 0, 64, 64))
-	mask.Pix[2*mask.Stride+2] = 64
-	_, targetMasks, sourceMasks := buildPatchPyramid(src, mask, 3)
-	if len(targetMasks) < 2 {
-		t.Fatal("expected at least two pyramid levels")
-	}
-	var targetNonZero, sourceNonZero int
-	var targetHasPartial bool
-	for _, v := range targetMasks[1].Pix {
-		if v != 0 {
-			targetNonZero++
-			if v != 255 {
-				targetHasPartial = true
-			}
+func TestSynthesisRNGKnownVector(t *testing.T) {
+	rng := newSynthesisRNG(181, 186, 0, 7)
+	want := [4]uint32{0x0c3fbdf9, 0xb2bcce5a, 0x6e684c26, 0x28c9e3d6}
+	for i, expected := range want {
+		if got := rng.next(); got != expected {
+			t.Fatalf("word %d: got %08x, want %08x", i, got, expected)
 		}
-	}
-	for _, v := range sourceMasks[1].Pix {
-		if v != 0 {
-			sourceNonZero++
-			if v != 255 {
-				t.Fatalf("source exclusion contains non-binary value %d", v)
-			}
-		}
-	}
-	if targetNonZero == 0 || !targetHasPartial {
-		t.Fatalf("target coverage was not preserved: nonzero=%d partial=%v", targetNonZero, targetHasPartial)
-	}
-	if sourceNonZero == 0 {
-		t.Fatal("source exclusion lost covered fine pixel")
 	}
 }
 
@@ -200,137 +149,5 @@ func TestPatchMatchFillBoundsMatchesAutoBounds(t *testing.T) {
 		if auto.Pix[i] != hinted.Pix[i] {
 			t.Fatalf("dirty-bound hint changed deterministic result at byte %d: %d != %d", i, auto.Pix[i], hinted.Pix[i])
 		}
-	}
-}
-
-func TestPMBoundedGainBiasExplainsIlluminationShift(t *testing.T) {
-	const w, h = 48, 24
-	img := image.NewNRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			base := 70 + ((x%7)-3)*4 + ((y%5)-2)*2
-			if x >= 26 && x <= 34 {
-				base -= 18
-			}
-			i := y*img.Stride + x*4
-			img.Pix[i] = byte(clampInt(base+5, 0, 255))
-			img.Pix[i+1] = byte(clampInt(base, 0, 255))
-			img.Pix[i+2] = byte(clampInt(base-4, 0, 255))
-			img.Pix[i+3] = 255
-		}
-	}
-	mask := image.NewAlpha(image.Rect(0, 0, w, h))
-	level := preparePMLevel(img, mask, binarySourceMask(mask), 7)
-	level.photoEnabled = true
-	pmPreparePhotoSourceStats(level)
-	updatePMConfidence(level, 0, false)
-	level.targetPlanes = packPMPixels(img)
-	pmPreparePhotoTargetStats(level, &level.targetPlanes)
-	tr := pmEstimatePhotoTransform(level, &level.targetPlanes, 10, 12, pmPoint{x: 31, y: 12})
-	if tr.gain < pmPhotoGainMin || tr.gain > pmPhotoGainMax {
-		t.Fatalf("gain outside bounds: %v", tr.gain)
-	}
-	if tr.bias[1] < 10 || tr.bias[1] > pmPhotoBiasMax+0.01 {
-		t.Fatalf("expected positive bounded bias for darker source patch, got %+v", tr)
-	}
-	explained, _ := pmPhotoCostAdjustment(level, 10, 12, pmPoint{x: 31, y: 12}, tr)
-	if explained < 80 {
-		t.Fatalf("bounded transform should explain a substantial part of brightness mismatch, explained=%v transform=%+v", explained, tr)
-	}
-}
-
-func TestPMOccurrencePenalizesRepeatedSourceNeighborhood(t *testing.T) {
-	const w, h = 64, 48
-	img := image.NewNRGBA(image.Rect(0, 0, w, h))
-	for i := 3; i < len(img.Pix); i += 4 {
-		img.Pix[i] = 255
-	}
-	mask := image.NewAlpha(image.Rect(0, 0, w, h))
-	for y := 20; y < 25; y++ {
-		for x := 18; x < 23; x++ {
-			mask.Pix[y*mask.Stride+x] = 255
-		}
-	}
-	level := preparePMLevel(img, mask, binarySourceMask(mask), 7)
-	level.uniformityStrength = 1
-	nnf := make([]pmPoint, w*h)
-	for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
-		for x := level.active.Min.X; x < level.active.Max.X; x++ {
-			nnf[y*w+x] = pmPoint{x: int32(x + 24), y: int32(y)}
-		}
-	}
-	pmUpdateOccurrence(level, nnf)
-	uniquePenalty := pmOccurrencePenalty(level, pmPoint{x: 46, y: 22}, 1)
-
-	repeated := pmPoint{x: 50, y: 22}
-	if !validPMPoint(level, repeated) {
-		t.Fatal("test repeated source point unexpectedly invalid")
-	}
-	for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
-		for x := level.active.Min.X; x < level.active.Max.X; x++ {
-			if pmPatchTouchesMask(level, x, y) {
-				nnf[y*w+x] = repeated
-			}
-		}
-	}
-	pmUpdateOccurrence(level, nnf)
-	repeatedPenalty := pmOccurrencePenalty(level, repeated, 1)
-	if repeatedPenalty <= uniquePenalty+5 {
-		t.Fatalf("expected repeated-source penalty to be materially larger: unique=%v repeated=%v", uniquePenalty, repeatedPenalty)
-	}
-}
-
-func TestPMCoherentRegionCollapsesOnePixelJitter(t *testing.T) {
-	const w, h = 72, 44
-	img := image.NewNRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			i := y*img.Stride + x*4
-			v := byte(90 + (y % 3))
-			img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = v, v, v, 255
-		}
-	}
-	mask := image.NewAlpha(image.Rect(0, 0, w, h))
-	for y := 18; y < 24; y++ {
-		for x := 18; x < 24; x++ {
-			mask.Pix[y*mask.Stride+x] = 255
-		}
-	}
-	level := preparePMLevel(img, mask, binarySourceMask(mask), 7)
-	level.uniformityStrength = 0
-	level.photoEnabled = true
-	level.regionEnabled = true
-	pmPreparePhotoSourceStats(level)
-	updatePMConfidence(level, 1, true)
-	level.targetPlanes = packPMPixels(img)
-	pmPreparePhotoTargetStats(level, &level.targetPlanes)
-	nnf := make([]pmPoint, w*h)
-	costs := make([]float32, w*h)
-	for y := level.active.Min.Y; y < level.active.Max.Y; y++ {
-		for x := level.active.Min.X; x < level.active.Max.X; x++ {
-			id := y*w + x
-			q := pmPoint{x: int32(x + 24), y: int32(y)}
-			nnf[id] = q
-			costs[id] = pmPatchCost(level, &level.targetPlanes, x, y, q, 1e30)
-		}
-	}
-	ix, iy := 21, 21
-	id := iy*w + ix
-	nnf[id] = pmPoint{x: int32(ix + 25), y: int32(iy)}
-	costs[id] = pmPatchCost(level, &level.targetPlanes, ix, iy, nnf[id], 1e30)
-
-	changed, err := pmRegularizeCoherentRegions(context.Background(), level, nnf, costs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !changed {
-		t.Fatal("expected coherent-region regularizer to remove one-pixel NNF jitter")
-	}
-	gotDX := int(nnf[id].x) - ix
-	if gotDX != 24 {
-		t.Fatalf("jitter center retained displacement %d, want 24", gotDX)
-	}
-	if id >= len(level.regionConfidence) || level.regionConfidence[id] <= 0.5 {
-		t.Fatalf("expected center to belong to an established coherent region, confidence=%v", level.regionConfidence[id])
 	}
 }
