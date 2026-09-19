@@ -15,9 +15,10 @@ import (
 	_ "golang.org/x/image/tiff"
 )
 
-// These fixtures use the 43px brush, 15px patch and five search passes that
-// scanned-print retouching actually runs with. Benchmarks built around a 7px
-// patch understate what a real stroke costs.
+// These fixtures use the 43px brush and the 15/5 arguments issued by
+// scanned-print retouching. The synthesis model intentionally uses its fixed
+// 7x7 patch and level schedule; the requested values remain here to exercise
+// the production call path.
 func pmBrushPerformanceFixture(long bool) (*image.NRGBA, *image.Alpha) {
 	const w, h = 640, 640
 	src := image.NewNRGBA(image.Rect(0, 0, w, h))

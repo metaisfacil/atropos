@@ -1208,19 +1208,14 @@ func synthesisTry(level *synthesisLevel, working *image.NRGBA, tx, ty int, candi
 func synthesisPatchCost(level *synthesisLevel, target *image.NRGBA, tx, ty int, source pmPoint, limit uint32) uint32 {
 	sx, sy := int(source.x), int(source.y)
 	if pmOpaqueKernelAvailable() {
-		// Same raw RGB SSD in float32 (exact below 2^24), with the same
-		// early exit once the running sum reaches the limit.
 		args := pmOpaqueKernelArgs{
-			target:           &target.Pix[(ty-synthesisPatchHalf)*target.Stride+(tx-synthesisPatchHalf)*4],
-			source:           &level.plane.Pix[(sy-synthesisPatchHalf)*level.plane.Stride+(sx-synthesisPatchHalf)*4],
-			confidence:       &synthesisUnitConfidence[0],
-			targetStride:     target.Stride,
-			sourceStride:     level.plane.Stride,
-			confidenceStride: synthesisPatchSize,
-			patchSize:        synthesisPatchSize,
-			limit:            float32(limit),
+			target:       &target.Pix[(ty-synthesisPatchHalf)*target.Stride+(tx-synthesisPatchHalf)*4],
+			source:       &level.plane.Pix[(sy-synthesisPatchHalf)*level.plane.Stride+(sx-synthesisPatchHalf)*4],
+			targetStride: target.Stride,
+			sourceStride: level.plane.Stride,
+			limit:        limit,
 		}
-		return uint32(pmRunSynthesisOpaqueKernel(&args))
+		return pmRunSynthesisOpaqueKernel(&args)
 	}
 	var sum uint32
 	for py := -synthesisPatchHalf; py <= synthesisPatchHalf; py++ {
@@ -1238,14 +1233,6 @@ func synthesisPatchCost(level *synthesisLevel, target *image.NRGBA, tx, ty int, 
 	}
 	return sum
 }
-
-var synthesisUnitConfidence = func() [synthesisPatchSize * synthesisPatchSize]float32 {
-	var values [synthesisPatchSize * synthesisPatchSize]float32
-	for i := range values {
-		values[i] = 1
-	}
-	return values
-}()
 
 func synthesisVote(ctx context.Context, level *synthesisLevel, working *image.NRGBA) (*image.NRGBA, error) {
 	synthesisCoherence(level)
