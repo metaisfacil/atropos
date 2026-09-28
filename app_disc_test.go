@@ -1,11 +1,99 @@
 package main
 
 import (
+	"bytes"
+	"image/color"
 	"strings"
 	"testing"
 
+	"atropos/internal/imageops"
 	"atropos/internal/raster"
 )
+
+func TestDiscAutoContrastPreservesStraightenedEdgeCrops(t *testing.T) {
+	a := newTestApp(240, 240)
+	for y := 0; y < 240; y++ {
+		for x := 0; x < 240; x++ {
+			a.currentImage.SetNRGBA(x, y, color.NRGBA{R: uint8(x), G: uint8(y), B: 80, A: 255})
+		}
+	}
+	if _, err := a.DrawDisc(DiscDrawRequest{CenterX: 120, CenterY: 120, Radius: 80}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.StraightEdgeRotate(StraightEdgeRotateRequest{AngleDeg: 11}); err != nil {
+		t.Fatal(err)
+	}
+	for _, crop := range []CropRequest{
+		{Direction: "top", Amount: 7},
+		{Direction: "left", Amount: 13},
+		{Direction: "bottom", Amount: 5},
+		{Direction: "right", Amount: 9},
+	} {
+		if _, err := a.Crop(crop); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := raster.CloneNRGBA(a.warpedImage)
+	center, angle := a.discCenter, a.rotationAngle
+	bp, wp := imageops.AutoContrastPoints(before)
+	want := imageops.ApplyLevels(before, bp, wp)
+	result, err := a.AutoContrast(AutoContrastRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := a.warpedImage.Bounds(); got != before.Bounds() || result.Width != got.Dx() || result.Height != got.Dy() {
+		t.Fatalf("auto-contrast changed cropped dimensions: before=%v after=%v result=%dx%d", before.Bounds(), got, result.Width, result.Height)
+	}
+	if !bytes.Equal(a.warpedImage.Pix, want.Pix) {
+		t.Fatal("auto-contrast changed the cropped disc position or pixels")
+	}
+	if a.discCenter != center || a.rotationAngle != angle {
+		t.Fatal("auto-contrast changed disc geometry")
+	}
+	if _, err := a.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(a.warpedImage.Pix, before.Pix) || a.discCropInsets != (discCropInsets{top: 7, left: 13, bottom: 5, right: 9}) {
+		t.Fatal("undo did not restore cropped disc and its redraw state")
+	}
+	if _, err := a.Redo(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(a.warpedImage.Pix, want.Pix) {
+		t.Fatal("redo did not restore auto-contrasted disc")
+	}
+	if _, err := a.ShiftDisc(ShiftDiscRequest{DX: 1, DY: 0}); err != nil {
+		t.Fatal(err)
+	}
+	if a.warpedImage.Bounds() != before.Bounds() {
+		t.Fatal("shifting after auto-contrast lost edge crops")
+	}
+}
+
+func TestDiscAutoContrastPreservesCropBeforeStraightEdge(t *testing.T) {
+	a := newTestApp(240, 240)
+	if _, err := a.DrawDisc(DiscDrawRequest{CenterX: 120, CenterY: 120, Radius: 80}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Crop(CropRequest{Direction: "left", Amount: 12}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.StraightEdgeRotate(StraightEdgeRotateRequest{AngleDeg: 9}); err != nil {
+		t.Fatal(err)
+	}
+	before := raster.CloneNRGBA(a.warpedImage)
+	bp, wp := imageops.AutoContrastPoints(before)
+	want := imageops.ApplyLevels(before, bp, wp)
+	if _, err := a.AutoContrast(AutoContrastRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if a.warpedImage.Bounds() != before.Bounds() {
+		t.Fatalf("auto-contrast lost crop after straightening: before=%v after=%v", before.Bounds(), a.warpedImage.Bounds())
+	}
+	if !bytes.Equal(a.warpedImage.Pix, want.Pix) {
+		t.Fatal("auto-contrast moved the cropped disc")
+	}
+}
 
 // drawTestDisc is a convenience helper that calls DrawDisc on a loaded app
 // with a sensible centre and radius that fits comfortably within the image.

@@ -29,6 +29,7 @@ type historyDisc struct {
 	background      color.NRGBA
 	cutout          bool
 	cutoutPercent   int
+	cropInsets      discCropInsets
 }
 
 func (a *App) captureHistory(previous undoEntry) undoEntry {
@@ -44,7 +45,8 @@ func (a *App) captureHistory(previous undoEntry) undoEntry {
 		}
 		entry.disc = &historyDisc{base: snapshotUndoImage(a.discBaseImage, base),
 			center: a.discCenter, radius: a.discRadius, feather: a.featherSize,
-			background: a.bgColor, cutout: a.discCenterCutout, cutoutPercent: a.discCutoutPercent}
+			background: a.bgColor, cutout: a.discCenterCutout, cutoutPercent: a.discCutoutPercent,
+			cropInsets: a.discCropInsets}
 	}
 	return entry
 }
@@ -54,11 +56,13 @@ func (a *App) restoreHistoryDisc(disc *historyDisc, base *image.NRGBA, unmasked 
 	a.discWorkingCropRect = image.Rectangle{}
 	a.discBaseImage, a.discNoMaskPreview = base, unmasked
 	a.discCenter, a.discRadius = image.Point{}, 0
+	a.discCropInsets = discCropInsets{}
 	if disc == nil {
 		return
 	}
 	a.discCenter, a.discRadius, a.featherSize = disc.center, disc.radius, disc.feather
 	a.bgColor, a.discCenterCutout, a.discCutoutPercent = disc.background, disc.cutout, disc.cutoutPercent
+	a.discCropInsets = disc.cropInsets
 }
 
 func snapshotUndoImage(img *image.NRGBA, previous *undoImage) *undoImage {

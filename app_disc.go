@@ -50,6 +50,24 @@ type FeatherRadiusRequest struct {
 // re-crop from the full discBaseImage is needed.
 const discWorkingCropShiftPadding = 500
 
+type discCropInsets struct{ top, bottom, left, right int }
+
+func (insets discCropInsets) crop(img *image.NRGBA) *image.NRGBA {
+	if img == nil || insets == (discCropInsets{}) {
+		return img
+	}
+	b := img.Bounds()
+	r := image.Rect(b.Min.X+insets.left, b.Min.Y+insets.top,
+		b.Max.X-insets.right, b.Max.Y-insets.bottom)
+	// A changed radius or center can make previous trims too large. Keep
+	// the remaining crop valid rather than letting CropNRGBA see an empty rect.
+	r.Min.X = clamp(r.Min.X, b.Min.X, b.Max.X-1)
+	r.Min.Y = clamp(r.Min.Y, b.Min.Y, b.Max.Y-1)
+	r.Max.X = clamp(r.Max.X, r.Min.X+1, b.Max.X)
+	r.Max.Y = clamp(r.Max.Y, r.Min.Y+1, b.Max.Y)
+	return raster.CropNRGBA(img, r)
+}
+
 // refreshDiscWorkingCrop pre-crops discBaseImage around the current disc
 // centre with a generous extra margin and stores the result in
 // discWorkingCrop. Call this whenever discBaseImage or discCenter changes
@@ -90,6 +108,7 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 	a.discCenter = image.Pt(req.CenterX, req.CenterY)
 	a.discRadius = req.Radius
 	a.rotationAngle = 0
+	a.discCropInsets = discCropInsets{}
 
 	// Snapshot the adjusted working image as the immutable source for all
 	// disc renders. Using currentImage (not originalImage) means any levels
@@ -197,6 +216,7 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 	if a.postDiscBlack != 0 || a.postDiscWhite != 255 {
 		unmasked = imageops.ApplyLevels(unmasked, a.postDiscBlack, a.postDiscWhite)
 	}
+	unmasked = a.discCropInsets.crop(unmasked)
 	if p, err := a.imagePreviewURL(unmasked); err == nil {
 		a.discNoMaskPreview = p
 	}
@@ -214,6 +234,7 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 	if a.postDiscBlack != 0 || a.postDiscWhite != 255 {
 		feathered = imageops.ApplyLevels(feathered, a.postDiscBlack, a.postDiscWhite)
 	}
+	feathered = a.discCropInsets.crop(feathered)
 
 	a.descreenBaseImage = nil
 	a.descreenResultImage = nil
@@ -396,6 +417,7 @@ func (a *App) resetDiscFields() {
 	a.discBaseImage = nil
 	a.discWorkingCrop = nil
 	a.discWorkingCropRect = image.Rectangle{}
+	a.discCropInsets = discCropInsets{}
 	a.discNoMaskPreview = ""
 	a.postDiscBlack = 0
 	a.postDiscWhite = 255

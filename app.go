@@ -111,6 +111,9 @@ type App struct {
 	// when a shift has moved the disc outside the cached region and refresh.
 	discWorkingCrop     *image.NRGBA
 	discWorkingCropRect image.Rectangle
+	// discCropInsets records edge crops applied to the rendered disc so a
+	// subsequent redraw (such as AutoContrast) preserves those trims.
+	discCropInsets discCropInsets
 
 	// postDiscBlack / postDiscWhite record any levels stretch applied after the
 	// disc was committed. redrawDisc re-applies them at the end of every render

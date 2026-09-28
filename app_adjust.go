@@ -207,6 +207,7 @@ func (a *App) stepHistory(redo bool) (*ProcessResult, error) {
 		a.discWorkingCrop = nil
 		a.discNoMaskPreview = ""
 		a.discWorkingCropRect = image.Rectangle{}
+		a.discCropInsets = discCropInsets{}
 		a.postDiscBlack = 0
 		a.postDiscWhite = 255
 		a.levelsBaseImage = nil
@@ -298,6 +299,18 @@ func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
 	a.saveUndo()
 
 	a.warpedImage = raster.CropNRGBA(a.warpedImage, r)
+	if a.discRadius > 0 {
+		switch req.Direction {
+		case "top":
+			a.discCropInsets.top += r.Min.Y - b.Min.Y
+		case "bottom":
+			a.discCropInsets.bottom += b.Max.Y - r.Max.Y
+		case "left":
+			a.discCropInsets.left += r.Min.X - b.Min.X
+		case "right":
+			a.discCropInsets.right += b.Max.X - r.Max.X
+		}
+	}
 
 	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
