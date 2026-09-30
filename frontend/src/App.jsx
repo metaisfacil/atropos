@@ -312,7 +312,7 @@ export default function App() {
   })
 
   useKeyboardShortcuts({
-    imageLoaded, mode, discActive, featherSize, discRotation,
+    imageLoaded, mode, discActive, discRadius, featherSize, discRotation,
     ctrlDragRef, shiftDragRef, mousePosRef,
     setPreview, setFeatherSize, setLoading, setRealImageDims,
     preview, realImageDims, optimisticCrop, setOptimisticCrop,
@@ -567,7 +567,7 @@ export default function App() {
               shortcutsOpen={shortcutsOpen}
               setShortcutsOpen={setShortcutsOpen}
               mode={mode}
-              discActive={discActive}
+              discActive={discActive && discRadius > 0}
               canSave={imageLoaded && (cropSkipped || normalCropApplied || linesProcessed || cornerState.cornerCount >= 4 || discActive)}
               imageLoaded={imageLoaded}
               canCopySelection={imageLoaded}

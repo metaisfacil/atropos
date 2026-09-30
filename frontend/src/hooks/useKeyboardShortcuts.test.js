@@ -22,6 +22,7 @@ function makeProps(overrides = {}) {
     imageLoaded: true,
     mode: 'normal',
     discActive: false,
+    discRadius: 0,
     featherSize: 10,
     discRotation: 0,
     ctrlDragRef: { current: null },
@@ -326,9 +327,57 @@ describe('layout-independent spatial shortcuts', () => {
 })
 
 
+describe('Disc mode rotation shortcuts', () => {
+  it.each([
+    ['q', 'KeyQ', 2],
+    ['e', 'KeyE', 1],
+  ])('uses ordinary rotation for %s after Skip Crop', async (key, code, flipCode) => {
+    // Skip Crop completes the adjustment phase without defining a disc.
+    const props = makeProps({ mode: 'disc', discActive: true, canSave: true })
+    appMocks.Rotate.mockResolvedValue({ preview: '/rotated', width: 80, height: 100 })
+    renderHook(() => useKeyboardShortcuts(props))
+
+    await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key, code })))
+
+    expect(appMocks.Rotate).toHaveBeenCalledWith({ flipCode })
+    expect(appMocks.RotateDisc).not.toHaveBeenCalled()
+    expect(props.setPreview).toHaveBeenCalledWith('/rotated')
+    expect(props.setRealImageDims).toHaveBeenCalledWith({ w: 80, h: 100 })
+    expect(props.setUnsavedChanges).toHaveBeenCalledWith(true)
+    expect(props.flushPendingSave).toHaveBeenCalledOnce()
+    expect(props.showError).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['q', 'KeyQ', -15],
+    ['e', 'KeyE', 15],
+  ])('keeps disc rotation for %s when a disc is defined', async (key, code, angle) => {
+    const props = makeProps({ mode: 'disc', discActive: true, discRadius: 40, canSave: true })
+    appMocks.RotateDisc.mockResolvedValue({ preview: '/rotated-disc', discRotation: angle })
+    renderHook(() => useKeyboardShortcuts(props))
+
+    await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key, code })))
+
+    expect(appMocks.RotateDisc).toHaveBeenCalledWith({ angle })
+    expect(appMocks.Rotate).not.toHaveBeenCalled()
+    expect(props.setDiscRotation).toHaveBeenCalledWith(angle)
+  })
+
+  it.each(['q', 'e'])('requires crop or Skip Crop before rotating with %s', async key => {
+    const props = makeProps({ mode: 'disc' })
+    renderHook(() => useKeyboardShortcuts(props))
+
+    await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key, code: key === 'q' ? 'KeyQ' : 'KeyE' })))
+
+    expect(appMocks.Rotate).not.toHaveBeenCalled()
+    expect(appMocks.RotateDisc).not.toHaveBeenCalled()
+    expect(props.showStatus).toHaveBeenCalledWith('Apply a crop first before adjusting')
+  })
+})
+
 describe('Ctrl+Y redo', () => {
   it('takes precedence over the disc eyedropper', async () => {
-    const props = makeProps({ mode: 'disc', discActive: true })
+    const props = makeProps({ mode: 'disc', discActive: true, discRadius: 40 })
     renderHook(() => useKeyboardShortcuts(props))
     const event = new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, cancelable: true })
     await act(async () => window.dispatchEvent(event))

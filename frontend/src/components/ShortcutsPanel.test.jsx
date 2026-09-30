@@ -76,3 +76,24 @@ describe('ShortcutsPanel keyboard layout labels', () => {
     await waitFor(() => expect(cropKeys()).toEqual([',', 'A', 'O', 'E']))
   })
 })
+
+describe('ShortcutsPanel disc rotation', () => {
+  it.each([
+    [false, 'Rotate ±90°'],
+    [true, 'Rotate ±15°'],
+  ])('shows the rotation amount for discActive=%s', async (discActive, caption) => {
+    const { getByText, queryByText } = render(
+      <ShortcutsPanel
+        shortcutsOpen
+        setShortcutsOpen={vi.fn()}
+        mode="disc"
+        discActive={discActive}
+        canSave
+        imageLoaded
+      />,
+    )
+
+    await waitFor(() => expect(getByText(caption)).toBeTruthy())
+    expect(!!queryByText('Rotate disc')).toBe(discActive)
+  })
+})

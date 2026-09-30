@@ -18,7 +18,7 @@ export function optimisticCropDimensions(dims, direction, amount = KEYBOARD_CROP
 }
 
 export function useKeyboardShortcuts({
-  imageLoaded, mode, discActive, featherSize, discRotation,
+  imageLoaded, mode, discActive, discRadius, featherSize, discRotation,
   ctrlDragRef, shiftDragRef, mousePosRef,
   setPreview, setFeatherSize, setLoading, setRealImageDims,
   preview, realImageDims, optimisticCrop, setOptimisticCrop,
@@ -143,7 +143,7 @@ export function useKeyboardShortcuts({
           return
         }
 
-        if (mode === 'disc' && discActive) {
+        if (mode === 'disc' && discActive && discRadius > 0) {
           const shiftStep = e.shiftKey ? 20 : 5
           // Rotate the visual arrow direction into image space so that
           // nudging honours the current disc rotation.
@@ -257,7 +257,7 @@ export function useKeyboardShortcuts({
           }
           case 'q':
             setLoading(true); showStatus('Rotating…')
-            result = mode === 'disc' && discActive
+            result = mode === 'disc' && discActive && discRadius > 0
               ? await RotateDisc({ angle: -15 })
               : await Rotate({ flipCode: 2 })
             if (result?.preview) setPreview(result.preview)
@@ -271,7 +271,7 @@ export function useKeyboardShortcuts({
             showStatus(''); setLoading(false); await flushPendingSave(); break
           case 'e':
             setLoading(true); showStatus('Rotating…')
-            result = mode === 'disc' && discActive
+            result = mode === 'disc' && discActive && discRadius > 0
               ? await RotateDisc({ angle: 15 })
               : await Rotate({ flipCode: 1 })
             if (result?.preview) setPreview(result.preview)
@@ -298,5 +298,5 @@ export function useKeyboardShortcuts({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [imageLoaded, mode, discActive, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, handleRedo, canSave, handleLoadImage, handlePasteImage, cornerState.cornerCount, adjustmentSelectionActive, adjustmentRect, preview, realImageDims, optimisticCrop, cropEdgePixels]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imageLoaded, mode, discActive, discRadius, featherSize, discRotation, displayToImage, normalRect, handleNormalCrop, handleUndo, handleRedo, canSave, handleLoadImage, handlePasteImage, cornerState.cornerCount, adjustmentSelectionActive, adjustmentRect, preview, realImageDims, optimisticCrop, cropEdgePixels]) // eslint-disable-line react-hooks/exhaustive-deps
 }
