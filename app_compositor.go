@@ -129,6 +129,7 @@ func (a *App) CompositorStitch(req CompositorStitchRequest) (*CompositorResult, 
 	// Cache the result.
 	a.compositorMu.Lock()
 	a.compositorResult = result
+	a.compositorOverlay = nil
 	a.compositorMu.Unlock()
 
 	preview, err := a.imagePreviewURL(result)
@@ -144,6 +145,127 @@ func (a *App) CompositorStitch(req CompositorStitchRequest) (*CompositorResult, 
 		Width:   b.Dx(),
 		Height:  b.Dy(),
 		Message: msg,
+	}, nil
+}
+
+// CompositorAlignOverlay aligns repeated scans to the first scan's canvas.
+// The listed order is the stacking order: the final scan is on top.
+func (a *App) CompositorAlignOverlay(req CompositorStitchRequest) (*CompositorResult, error) {
+	if len(req.ImagePaths) < 2 {
+		return nil, fmt.Errorf("provide at least 2 image paths (got %d)", len(req.ImagePaths))
+	}
+	imgs := make([]*image.NRGBA, len(req.ImagePaths))
+	type decoded struct {
+		index int
+		image *image.NRGBA
+		err   error
+	}
+	results := make(chan decoded, len(imgs))
+	for i, path := range req.ImagePaths {
+		go func(i int, path string) {
+			raw, err := a.decodeImageFile(path)
+			if err != nil {
+				results <- decoded{index: i, err: fmt.Errorf("failed to decode image %d (%q): %w", i+1, filepath.Base(path), err)}
+				return
+			}
+			results <- decoded{index: i, image: raster.ToNRGBA(raw)}
+		}(i, path)
+	}
+	var decodeErr error
+	for range imgs {
+		r := <-results
+		if r.err != nil {
+			decodeErr = r.err
+		} else {
+			imgs[r.index] = r.image
+		}
+	}
+	if decodeErr != nil {
+		return nil, decodeErr
+	}
+	session, err := compositor.AlignOverlay(imgs)
+	if err != nil {
+		return nil, err
+	}
+	a.compositorMu.Lock()
+	a.compositorOverlay = session
+	a.compositorResult = nil
+	response, err := a.compositorOverlayPreviewLocked()
+	a.compositorMu.Unlock()
+	return response, err
+}
+
+type CompositorMaskRequest struct {
+	Stroke compositor.MaskStroke `json:"stroke"`
+}
+
+func (a *App) CompositorAddMask(req CompositorMaskRequest) (*CompositorResult, error) {
+	a.compositorMu.Lock()
+	defer a.compositorMu.Unlock()
+	if a.compositorOverlay == nil {
+		return nil, fmt.Errorf("align repeated scans first")
+	}
+	if err := a.compositorOverlay.AddStroke(req.Stroke); err != nil {
+		return nil, err
+	}
+	a.compositorResult = nil
+	return a.compositorOverlayPreviewLocked()
+}
+
+func (a *App) CompositorUndoMask() (*CompositorResult, error) {
+	a.compositorMu.Lock()
+	defer a.compositorMu.Unlock()
+	if a.compositorOverlay == nil {
+		return nil, fmt.Errorf("align repeated scans first")
+	}
+	a.compositorOverlay.UndoStroke()
+	a.compositorResult = nil
+	return a.compositorOverlayPreviewLocked()
+}
+
+func (a *App) CompositorClearMasks() (*CompositorResult, error) {
+	a.compositorMu.Lock()
+	defer a.compositorMu.Unlock()
+	if a.compositorOverlay == nil {
+		return nil, fmt.Errorf("align repeated scans first")
+	}
+	a.compositorOverlay.ClearStrokes()
+	a.compositorResult = nil
+	return a.compositorOverlayPreviewLocked()
+}
+
+// Caller holds compositorMu so mask changes and their preview stay in order.
+func (a *App) compositorOverlayPreviewLocked() (*CompositorResult, error) {
+	previewImage := a.compositorOverlay.Render(1400)
+	preview, err := a.imagePreviewURL(previewImage)
+	if err != nil {
+		return nil, fmt.Errorf("preview registration failed: %w", err)
+	}
+	w, h := a.compositorOverlay.Size()
+	return &CompositorResult{Preview: preview, Width: w, Height: h, Message: fmt.Sprintf("Aligned %d scans on the first scan (%d×%d)", a.compositorOverlay.LayerCount(), w, h)}, nil
+}
+
+// CompositorRefreshPreview republishes the cached compositor output after an
+// image load has reset the shared preview store. Alignment and masks are kept.
+func (a *App) CompositorRefreshPreview() (*CompositorResult, error) {
+	a.compositorMu.Lock()
+	defer a.compositorMu.Unlock()
+	if a.compositorOverlay != nil {
+		return a.compositorOverlayPreviewLocked()
+	}
+	if a.compositorResult == nil {
+		return nil, fmt.Errorf("no compositor result available")
+	}
+	preview, err := a.imagePreviewURL(a.compositorResult)
+	if err != nil {
+		return nil, fmt.Errorf("preview registration failed: %w", err)
+	}
+	b := a.compositorResult.Bounds()
+	return &CompositorResult{
+		Preview: preview,
+		Width:   b.Dx(),
+		Height:  b.Dy(),
+		Message: fmt.Sprintf("Stitched result (%d×%d)", b.Dx(), b.Dy()),
 	}, nil
 }
 
@@ -163,6 +285,10 @@ type CompositorLoadResultRequest struct {
 func (a *App) CompositorLoadResult(req CompositorLoadResultRequest) (*ImageInfo, error) {
 	a.compositorMu.Lock()
 	result := a.compositorResult
+	if a.compositorOverlay != nil && result == nil {
+		result = a.compositorOverlay.Render(0)
+		a.compositorResult = result
+	}
 	a.compositorMu.Unlock()
 
 	if result == nil {
@@ -211,6 +337,10 @@ func (a *App) CompositorLoadResult(req CompositorLoadResultRequest) (*ImageInfo,
 func (a *App) CompositorSave(req CompositorSaveRequest) (string, error) {
 	a.compositorMu.Lock()
 	result := a.compositorResult
+	if a.compositorOverlay != nil && result == nil {
+		result = a.compositorOverlay.Render(0)
+		a.compositorResult = result
+	}
 	a.compositorMu.Unlock()
 
 	if result == nil {

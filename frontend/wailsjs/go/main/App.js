@@ -42,6 +42,18 @@ export function ClickCorner(arg1) {
   return window['go']['main']['App']['ClickCorner'](arg1);
 }
 
+export function CompositorAddMask(arg1) {
+  return window['go']['main']['App']['CompositorAddMask'](arg1);
+}
+
+export function CompositorAlignOverlay(arg1) {
+  return window['go']['main']['App']['CompositorAlignOverlay'](arg1);
+}
+
+export function CompositorClearMasks() {
+  return window['go']['main']['App']['CompositorClearMasks']();
+}
+
 export function CompositorLoadResult(arg1) {
   return window['go']['main']['App']['CompositorLoadResult'](arg1);
 }
@@ -54,12 +66,20 @@ export function CompositorOpenSaveDialog() {
   return window['go']['main']['App']['CompositorOpenSaveDialog']();
 }
 
+export function CompositorRefreshPreview() {
+  return window['go']['main']['App']['CompositorRefreshPreview']();
+}
+
 export function CompositorSave(arg1) {
   return window['go']['main']['App']['CompositorSave'](arg1);
 }
 
 export function CompositorStitch(arg1) {
   return window['go']['main']['App']['CompositorStitch'](arg1);
+}
+
+export function CompositorUndoMask() {
+  return window['go']['main']['App']['CompositorUndoMask']();
 }
 
 export function ConfirmClose() {

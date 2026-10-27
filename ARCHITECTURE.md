@@ -1256,19 +1256,23 @@ Settings are persisted to `%AppData%\atropos\settings.json` (Windows) / `~/.conf
 
 ## Image Compositor (`internal/compositor/`, `app_compositor.go`)
 
-A standalone planar image stitching feature. `internal/compositor` has no dependency on app state.
+A standalone planar image compositor with two independent modes. Segment stitching remains the default. Repeated-scan overlay aligns rotated views of the same object to the first scan. Painted regions take pixels from the selected later scan; the unpainted output remains from the first scan. `internal/compositor` has no dependency on app state.
 
 ### App struct fields
 
 | Field | Type | Purpose |
 |-------|------|---------|
 | `compositorResult` | `*image.NRGBA` | Cached full-resolution stitch output. Nil until a successful `CompositorStitch`. |
+| `compositorOverlay` | `*compositor.OverlaySession` | Aligned repeated-scan layers and editable mask strokes. The full-resolution result is rendered when loaded or saved. |
 | `compositorMu` | `sync.Mutex` | Protects `compositorResult`. |
 
 ### Wails-facing methods
 
 - **`CompositorOpenFilesDialog()`** - multi-file picker returning selected paths
 - **`CompositorStitch(req)`** - decodes all images, reverses path order for `"rtl"`/`"btt"` orientations, runs `stitchImages`, caches result, returns preview + dimensions
+- **`CompositorAlignOverlay(req)`** - decodes scans, searches quarter-turn orientations for each later scan, registers each to the first scan, caches an editable overlay session, and returns a reduced preview
+- **`CompositorAddMask(req)`**, **`CompositorUndoMask()`**, **`CompositorClearMasks()`** - edit normalized brush strokes on layers above the reference scan and rerender the preview
+- **`CompositorRefreshPreview()`** - republishes the cached stitch or overlay preview when reopening the modal after a document load reset invalidated its previous preview URL
 - **`CompositorLoadResult()`** - promotes the cached result into the main editing pipeline (full state reset, sets `originalImage`/`currentImage`, returns `ImageInfo`)
 - **`CompositorSave(req)`** - encodes cached result to disk
 - **`CompositorOpenSaveDialog()`** - save-file dialog
@@ -1277,9 +1281,15 @@ A standalone planar image stitching feature. `internal/compositor` has no depend
 
 `stitchImages(imgs)`: detect Shi-Tomasi features on each image → match with SSD + Lowe's ratio test (threshold 0.75) → estimate homography via RANSAC (2000 iterations, 15 px inlier threshold) with DLT + Hartley normalisation → compose homographies so image[0] is the reference frame → render all images into a single canvas with distance-to-border feathering and bilinear interpolation (parallelised by row).
 
+### Repeated-scan overlay (`internal/compositor/overlay.go`)
+
+`AlignOverlay` reuses the stitch feature matcher and homography estimator but tests 0°, 90°, 180°, and 270° for every scan against the first. The first scan fixes output dimensions and supplies every unpainted pixel. A brush stroke is stored in normalized output coordinates for one later scan; its mask reveals that scan in the painted area. Each stroke stores a feather fraction of its radius: 0 makes a hard edge, while higher values linearly blend a wider rim (the UI defaults to 20%). If strokes overlap, later scans in the list are on top. Preview renders are limited to 1400 px on the longest side and fit within the modal's available preview area, preserving the source aspect ratio and brush coordinates. Load/save render from full-resolution sources. Mask edits invalidate the cached full-resolution result.
+
 ### Frontend flow
 
 `handleCompositorLoad(info)` receives the `ImageInfo` from `CompositorLoadResult`, updates all image state, calls `resetImageState()`, updates `suggestedCornerParamsRef.current`, then switches to Corner mode and runs corner detection. The `CompositorModal` `onLoad` callback closes the modal **before** calling `handleCompositorLoad`.
+
+Closing the compositor modal drops its frontend preview URL but retains its paths, aligned layers, masks, and dimensions. On reopening, the modal calls `CompositorRefreshPreview()` to obtain a fresh URL; `CompositorLoadResult` resets the shared preview store, so the earlier URL cannot be reused.
 
 ---
 

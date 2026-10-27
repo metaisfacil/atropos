@@ -22,15 +22,25 @@ export function ClearLines():Promise<main.ProcessResult>;
 
 export function ClickCorner(arg1:main.ClickCornerRequest):Promise<main.ClickCornerResult>;
 
+export function CompositorAddMask(arg1:main.CompositorMaskRequest):Promise<main.CompositorResult>;
+
+export function CompositorAlignOverlay(arg1:main.CompositorStitchRequest):Promise<main.CompositorResult>;
+
+export function CompositorClearMasks():Promise<main.CompositorResult>;
+
 export function CompositorLoadResult(arg1:main.CompositorLoadResultRequest):Promise<main.ImageInfo>;
 
 export function CompositorOpenFilesDialog():Promise<Array<string>>;
 
 export function CompositorOpenSaveDialog():Promise<string>;
 
+export function CompositorRefreshPreview():Promise<main.CompositorResult>;
+
 export function CompositorSave(arg1:main.CompositorSaveRequest):Promise<string>;
 
 export function CompositorStitch(arg1:main.CompositorStitchRequest):Promise<main.CompositorResult>;
+
+export function CompositorUndoMask():Promise<main.CompositorResult>;
 
 export function ConfirmClose():Promise<void>;
 

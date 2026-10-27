@@ -7,6 +7,7 @@ import (
 	"log"
 	"sync"
 
+	"atropos/internal/compositor"
 	"atropos/internal/preview"
 )
 
@@ -172,8 +173,9 @@ type App struct {
 	discCutoutPercent int  // diameter of the cutout as a percentage of the disc diameter (1–50)
 
 	// Compositor state
-	compositorMu     sync.Mutex
-	compositorResult *image.NRGBA
+	compositorMu      sync.Mutex
+	compositorResult  *image.NRGBA
+	compositorOverlay *compositor.OverlaySession
 }
 
 // NewApp creates a new App application struct.
