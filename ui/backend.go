@@ -108,6 +108,7 @@ type StateSnapshot struct {
 	CanSave            bool
 	UnsavedChanges     bool
 	UseDescreenTool    bool
+	ErrorMessage       string
 	CalibrationOpen    bool
 	CalibrationPreview string
 	CalibrationDims    image.Point

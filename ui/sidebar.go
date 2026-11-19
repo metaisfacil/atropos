@@ -445,8 +445,35 @@ func (e *EditorUI) layoutFadeStrip(gtx layout.Context) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(w, h)}
 }
 
+func (e *EditorUI) canResetMode() bool {
+	if e.canRecrop || e.cropSkipped {
+		return true
+	}
+	switch e.mode {
+	case "corner":
+		return e.cornerCount > 0
+	case "disc":
+		return e.discActive
+	case "line":
+		return len(e.lines) > 0
+	case "normal":
+		return e.normalRect != nil
+	}
+	return false
+}
+
 func (e *EditorUI) layoutActionButtons(gtx layout.Context) layout.Dimensions {
 	busy := e.isBusy()
+	if !e.canRecrop && !e.cropSkipped && e.btnSkipCrop.Clicked(gtx) && e.imageLoaded && !busy {
+		e.handleSkipCrop()
+	}
+	if (e.canRecrop || e.cropSkipped) && e.btnRecrop.Clicked(gtx) && e.imageLoaded && !busy {
+		e.handleRecrop()
+	}
+	if e.canResetMode() && e.btnResetAction.Clicked(gtx) && e.imageLoaded && !busy {
+		e.handleResetAction()
+	}
+
 	var rows []layout.FlexChild
 
 	if e.mode == "corner" {
@@ -475,15 +502,9 @@ func (e *EditorUI) layoutActionButtons(gtx layout.Context) layout.Dimensions {
 
 	showSkip := !e.canRecrop && !e.cropSkipped
 	showRecrop := e.canRecrop || e.cropSkipped
-	showReset := (e.mode == "corner" && (e.cornerCount > 0 || e.canRecrop)) ||
-		(e.mode == "disc" && (e.discActive || e.canRecrop)) ||
-		(e.mode == "line" && (len(e.lines) > 0 || e.canRecrop)) ||
-		(e.mode == "normal" && (e.normalRect != nil || e.canRecrop))
+	showReset := e.canResetMode()
 
 	if showSkip {
-		if e.btnSkipCrop.Clicked(gtx) && e.imageLoaded && !busy {
-			e.handleSkipCrop()
-		}
 		rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return e.tooltips.Wrap(gtx, "btn_skip_crop", "Skip cropping and proceed directly to adjustments / saving", func(gtx layout.Context) layout.Dimensions {
 				st := defaultButtonStyle(btnSkip, "Skip crop")
@@ -494,21 +515,15 @@ func (e *EditorUI) layoutActionButtons(gtx layout.Context) layout.Dimensions {
 	}
 
 	if showRecrop || showReset {
-		if showRecrop && e.btnRecrop.Clicked(gtx) && e.imageLoaded && !busy {
-			e.handleRecrop()
-		}
-		if showReset && e.btnResetAction.Clicked(gtx) && e.imageLoaded && !busy {
-			e.handleResetAction()
-		}
 		resetLabel := "Reset"
-		if e.mode == "corner" && e.cornerCount > 0 && e.cornerCount < 4 {
+		if e.mode == "corner" && !e.cropSkipped && e.cornerCount > 0 && e.cornerCount < 4 {
 			resetLabel = fmt.Sprintf("Reset (%d/4)", e.cornerCount)
 		}
 		rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			var cols []layout.FlexChild
 			if showRecrop {
 				cols = append(cols, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return e.tooltips.Wrap(gtx, "btn_recrop", "Return to original uncropped scan", func(gtx layout.Context) layout.Dimensions {
+					return e.tooltips.Wrap(gtx, "btn_recrop", "Promote the current output to be the new source image and restart cropping", func(gtx layout.Context) layout.Dimensions {
 						st := defaultButtonStyle(btnRecrop, "Re-crop")
 						st.Enabled = e.imageLoaded && !busy
 						return layoutButton(gtx, e.th, &e.btnRecrop, st)
@@ -517,7 +532,7 @@ func (e *EditorUI) layoutActionButtons(gtx layout.Context) layout.Dimensions {
 			}
 			if showReset {
 				cols = append(cols, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return e.tooltips.Wrap(gtx, "btn_reset", "Reset current selection or crop", func(gtx layout.Context) layout.Dimensions {
+					return e.tooltips.Wrap(gtx, "btn_reset", "Reset current selection or crop and return to pre-crop phase", func(gtx layout.Context) layout.Dimensions {
 						st := defaultButtonStyle(btnDanger, resetLabel)
 						st.Enabled = e.imageLoaded && !busy
 						return layoutButton(gtx, e.th, &e.btnResetAction, st)

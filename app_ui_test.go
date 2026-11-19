@@ -243,3 +243,63 @@ func TestModeSwitchResetsBackendAndUIStatePreAndPostCrop(t *testing.T) {
 			a.warpedImage != nil, len(a.lines), st.LinesProcessed, st.RealImageDims)
 	}
 }
+
+func TestSkipCropThenResetReturnsToPreCropAcrossAllModes(t *testing.T) {
+	a, editor := newTestEditorWithBackend(t)
+	scan := writeUIIntegrationScanPNG(t, "skip_reset_all.png", 240, 180)
+	editor.LoadFile(scan)
+
+	// Initial Corner mode pre-crop state.
+	st := editor.State()
+	if !st.CornersDetected || st.CanRecrop || st.CanSave || a.warpedImage != nil {
+		t.Fatalf("unexpected pre-crop corner state: %+v warped=%v", st, a.warpedImage != nil)
+	}
+
+	// Corner mode: Skip crop -> Reset returns to pre-crop with restored corners and clean backend state.
+	editor.SkipCrop()
+	st = editor.State()
+	if !st.CropSkipped || !st.CanRecrop || !st.CanSave || st.CornersDetected || a.warpedImage == nil {
+		t.Fatalf("Corner SkipCrop did not enter post-crop cleanly: %+v warped=%v", st, a.warpedImage != nil)
+	}
+	editor.ResetAction()
+	st = editor.State()
+	if st.CropSkipped || st.CanRecrop || st.CanSave || st.UnsavedChanges || !st.CornersDetected ||
+		st.ErrorMessage != "" || a.warpedImage != nil || a.cropSkipped || st.RealImageDims != image.Pt(240, 180) {
+		t.Fatalf("Corner ResetAction after SkipCrop did not return to pre-crop cleanly: %+v warped=%v appSkip=%v",
+			st, a.warpedImage != nil, a.cropSkipped)
+	}
+
+	// Disc, Line, and Normal modes: Skip crop -> Reset returns to pre-crop cleanly.
+	for _, mode := range []string{"disc", "line", "normal"} {
+		editor.SwitchMode(mode)
+		editor.SkipCrop()
+		st = editor.State()
+		if !st.CropSkipped || !st.CanRecrop || !st.CanSave || a.warpedImage == nil {
+			t.Fatalf("%s SkipCrop did not enter post-crop cleanly: %+v warped=%v", mode, st, a.warpedImage != nil)
+		}
+		editor.ResetAction()
+		st = editor.State()
+		if st.CropSkipped || st.CanRecrop || st.CanSave || st.UnsavedChanges || st.DiscActive || st.LinesProcessed ||
+			st.ErrorMessage != "" || a.warpedImage != nil || a.cropSkipped || st.RealImageDims != image.Pt(240, 180) {
+			t.Fatalf("%s ResetAction after SkipCrop did not return to pre-crop cleanly: %+v warped=%v appSkip=%v",
+				mode, st, a.warpedImage != nil, a.cropSkipped)
+		}
+	}
+
+	// Corner mode: 4-corner warp -> ResetAction restores full 240x180 scan and corners.
+	editor.SwitchMode("corner")
+	editor.ClickCorner(image.Pt(24, 20), true)
+	editor.ClickCorner(image.Pt(215, 20), true)
+	editor.ClickCorner(image.Pt(215, 159), true)
+	editor.ClickCorner(image.Pt(24, 159), true)
+	st = editor.State()
+	if !st.CanRecrop || !st.CanSave || a.warpedImage == nil {
+		t.Fatalf("expected active 4-corner warp before reset: %+v warped=%v", st, a.warpedImage != nil)
+	}
+	editor.ResetAction()
+	st = editor.State()
+	if st.CanRecrop || st.CanSave || !st.CornersDetected || a.warpedImage != nil || st.RealImageDims != image.Pt(240, 180) {
+		t.Fatalf("Corner ResetAction after warp did not return to pre-crop cleanly: %+v warped=%v", st, a.warpedImage != nil)
+	}
+}
+

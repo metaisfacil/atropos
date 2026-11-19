@@ -131,7 +131,11 @@ func (s *stubBackend) RestoreCornerOverlay(RestoreCornerOverlayRequest) (*Proces
 	return res, nil
 }
 func (s *stubBackend) UndoLastCorner() int                          { return 0 }
-func (s *stubBackend) ResetCorners() (*ProcessResult, error)        { return s.cleanResult("Reset"), nil }
+func (s *stubBackend) ResetCorners() (*ProcessResult, error) {
+	res := s.cleanResult("Reset")
+	res.Corners = append([]image.Point(nil), s.corners...)
+	return res, nil
+}
 func (s *stubBackend) SkipCrop() (*ProcessResult, error)            { return s.cleanResult("Skipped"), nil }
 func (s *stubBackend) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 	d := req.Radius * 2
@@ -854,3 +858,65 @@ func TestCompositorModalLayoutCompactHeaderRowsAndSpacer(t *testing.T) {
 		t.Fatalf("files section dims = %v, want 584x185", filesDims.Size)
 	}
 }
+
+func TestSkipCropThenResetButtonFlow(t *testing.T) {
+	ui := newTestEditorUI(t)
+	scan := writeTestScanPNG(t, "skip_reset.png", 200, 160)
+	ui.loadFile(scan, false)
+	if !ui.cornersDetected || ui.cropSkipped || ui.canRecrop {
+		t.Fatalf("unexpected initial state: cornersDetected=%v cropSkipped=%v canRecrop=%v",
+			ui.cornersDetected, ui.cropSkipped, ui.canRecrop)
+	}
+
+	var router input.Router
+	var ops op.Ops
+	frame := func() layout.Dimensions {
+		ops.Reset()
+		gtx := layout.Context{
+			Ops:         &ops,
+			Source:      router.Source(),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Constraints{Min: image.Pt(280, 0), Max: image.Pt(280, 300)},
+			Now:         time.Now(),
+		}
+		ui.overlays.beginFrame(gtx)
+		dims := ui.layoutActionButtons(gtx)
+		ui.overlays.layoutOverlayPass(gtx)
+		router.Frame(&ops)
+		return dims
+	}
+	clickAt := func(pt f32.Point) {
+		router.Queue(
+			pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt},
+			pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pt},
+		)
+		frame()
+		frame()
+	}
+
+	preDims := frame()
+	if preDims.Size.Y < 55 {
+		t.Fatalf("expected Detect + Skip crop rows >= 55px tall, got %v", preDims.Size)
+	}
+
+	// Click "Skip crop" (second row centered around x=140, y=50).
+	clickAt(f32.Pt(140, 50))
+	if !ui.cropSkipped || !ui.canRecrop || ui.cornersDetected {
+		t.Fatalf("after Skip crop click: cropSkipped=%v canRecrop=%v cornersDetected=%v, want true/true/false",
+			ui.cropSkipped, ui.canRecrop, ui.cornersDetected)
+	}
+	if ui.errorMessage != "" {
+		t.Fatalf("unexpected error after Skip crop click: %q", ui.errorMessage)
+	}
+
+	// Click "Reset" (right half of second row around x=212, y=50) and verify immediate return to pre-crop.
+	clickAt(f32.Pt(212, 50))
+	if ui.cropSkipped || ui.canRecrop || !ui.cornersDetected {
+		t.Fatalf("after Reset click: cropSkipped=%v canRecrop=%v cornersDetected=%v, want false/false/true",
+			ui.cropSkipped, ui.canRecrop, ui.cornersDetected)
+	}
+	if ui.errorMessage != "" || ui.confirmDialog != nil {
+		t.Fatalf("unexpected error/confirm dialog after Reset click: err=%q confirm=%v", ui.errorMessage, ui.confirmDialog != nil)
+	}
+}
+

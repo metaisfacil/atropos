@@ -429,6 +429,7 @@ func (e *EditorUI) State() StateSnapshot {
 		CanSave:            e.canSave(),
 		UnsavedChanges:     e.unsavedChanges,
 		UseDescreenTool:    e.useDescreenTool,
+		ErrorMessage:       e.errorMessage,
 		CalibrationOpen:    e.calibrationOpen,
 		CalibrationPreview: e.calibState.previewURL,
 		CalibrationDims:    e.calibState.dims,
@@ -462,6 +463,11 @@ func (e *EditorUI) ClickCorner(pt image.Point, custom bool) {
 // SkipCrop skips geometric cropping and enters post-crop editing.
 func (e *EditorUI) SkipCrop() {
 	e.handleSkipCrop()
+}
+
+// ResetAction resets the active mode's selection or crop and returns to the pre-crop phase.
+func (e *EditorUI) ResetAction() {
+	e.handleResetAction()
 }
 
 // ApplyNormalCrop commits a normal-mode rectangular crop.
@@ -744,22 +750,33 @@ func (e *EditorUI) resetImageState(clearCornerCache bool) {
 	e.normalDragKind = "none"
 	e.normalDragPending = false
 
+	e.clearAdjustmentSelection()
+
+	e.useDescreenTool = false
+	e.useDustRemovalTool = false
+	e.useStraightEdgeTool = false
+	e.clearTouchupState()
+
+	e.blackPoint = 0
+	e.whitePoint = 255
+}
+
+func (e *EditorUI) clearAdjustmentSelection() {
 	e.adjustmentSelectionActive = false
 	e.adjustmentRect = nil
 	e.adjustmentDragActive = false
 	e.adjustmentDragKind = "none"
 	e.adjustmentDragPending = false
+	e.adjustmentHandleDrag = ""
+	e.adjustmentMoveDrag = nil
+}
 
-	e.useDescreenTool = false
-	e.useDustRemovalTool = false
+func (e *EditorUI) clearTouchupState() {
 	e.useTouchupTool = false
-	e.useStraightEdgeTool = false
 	e.touchupStrokes = nil
 	e.touchupDragging = false
 	e.touchupCursor = nil
-
-	e.blackPoint = 0
-	e.whitePoint = 255
+	e.touchupResize = nil
 }
 
 func (e *EditorUI) handleLoadImage() {
@@ -1561,6 +1578,7 @@ func (e *EditorUI) handleSkipCrop() {
 	e.cornerCount = 0
 	e.lines = nil
 	e.linesProcessed = false
+	e.clearAdjustmentSelection()
 	e.loading = true
 	e.loadingMessage = "Skipping crop…"
 	e.runBackend(func() {
@@ -1594,11 +1612,32 @@ func (e *EditorUI) handleSkipCrop() {
 }
 
 func (e *EditorUI) handleRecrop() {
-	if e.app == nil || !e.imageLoaded || e.isBusy() {
+	if e.app == nil || !e.imageLoaded || e.isBusy() || (!e.canRecrop && !e.cropSkipped) {
+		return
+	}
+	e.confirmDialog = &confirmDialogState{
+		Title:       "Re-crop Image",
+		Message:     "Re-crop will use the current output as a new source image, resetting all crop and adjustment state. Continue?",
+		YesLabel:    "Re-crop",
+		CancelLabel: "Cancel",
+		YesVariant:  btnPrimary,
+		OnYes: func() {
+			e.confirmDialog = nil
+			e.executeRecrop()
+		},
+		OnCancel: func() { e.confirmDialog = nil },
+	}
+	e.invalidate()
+}
+
+func (e *EditorUI) executeRecrop() {
+	if e.app == nil || !e.imageLoaded || e.isBusy() || (!e.canRecrop && !e.cropSkipped) {
 		return
 	}
 	gen := e.beginTransition()
-	e.resetImageState(true)
+	e.clearTouchupState()
+	e.clearAdjustmentSelection()
+	e.optimisticCrop = nil
 	e.loading = true
 	e.loadingMessage = "Restoring original image…"
 	e.runBackend(func() {
@@ -1613,12 +1652,16 @@ func (e *EditorUI) handleRecrop() {
 				e.showError(err)
 				return
 			}
+			e.resetImageState(true)
 			if info != nil {
+				e.imageMeta = imageMetaState{InputDims: image.Pt(info.Width, info.Height)}
 				e.realImageDims = image.Pt(info.Width, info.Height)
 				e.discSourceDims = e.realImageDims
 				e.setPreview(info.Preview)
 			}
+			e.unsavedChanges = true
 			e.mainViewport.Zoom = 1
+			e.mainViewport.FitWidth = 0
 			e.mainViewport.ScrollX = 0
 			e.mainViewport.ScrollY = 0
 			if e.mode == "corner" {
@@ -1636,31 +1679,62 @@ func (e *EditorUI) handleResetAction() {
 	if e.app == nil || !e.imageLoaded || e.isBusy() {
 		return
 	}
+	hadPostCrop := e.canRecrop || e.cropSkipped || e.discActive || e.linesProcessed || e.cornerCount >= 4
 	gen := e.beginTransition()
+
+	// Synchronously clear shared post-crop, selection, and tool state across all modes.
+	e.cropSkipped = false
+	e.canRecrop = false
+	e.unsavedChanges = false
+	e.optimisticCrop = nil
+	e.postSaveAfterSave = nil
+	e.clearTouchupState()
+	e.useDescreenTool = false
+	e.useDustRemovalTool = false
+	e.useStraightEdgeTool = false
+	e.clearAdjustmentSelection()
+	e.blackPoint = 0
+	e.whitePoint = 255
+
+	applyResetResponse := func(res *ProcessResult, err error, restoreCorners bool) {
+		if e.transitionGen != gen {
+			return
+		}
+		if err != nil {
+			e.showError(err)
+			return
+		}
+		if hadPostCrop {
+			e.mainViewport.Zoom = 1
+			e.mainViewport.FitWidth = 0
+			e.mainViewport.ScrollX = 0
+			e.mainViewport.ScrollY = 0
+		}
+		if res != nil {
+			if restoreCorners {
+				e.detectedCornerPts = append([]image.Point(nil), res.Corners...)
+				e.cornersDetected = len(e.detectedCornerPts) > 0
+			}
+			if res.Preview != "" {
+				e.setPreview(res.Preview)
+			}
+			if res.Width > 0 && res.Height > 0 {
+				e.realImageDims = image.Pt(res.Width, res.Height)
+				e.discSourceDims = e.realImageDims
+			}
+			if res.Message != "" {
+				e.showStatus(res.Message)
+			}
+		}
+	}
+
 	switch e.mode {
 	case "corner":
 		e.selectedCornerPts = nil
 		e.cornerCount = 0
 		e.runBackend(func() {
 			res, err := e.app.ResetCorners()
-			e.postUI(func() {
-				if e.transitionGen != gen {
-					return
-				}
-				if err != nil {
-					e.showError(err)
-					return
-				}
-				if res != nil {
-					e.setPreview(res.Preview)
-					if res.Width > 0 && res.Height > 0 {
-						e.realImageDims = image.Pt(res.Width, res.Height)
-					}
-					if res.Message != "" {
-						e.showStatus(res.Message)
-					}
-				}
-			})
+			e.postUI(func() { applyResetResponse(res, err, true) })
 		})
 	case "disc":
 		e.discActive = false
@@ -1671,78 +1745,29 @@ func (e *EditorUI) handleResetAction() {
 		e.featherSize = 20
 		e.discLiveActive = false
 		e.discLiveTransform = discLiveTransform{}
-		e.canRecrop = false
-		e.cropSkipped = false
-		e.useStraightEdgeTool = false
 		e.runBackend(func() {
 			res, err := e.app.ResetDisc()
-			e.postUI(func() {
-				if e.transitionGen != gen {
-					return
-				}
-				if err != nil {
-					e.showError(err)
-					return
-				}
-				if res != nil {
-					e.setPreview(res.Preview)
-					if res.Width > 0 && res.Height > 0 {
-						e.realImageDims = image.Pt(res.Width, res.Height)
-						e.discSourceDims = e.realImageDims
-					}
-					e.showStatus(res.Message)
-				}
-			})
+			e.postUI(func() { applyResetResponse(res, err, false) })
 		})
 	case "line":
 		e.lines = nil
 		e.linesProcessed = false
 		e.lineDragKind = "none"
 		e.lineStartImg = nil
-		e.canRecrop = false
-		e.cropSkipped = false
+		e.lineHandleDrag = nil
 		e.runBackend(func() {
 			res, err := e.app.ClearLines()
-			e.postUI(func() {
-				if e.transitionGen != gen {
-					return
-				}
-				if err != nil {
-					e.showError(err)
-					return
-				}
-				if res != nil {
-					e.setPreview(res.Preview)
-					if res.Width > 0 && res.Height > 0 {
-						e.realImageDims = image.Pt(res.Width, res.Height)
-					}
-					e.showStatus(res.Message)
-				}
-			})
+			e.postUI(func() { applyResetResponse(res, err, false) })
 		})
 	case "normal":
 		e.normalRect = nil
 		e.normalDragKind = "none"
-		e.canRecrop = false
-		e.cropSkipped = false
+		e.normalDragPending = false
+		e.normalHandleDrag = ""
+		e.normalMoveDrag = nil
 		e.runBackend(func() {
 			res, err := e.app.ResetNormal()
-			e.postUI(func() {
-				if e.transitionGen != gen {
-					return
-				}
-				if err != nil {
-					e.showError(err)
-					return
-				}
-				if res != nil {
-					e.setPreview(res.Preview)
-					if res.Width > 0 && res.Height > 0 {
-						e.realImageDims = image.Pt(res.Width, res.Height)
-					}
-					e.showStatus(res.Message)
-				}
-			})
+			e.postUI(func() { applyResetResponse(res, err, false) })
 		})
 	}
 }
