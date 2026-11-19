@@ -104,9 +104,7 @@ Ctrl/⌘ + S or the **Save image** button. Output format is determined by the fi
 
 | Dependency | Version | Notes |
 |---|---|---|
-| Go | 1.22+ | |
-| Node.js | 20+ | |
-| Wails CLI | v2.11+ | `go install github.com/wailsapp/wails/v2/cmd/wails@latest` |
+| Go | 1.24+ | Pure Go native GUI via [Gio](https://gioui.org/) |
 | ImageMagick | 6 or 7 | Optional; needed only for TIFF files and exotic formats |
 
 ---
@@ -114,14 +112,14 @@ Ctrl/⌘ + S or the **Save image** button. Output format is determined by the fi
 ## Building
 
 ```bash
-# Install Wails CLI and npm dependencies (first time only)
-make setup
-
-# Development mode with hot reload
+# Run in debug mode with terminal logging
 make dev
 
-# Production binary
+# Production binary (build/bin/atropos or build/bin/atropos.exe)
 make build
+
+# Run tests
+make test
 ```
 
 ---

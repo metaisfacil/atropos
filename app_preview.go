@@ -9,33 +9,24 @@ import (
 
 const previewAssetPathPrefix = preview.PathPrefix
 
-// PreviewViewportRequest asks the backend for only the source rectangle needed
-// by the current frontend viewport. These Wails-facing types remain in package
-// main so extracting preview internals does not change the generated bridge.
-type PreviewViewportRequest struct {
-	Preview    string `json:"preview"`
-	X          int    `json:"x"`
-	Y          int    `json:"y"`
-	Width      int    `json:"width"`
-	Height     int    `json:"height"`
-	DestWidth  int    `json:"destWidth"`
-	DestHeight int    `json:"destHeight"`
-	Quality    int    `json:"quality"`
-}
-
-// PreviewViewportResponse carries a viewport JPEG as a data URL.
-type PreviewViewportResponse struct {
-	DataURL      string `json:"dataURL"`
-	X            int    `json:"x"`
-	Y            int    `json:"y"`
-	Width        int    `json:"width"`
-	Height       int    `json:"height"`
-	RasterWidth  int    `json:"rasterWidth"`
-	RasterHeight int    `json:"rasterHeight"`
-}
-
 func (a *App) imagePreviewURL(img *image.NRGBA) (string, error) {
 	return a.previewAssets.Register(img)
+}
+
+// ResolvePreviewImage returns the immutable source image registered under previewURL.
+func (a *App) ResolvePreviewImage(previewURL string) (*image.NRGBA, bool) {
+	if a.previewAssets == nil {
+		return nil, false
+	}
+	return a.previewAssets.Resolve(previewURL)
+}
+
+// ResolveCalibrationImage returns the immutable calibration scan registered under previewURL.
+func (a *App) ResolveCalibrationImage(previewURL string) (*image.NRGBA, bool) {
+	if a.calibrationPreviewAssets == nil {
+		return nil, false
+	}
+	return a.calibrationPreviewAssets.Resolve(previewURL)
 }
 
 // RenderPreviewViewport is the Wails adapter for the internal preview store.

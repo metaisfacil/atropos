@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"image/color"
 	"strings"
 	"testing"
@@ -680,5 +681,81 @@ func TestStraightEdgeRotate_ReturnsPreview(t *testing.T) {
 	}
 	if !strings.HasPrefix(res.Preview, previewAssetPathPrefix) {
 		t.Fatal("preview is not an asset URL")
+	}
+}
+
+func TestStraightEdgeRotate_PreservesTouchUpAndUndo(t *testing.T) {
+	a := newTestApp(200, 200)
+	if _, err := a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 60}); err != nil {
+		t.Fatal(err)
+	}
+	origCenter := a.warpedImage.NRGBAAt(60, 60)
+
+	// Simulate a completed Touch-up commit painting a solid red patch at the disc center.
+	edited := raster.CloneNRGBA(a.warpedImage)
+	red := color.NRGBA{R: 220, G: 20, B: 20, A: 255}
+	for y := 50; y < 70; y++ {
+		for x := 50; x < 70; x++ {
+			edited.SetNRGBA(x, y, red)
+		}
+	}
+	gen := registerTouchupTestOperation(a)
+	if committed, _ := a.commitTouchupResult(context.Background(), gen, a.warpedImage, edited); !committed {
+		t.Fatal("expected post-disc touch-up commit to succeed")
+	}
+	if a.discBakedBase == nil {
+		t.Fatal("expected discBakedBase to snapshot post-disc touch-up")
+	}
+
+	// Applying Straight edge rotations must preserve the Touch-up edit.
+	if _, err := a.StraightEdgeRotate(StraightEdgeRotateRequest{AngleDeg: 15.0}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.StraightEdgeRotate(StraightEdgeRotateRequest{AngleDeg: 5.0}); err != nil {
+		t.Fatal(err)
+	}
+	if a.rotationAngle != -20.0 {
+		t.Fatalf("rotationAngle = %.2f, want -20.0", a.rotationAngle)
+	}
+	afterStraight := a.warpedImage.NRGBAAt(60, 60)
+	if afterStraight.R < 180 || afterStraight.G > 60 || afterStraight.B > 60 {
+		t.Fatalf("touch-up center patch was lost after StraightEdgeRotate: got %+v", afterStraight)
+	}
+
+	// Undo both Straight edge steps: Touch-up must remain intact.
+	if _, err := a.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if a.rotationAngle != 0 {
+		t.Fatalf("rotationAngle after undoing straight edges = %.2f, want 0", a.rotationAngle)
+	}
+	afterUndoRot := a.warpedImage.NRGBAAt(60, 60)
+	if afterUndoRot != red {
+		t.Fatalf("touch-up patch altered after undoing straight edge: got %+v, want %+v", afterUndoRot, red)
+	}
+
+	// Undo the Touch-up step itself: original pre-touch-up pixel returns and baked base clears.
+	if _, err := a.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if a.discBakedBase != nil {
+		t.Fatal("expected discBakedBase=nil after undoing touch-up")
+	}
+	if got := a.warpedImage.NRGBAAt(60, 60); got != origCenter {
+		t.Fatalf("pixel after undoing touch-up = %+v, want %+v", got, origCenter)
+	}
+
+	// Redo restores Touch-up and baked base.
+	if _, err := a.Redo(); err != nil {
+		t.Fatal(err)
+	}
+	if a.discBakedBase == nil {
+		t.Fatal("expected discBakedBase!=nil after redoing touch-up")
+	}
+	if got := a.warpedImage.NRGBAAt(60, 60); got != red {
+		t.Fatalf("pixel after redoing touch-up = %+v, want %+v", got, red)
 	}
 }

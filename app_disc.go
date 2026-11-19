@@ -10,40 +10,6 @@ import (
 	"atropos/internal/raster"
 )
 
-// DiscDrawRequest specifies the centre point and radius for a circular disc crop.
-type DiscDrawRequest struct {
-	CenterX int `json:"centerX"`
-	CenterY int `json:"centerY"`
-	Radius  int `json:"radius"`
-}
-
-// DiscRotateRequest specifies the rotation angle for disc mode.
-type DiscRotateRequest struct {
-	Angle float64 `json:"angle"`
-}
-
-// PixelColorRequest holds image-space coordinates for colour sampling.
-type PixelColorRequest struct {
-	X int `json:"x"`
-	Y int `json:"y"`
-}
-
-// ShiftDiscRequest holds the pixel offset to shift the disc centre by.
-type ShiftDiscRequest struct {
-	DX int `json:"dx"`
-	DY int `json:"dy"`
-}
-
-// FeatherSizeRequest holds the new feather width.
-type FeatherSizeRequest struct {
-	Size int `json:"size"`
-}
-
-// FeatherRadiusRequest holds the new outer radius for an active disc crop.
-type FeatherRadiusRequest struct {
-	Radius int `json:"radius"`
-}
-
 // discWorkingCropShiftPadding is the extra margin (in pixels) added on each
 // side of the disc bounding box when pre-cropping discBaseImage into
 // discWorkingCrop. It defines how far the user can shift the disc before a
@@ -91,6 +57,22 @@ func (a *App) refreshDiscWorkingCrop() {
 	a.discWorkingCropRect = r
 }
 
+// bakeDiscWorkingImage records img as the new base for subsequent disc
+// redraws whenever a post-disc raster edit modifies warpedImage directly.
+// Prior rotation, levels, and edge crops are already baked into img, so
+// delta rotation starts from the current rotationAngle and post-disc levels
+// and crop insets reset to neutral.
+func (a *App) bakeDiscWorkingImage(img *image.NRGBA) {
+	if a.discRadius <= 0 || img == nil {
+		return
+	}
+	a.discBakedBase = raster.CloneNRGBA(img)
+	a.discBakedAngle = a.rotationAngle
+	a.postDiscBlack = 0
+	a.postDiscWhite = 255
+	a.discCropInsets = discCropInsets{}
+}
+
 // DrawDisc extracts and applies a circular mask with feathering.
 //
 // A snapshot of currentImage is captured into discBaseImage so that any
@@ -109,6 +91,8 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 	a.discRadius = req.Radius
 	a.rotationAngle = 0
 	a.discCropInsets = discCropInsets{}
+	a.discBakedBase = nil
+	a.discBakedAngle = 0
 
 	// Snapshot the adjusted working image as the immutable source for all
 	// disc renders. Using currentImage (not originalImage) means any levels
@@ -156,6 +140,9 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 func (a *App) redrawDisc() (*ProcessResult, error) {
 	a.redoStack = nil
 	descreenReset := a.descreenResultImage != nil
+	if a.discBakedBase != nil {
+		return a.redrawBakedDisc(descreenReset)
+	}
 	base := a.discBaseImage
 	if base == nil {
 		// Safety fallback for callers that pre-date discBaseImage.
@@ -267,11 +254,49 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 	}, nil
 }
 
-// StraightEdgeRotateRequest carries the angle (in degrees) of the reference
-// line drawn by the user in display space. The backend subtracts it from
-// rotationAngle so the edge becomes perfectly horizontal.
-type StraightEdgeRotateRequest struct {
-	AngleDeg float64 `json:"angleDeg"`
+func (a *App) redrawBakedDisc(descreenReset bool) (*ProcessResult, error) {
+	if a.discBakedBase == nil || a.discRadius <= 0 {
+		return nil, fmt.Errorf("no disc defined")
+	}
+	deltaAngle := a.rotationAngle - a.discBakedAngle
+	var img *image.NRGBA
+	if deltaAngle != 0 {
+		img = imageops.Rotate(a.discBakedBase, deltaAngle, a.bgColor)
+	} else {
+		img = raster.CloneNRGBA(a.discBakedBase)
+	}
+	if a.postDiscBlack != 0 || a.postDiscWhite != 255 {
+		img = imageops.ApplyLevels(img, a.postDiscBlack, a.postDiscWhite)
+	}
+	img = a.discCropInsets.crop(img)
+
+	a.descreenBaseImage = nil
+	a.descreenResultImage = nil
+	a.descreenSelection = adjustmentSelectionKey{}
+	a.levelsBaseImage = nil
+	a.warpedImage = img
+
+	preview, err := a.imagePreviewURL(a.warpedImage)
+	if err != nil {
+		return nil, err
+	}
+	a.discNoMaskPreview = preview
+	resultBounds := a.warpedImage.Bounds()
+
+	return &ProcessResult{
+		Preview:         preview,
+		Width:           resultBounds.Dx(),
+		Height:          resultBounds.Dy(),
+		UnmaskedPreview: a.discNoMaskPreview,
+		DiscCenterX:     a.discCenter.X,
+		DiscCenterY:     a.discCenter.Y,
+		DiscRadius:      a.discRadius,
+		DiscRotation:    a.rotationAngle,
+		DiscBgR:         int(a.bgColor.R),
+		DiscBgG:         int(a.bgColor.G),
+		DiscBgB:         int(a.bgColor.B),
+		DescreenReset:   descreenReset,
+	}, nil
 }
 
 // StraightEdgeRotate rotates the disc so that the reference edge drawn by the
@@ -418,6 +443,8 @@ func (a *App) resetDiscFields() {
 	a.discWorkingCrop = nil
 	a.discWorkingCropRect = image.Rectangle{}
 	a.discCropInsets = discCropInsets{}
+	a.discBakedBase = nil
+	a.discBakedAngle = 0
 	a.discNoMaskPreview = ""
 	a.postDiscBlack = 0
 	a.postDiscWhite = 255
@@ -431,12 +458,13 @@ func (a *App) ResetDisc() (*ProcessResult, error) {
 	a.logf("ResetDisc")
 	descreenReset := a.descreenResultImage != nil
 	a.levelsBaseImage = nil
+	a.levelsSelection = adjustmentSelectionKey{}
 	a.descreenBaseImage = nil
 	a.descreenResultImage = nil
+	a.descreenSelection = adjustmentSelectionKey{}
 	a.resetDiscFields()
 	a.warpedImage = nil
 	a.cropSkipped = false
-	a.levelsBaseImage = nil
 
 	if a.currentImage == nil {
 		return nil, fmt.Errorf("no image loaded")

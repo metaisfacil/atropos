@@ -1,0 +1,856 @@
+package ui
+
+import (
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"atropos/internal/raster"
+
+	"gioui.org/f32"
+	"gioui.org/io/input"
+	"gioui.org/io/pointer"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
+)
+
+type stubBackend struct {
+	nextID        int
+	previews      map[string]*image.NRGBA
+	calibPreviews map[string]*image.NRGBA
+	current       *image.NRGBA
+	corners       []image.Point
+	settings      AllSettings
+}
+
+func newStubBackend() *stubBackend {
+	return &stubBackend{
+		previews:      make(map[string]*image.NRGBA),
+		calibPreviews: make(map[string]*image.NRGBA),
+		settings: AllSettings{
+			TouchupBackend:            "patchmatch",
+			IOPaintURL:                "http://127.0.0.1:8086/",
+			WarpFillMode:              "clamp",
+			WarpFillColor:             "#ffffff",
+			CropEdgePixels:            3,
+			DiscCenterCutout:          true,
+			DiscCutoutPercent:         11,
+			CornerMaxCorners:          500,
+			CornerMinDistance:         100,
+			CornerSettingsVersion:     1,
+			TouchupRemainsActive:      true,
+			StraightEdgeRemainsActive: true,
+			AutoDetectOnModeSwitch:    true,
+		},
+	}
+}
+
+func (s *stubBackend) registerPreview(img *image.NRGBA) string {
+	s.nextID++
+	url := fmt.Sprintf("/preview/stub-%d.jpg", s.nextID)
+	s.previews[url] = img
+	return url
+}
+
+func (s *stubBackend) cleanResult(msg string) *ProcessResult {
+	if s.current == nil {
+		return &ProcessResult{Message: msg}
+	}
+	b := s.current.Bounds()
+	return &ProcessResult{
+		Preview: s.registerPreview(s.current),
+		Width:   b.Dx(),
+		Height:  b.Dy(),
+		Message: msg,
+	}
+}
+
+func decodeTestPNG(path string) (*image.NRGBA, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	img, err := png.Decode(f)
+	if err != nil {
+		return nil, err
+	}
+	return raster.ToNRGBA(img), nil
+}
+
+func (s *stubBackend) SetHost(AppHost)                 {}
+func (s *stubBackend) Logf(string, ...interface{})     {}
+func (s *stubBackend) OpenURL(string) error            { return nil }
+func (s *stubBackend) GetAllSettings() AllSettings     { return s.settings }
+func (s *stubBackend) SaveAllSettings(c AllSettings) error { s.settings = c; return nil }
+func (s *stubBackend) GetLaunchArgs() LaunchArgs       { return LaunchArgs{} }
+func (s *stubBackend) OpenImageDialog() (string, error) { return "", nil }
+func (s *stubBackend) OpenSaveDialog() (string, error)  { return "", nil }
+func (s *stubBackend) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
+	img, err := decodeTestPNG(req.FilePath)
+	if err != nil {
+		return nil, err
+	}
+	s.current = img
+	s.corners = []image.Point{{X: 24, Y: 20}, {X: img.Bounds().Dx() - 24, Y: 20}}
+	b := img.Bounds()
+	return &ImageInfo{
+		Width:   b.Dx(),
+		Height:  b.Dy(),
+		Preview: s.registerPreview(img),
+		Format:  "PNG",
+		SuggestedCornerParams: SuggestedCornerParams{
+			MinDistance: 100,
+			MaxCorners:  500,
+		},
+	}, nil
+}
+func (s *stubBackend) LoadImageFromClipboard() (*ImageInfo, error) { return nil, fmt.Errorf("empty") }
+func (s *stubBackend) SaveImage(SaveRequest) (*ProcessResult, error) { return &ProcessResult{}, nil }
+func (s *stubBackend) RecropImage() (*ImageInfo, error)              { return nil, fmt.Errorf("none") }
+func (s *stubBackend) RunPostSaveCommand(string, string) error       { return nil }
+func (s *stubBackend) GetCleanPreview() (*ProcessResult, error)      { return s.cleanResult("Ready"), nil }
+func (s *stubBackend) DetectCorners(CornerDetectRequest) (*ProcessResult, error) {
+	res := s.cleanResult("Detected corners")
+	res.Corners = append([]image.Point(nil), s.corners...)
+	return res, nil
+}
+func (s *stubBackend) CancelCornerDetect() {}
+func (s *stubBackend) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
+	return &ClickCornerResult{SnappedX: req.X, SnappedY: req.Y, Count: 1}, nil
+}
+func (s *stubBackend) RestoreCornerOverlay(RestoreCornerOverlayRequest) (*ProcessResult, error) {
+	res := s.cleanResult("Restored corners")
+	res.Corners = append([]image.Point(nil), s.corners...)
+	return res, nil
+}
+func (s *stubBackend) UndoLastCorner() int                          { return 0 }
+func (s *stubBackend) ResetCorners() (*ProcessResult, error)        { return s.cleanResult("Reset"), nil }
+func (s *stubBackend) SkipCrop() (*ProcessResult, error)            { return s.cleanResult("Skipped"), nil }
+func (s *stubBackend) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
+	d := req.Radius * 2
+	if d < 2 {
+		d = 2
+	}
+	img := image.NewNRGBA(image.Rect(0, 0, d, d))
+	s.current = img
+	res := s.cleanResult("Disc drawn")
+	res.DiscCenterX = req.CenterX
+	res.DiscCenterY = req.CenterY
+	res.DiscRadius = req.Radius
+	return res, nil
+}
+func (s *stubBackend) StraightEdgeRotate(StraightEdgeRotateRequest) (*ProcessResult, error) { return s.cleanResult(""), nil }
+func (s *stubBackend) RotateDisc(DiscRotateRequest) (*ProcessResult, error)                 { return s.cleanResult(""), nil }
+func (s *stubBackend) ShiftDisc(ShiftDiscRequest) (*ProcessResult, error)                   { return s.cleanResult(""), nil }
+func (s *stubBackend) GetPixelColor(PixelColorRequest) (*ProcessResult, error)              { return s.cleanResult(""), nil }
+func (s *stubBackend) SetFeatherRadius(FeatherRadiusRequest) (*ProcessResult, error)        { return s.cleanResult(""), nil }
+func (s *stubBackend) SetFeatherSize(FeatherSizeRequest) (*ProcessResult, error)            { return s.cleanResult(""), nil }
+func (s *stubBackend) SetDiscSettings(DiscSettings) (*ProcessResult, error)                 { return s.cleanResult(""), nil }
+func (s *stubBackend) ResetDisc() (*ProcessResult, error)                                   { return s.cleanResult("Reset"), nil }
+func (s *stubBackend) AddLine(LineAddRequest) (*ProcessResult, error)                       { return &ProcessResult{}, nil }
+func (s *stubBackend) ProcessLines() (*ProcessResult, error)                                { return s.cleanResult(""), nil }
+func (s *stubBackend) ClearLines() (*ProcessResult, error)                                  { return s.cleanResult("Reset"), nil }
+func (s *stubBackend) NormalCrop(NormalCropRequest) (*ProcessResult, error)                 { return s.cleanResult(""), nil }
+func (s *stubBackend) ResetNormal() (*ProcessResult, error)                                 { return s.cleanResult("Reset"), nil }
+func (s *stubBackend) Undo() (*ProcessResult, error)                                        { return &ProcessResult{}, nil }
+func (s *stubBackend) Redo() (*ProcessResult, error)                                        { return &ProcessResult{}, nil }
+func (s *stubBackend) Crop(CropRequest) (*ProcessResult, error)                             { return s.cleanResult(""), nil }
+func (s *stubBackend) Rotate(RotateRequest) (*ProcessResult, error)                         { return s.cleanResult(""), nil }
+func (s *stubBackend) ResizeImage(ResizeRequest) (*ProcessResult, error)                    { return s.cleanResult(""), nil }
+func (s *stubBackend) TrimBorders() (*ProcessResult, error)                                 { return s.cleanResult(""), nil }
+func (s *stubBackend) AutoContrast(AutoContrastRequest) (*ProcessResult, error)             { return s.cleanResult(""), nil }
+func (s *stubBackend) Descreen(DescreenRequest) (*ProcessResult, error)                     { return s.cleanResult(""), nil }
+func (s *stubBackend) DustRemoval(DustRemovalRequest) (*ProcessResult, error)               { return s.cleanResult(""), nil }
+func (s *stubBackend) SetLevels(SetLevelsRequest) (*ProcessResult, error)                   { return s.cleanResult(""), nil }
+func (s *stubBackend) CopySelectionToClipboard(AdjustmentSelection) (string, error)         { return "", nil }
+func (s *stubBackend) TouchUpApplyStrokes(TouchUpStrokeRequest) (*ProcessResult, error)   { return s.cleanResult(""), nil }
+func (s *stubBackend) CancelTouchup()                                                       {}
+func (s *stubBackend) ResolvePreviewImage(url string) (*image.NRGBA, bool) {
+	img, ok := s.previews[url]
+	return img, ok
+}
+func (s *stubBackend) ResolveCalibrationImage(url string) (*image.NRGBA, bool) {
+	img, ok := s.calibPreviews[url]
+	return img, ok
+}
+func (s *stubBackend) CalibrationOpenFilesDialog() ([]string, error) { return nil, nil }
+func (s *stubBackend) CalibrationLoadImage(req CalibrationLoadRequest) (*CalibrationImageInfo, error) {
+	img, err := decodeTestPNG(req.FilePath)
+	if err != nil {
+		return nil, err
+	}
+	s.nextID++
+	url := fmt.Sprintf("/calib/stub-%d.jpg", s.nextID)
+	s.calibPreviews[url] = img
+	return &CalibrationImageInfo{
+		ImagePath: req.FilePath,
+		Preview:   url,
+		Width:     img.Bounds().Dx(),
+		Height:    img.Bounds().Dy(),
+	}, nil
+}
+func (s *stubBackend) CalibrationClearPreview() {}
+func (s *stubBackend) CalibrationSaveDataset(CalibrationSaveRequest) (*CalibrationSaveResult, error) {
+	return &CalibrationSaveResult{Cancelled: true}, nil
+}
+func (s *stubBackend) CompositorOpenFilesDialog() ([]string, error)                { return nil, nil }
+func (s *stubBackend) CompositorStitch(CompositorStitchRequest) (*CompositorResult, error) {
+	return &CompositorResult{}, nil
+}
+func (s *stubBackend) CompositorAlignOverlay(CompositorStitchRequest) (*CompositorResult, error) {
+	return &CompositorResult{}, nil
+}
+func (s *stubBackend) CompositorAddMask(CompositorMaskRequest) (*CompositorResult, error) {
+	return &CompositorResult{}, nil
+}
+func (s *stubBackend) CompositorUndoMask() (*CompositorResult, error)        { return &CompositorResult{}, nil }
+func (s *stubBackend) CompositorClearMasks() (*CompositorResult, error)      { return &CompositorResult{}, nil }
+func (s *stubBackend) CompositorRefreshPreview() (*CompositorResult, error)  { return &CompositorResult{}, fmt.Errorf("none") }
+func (s *stubBackend) CompositorLoadResult(CompositorLoadResultRequest) (*ImageInfo, error) {
+	return nil, fmt.Errorf("none")
+}
+
+func writeTestScanPNG(t *testing.T, name string, w, h int) string {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	bg := color.NRGBA{R: 20, G: 20, B: 20, A: 255}
+	fg := color.NRGBA{R: 235, G: 230, B: 220, A: 255}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if x >= 24 && x < w-24 && y >= 20 && y < h-20 {
+				img.SetNRGBA(x, y, fg)
+			} else {
+				img.SetNRGBA(x, y, bg)
+			}
+		}
+	}
+	p := filepath.Join(t.TempDir(), name)
+	f, err := os.Create(p)
+	if err != nil {
+		t.Fatalf("create test png: %v", err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatalf("encode test png: %v", err)
+	}
+	return p
+}
+
+func newTestEditorUI(t *testing.T) *EditorUI {
+	t.Helper()
+	ui := NewEditorUI(newStubBackend(), nil, Config{AppVersion: "test"})
+	ui.syncJobs = true
+	ui.InitOnStartup()
+	return ui
+}
+
+func TestResizeModalAspectLockAndUpscaleConfirm(t *testing.T) {
+	ui := newTestEditorUI(t)
+	scan := writeTestScanPNG(t, "main.png", 240, 180)
+	ui.handleModeSwitch("normal")
+	ui.loadFile(scan, false)
+	ui.handleSkipCrop()
+
+	ui.resizeState.open(ui)
+	ui.resizeState.setWidth(480)
+	if ui.resizeState.height != 360 || ui.resizeState.scalePct != 200 {
+		t.Fatalf("aspect-locked resize = (%d,%d @ %d%%), want (480,360 @ 200%%)",
+			ui.resizeState.width, ui.resizeState.height, ui.resizeState.scalePct)
+	}
+	ui.resizeState.setWidth(2000)
+	ui.resizeState.tryApply(ui)
+	if ui.confirmDialog == nil {
+		t.Fatal("expected 2M-pixel upscale confirmation dialog")
+	}
+}
+
+func TestHeadlessLayoutAllModesAccordionsAndModals(t *testing.T) {
+	ui := newTestEditorUI(t)
+	scan := writeTestScanPNG(t, "layout.png", 240, 180)
+
+	renderFrame := func(name string) {
+		t.Helper()
+		var ops op.Ops
+		gtx := layout.Context{
+			Ops:         &ops,
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(1280, 900)),
+			Now:         time.Now(),
+		}
+		dims := ui.layoutRoot(gtx)
+		if dims.Size != image.Pt(1280, 900) {
+			t.Fatalf("%s: root dims = %v, want (1280,900)", name, dims.Size)
+		}
+	}
+
+	// 1. Unloaded initial view
+	renderFrame("unloaded")
+
+	// 2. Loaded across all 4 modes with open accordions & sub-tools
+	ui.loadFile(scan, false)
+	ui.accAdjustmentsOpen = true
+	ui.accToolsOpen = true
+	ui.accShortcutsOpen = true
+	ui.useDescreenTool = true
+	ui.useDustRemovalTool = true
+	ui.useTouchupTool = true
+	ui.adjustmentSelectionActive = true
+	ui.adjustmentRect = &rectI{X1: 10, Y1: 10, X2: 100, Y2: 80}
+	ui.touchupCursor = &touchupCursorState{X: 50, Y: 50}
+	renderFrame("corner_accordions")
+
+	ui.handleModeSwitch("disc")
+	ui.discActive = true
+	ui.discCenter = image.Pt(120, 90)
+	ui.discRadius = 60
+	ui.discInitialRadius = 60
+	ui.settings.DiscCenterCutout = true
+	ui.accAdjustmentsOpen = true
+	ui.accShortcutsOpen = true
+	renderFrame("disc_active")
+
+	ui.handleModeSwitch("line")
+	ui.lines = []lineI{{X1: 20, Y1: 20, X2: 220, Y2: 25}, {X1: 220, Y1: 25, X2: 215, Y2: 160}}
+	renderFrame("line_mode")
+
+	ui.handleModeSwitch("normal")
+	ui.normalRect = &rectI{X1: 15, Y1: 15, X2: 180, Y2: 140}
+	renderFrame("normal_mode")
+
+	// 3. Every open modal
+	ui.errorMessage = "Sample error message"
+	renderFrame("error_modal")
+	ui.errorMessage = ""
+
+	ui.confirmDialog = &confirmDialogState{
+		Title: "Confirm", Message: "Save changes?", YesLabel: "Save", NoLabel: "Don't save", CancelLabel: "Cancel",
+		YesVariant: btnPrimary, NoVariant: btnDanger,
+	}
+	renderFrame("confirm_modal")
+	ui.confirmDialog = nil
+
+	ui.aboutOpen = true
+	renderFrame("about_modal")
+	ui.aboutOpen = false
+
+	ui.resizeState.open(ui)
+	renderFrame("resize_modal")
+	ui.resizeOpen = false
+
+	ui.optionsState.open(ui)
+	for _, tab := range optionsTabs {
+		ui.optionsState.activeTab = tab.id
+		renderFrame("options_" + tab.id)
+	}
+	ui.optionsOpen = false
+
+	ui.compositorState.open(ui)
+	ui.compositorState.paths = []string{scan, scan}
+	ui.compositorState.orientation = "ltr"
+	renderFrame("compositor_stitch")
+	ui.compositorState.orientation = "overlay"
+	ui.compositorState.alignedLayers = 2
+	ui.compositorState.previewURL = ui.preview
+	ui.compositorState.previewDims = ui.realImageDims
+	ui.compositorState.maskStroke = []f32.Point{f32.Pt(0.2, 0.2), f32.Pt(0.5, 0.5)}
+	renderFrame("compositor_overlay")
+	ui.compositorOpen = false
+
+	ui.calibState.open(ui)
+	ui.calibState.addPaths([]string{scan}, ui)
+	ui.calibState.corners = []CalibrationPoint{{X: 24, Y: 20}, {X: 215, Y: 20}}
+	renderFrame("calibration_modal")
+	ui.calibState.closeNow(ui)
+}
+
+func TestModalCardClickDoesNotCloseOptions(t *testing.T) {
+	ui := newTestEditorUI(t)
+
+	if &modalScrimTag == &modalCardStopTag {
+		t.Fatal("modalScrimTag and modalCardStopTag alias to the same address")
+	}
+	vp := ui.mainViewport
+	if &vp.canvasTag == &vp.hScrollTag || &vp.canvasTag == &vp.vScrollTag || &vp.hScrollTag == &vp.vScrollTag {
+		t.Fatal("viewport pointer tags alias to the same address")
+	}
+
+	var router input.Router
+	var ops op.Ops
+	frame := func() {
+		ops.Reset()
+		gtx := layout.Context{
+			Ops:         &ops,
+			Source:      router.Source(),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(1280, 900)),
+			Now:         time.Now(),
+		}
+		ui.layoutRoot(gtx)
+		router.Frame(&ops)
+	}
+
+	ui.optionsState.open(ui)
+	if !ui.optionsOpen {
+		t.Fatal("expected optionsOpen=true after open")
+	}
+	frame()
+
+	// Click inside the Options card background (header area around centered 540x480 card)
+	router.Queue(
+		pointer.Event{
+			Kind:     pointer.Press,
+			Source:   pointer.Mouse,
+			Buttons:  pointer.ButtonPrimary,
+			Position: f32.Pt(640, 225),
+		},
+		pointer.Event{
+			Kind:     pointer.Release,
+			Source:   pointer.Mouse,
+			Position: f32.Pt(640, 225),
+		},
+	)
+	frame()
+	if !ui.optionsOpen {
+		t.Fatal("clicking inside Options card background unexpectedly closed the modal")
+	}
+
+	// Click outside the Options card on the dark backdrop scrim
+	router.Queue(
+		pointer.Event{
+			Kind:     pointer.Press,
+			Source:   pointer.Mouse,
+			Buttons:  pointer.ButtonPrimary,
+			Position: f32.Pt(20, 20),
+		},
+		pointer.Event{
+			Kind:     pointer.Release,
+			Source:   pointer.Mouse,
+			Position: f32.Pt(20, 20),
+		},
+	)
+	frame()
+	if ui.optionsOpen {
+		t.Fatal("clicking backdrop scrim did not close Options modal")
+	}
+}
+
+func TestDustRemovalDropdownOpensAndSelectsOption(t *testing.T) {
+	ui := newTestEditorUI(t)
+	ui.dustLevel = "medium"
+	opts := []uiSelectOption{
+		{Value: "low", Label: "Low"},
+		{Value: "medium", Label: "Medium"},
+		{Value: "high", Label: "High"},
+	}
+
+	var router input.Router
+	var ops op.Ops
+	frame := func() {
+		ops.Reset()
+		gtx := layout.Context{
+			Ops:         &ops,
+			Source:      router.Source(),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(300, 400)),
+			Now:         time.Now(),
+		}
+		ui.overlays.beginFrame(gtx)
+		layout.Inset{Top: unit.Dp(10), Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			cg := gtx
+			cg.Constraints.Min = image.Pt(160, 0)
+			cg.Constraints.Max.X = 160
+			return ui.ddDustLevel.Layout(cg, ui.th, ui.overlays, opts, ui.dustLevel, true, func(val string) {
+				ui.dustLevel = val
+			})
+		})
+		ui.overlays.layoutOverlayPass(gtx)
+		router.Frame(&ops)
+	}
+
+	frame()
+
+	// Click trigger button to open dropdown.
+	router.Queue(
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(60, 22)},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: f32.Pt(60, 22)},
+	)
+	frame()
+	frame()
+	if !ui.ddDustLevel.open {
+		t.Fatal("expected Dust removal dropdown to open when clicked")
+	}
+
+	// Click first popup option ("Low") below anchorPos.
+	optPt := f32.Pt(ui.ddDustLevel.anchorPos.X+40, ui.ddDustLevel.anchorPos.Y+14)
+	router.Queue(
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: optPt},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: optPt},
+	)
+	frame()
+	if ui.ddDustLevel.open {
+		t.Fatal("expected dropdown to close after selecting an option")
+	}
+	if ui.dustLevel != "low" {
+		t.Fatalf("dustLevel = %q, want %q", ui.dustLevel, "low")
+	}
+
+	// Re-open and click outside to dismiss without changing selection.
+	router.Queue(
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(60, 22)},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: f32.Pt(60, 22)},
+	)
+	frame()
+	frame()
+	if !ui.ddDustLevel.open {
+		t.Fatal("expected Dust removal dropdown to re-open on second click")
+	}
+	router.Queue(
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(250, 300)},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: f32.Pt(250, 300)},
+	)
+	frame()
+	if ui.ddDustLevel.open {
+		t.Fatal("expected outside click to dismiss dropdown")
+	}
+	if ui.dustLevel != "low" {
+		t.Fatalf("dustLevel changed on dismiss to %q, want %q", ui.dustLevel, "low")
+	}
+}
+
+func TestAdjustmentsSelectionHeaderIconDoesNotCollapseAccordion(t *testing.T) {
+	ui := newTestEditorUI(t)
+	scan := writeTestScanPNG(t, "acc_select.png", 200, 160)
+	ui.loadFile(scan, false)
+	ui.accAdjustmentsOpen = true
+
+	var router input.Router
+	var ops op.Ops
+	frame := func() {
+		ops.Reset()
+		gtx := layout.Context{
+			Ops:         &ops,
+			Source:      router.Source(),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(320, 400)),
+			Now:         time.Now(),
+		}
+		ui.overlays.beginFrame(gtx)
+		cg := gtx
+		cg.Constraints.Min = image.Pt(320, 0)
+		ui.layoutAdjustmentsAccordion(cg, 300)
+		ui.overlays.layoutOverlayPass(gtx)
+		router.Frame(&ops)
+	}
+
+	clickAt := func(pt f32.Point) {
+		router.Queue(
+			pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt},
+			pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pt},
+		)
+		frame()
+		frame()
+	}
+
+	frame()
+
+	// Pre-crop: selection icon is disabled; clicking it must not collapse the accordion.
+	iconPt := f32.Pt(277, 21)
+	clickAt(iconPt)
+	if !ui.accAdjustmentsOpen || ui.adjustmentSelectionActive {
+		t.Fatalf("pre-crop click on selection icon changed state unexpectedly: open=%v sel=%v",
+			ui.accAdjustmentsOpen, ui.adjustmentSelectionActive)
+	}
+
+	// Post-crop: selection icon toggles selection mode without closing Adjustments.
+	ui.handleSkipCrop()
+	frame()
+
+	clickAt(iconPt)
+	if !ui.adjustmentSelectionActive || !ui.accAdjustmentsOpen {
+		t.Fatalf("expected selection active and accordion open after first icon click, got sel=%v open=%v",
+			ui.adjustmentSelectionActive, ui.accAdjustmentsOpen)
+	}
+
+	clickAt(iconPt)
+	if ui.adjustmentSelectionActive || !ui.accAdjustmentsOpen {
+		t.Fatalf("expected selection inactive and accordion open after second icon click, got sel=%v open=%v",
+			ui.adjustmentSelectionActive, ui.accAdjustmentsOpen)
+	}
+
+	// Clicking the title closes the accordion.
+	clickAt(f32.Pt(40, 21))
+	if ui.accAdjustmentsOpen {
+		t.Fatal("expected clicking accordion title to close Adjustments")
+	}
+
+	// Clicking the arrow re-opens the accordion.
+	clickAt(f32.Pt(304, 21))
+	if !ui.accAdjustmentsOpen {
+		t.Fatal("expected clicking accordion arrow to reopen Adjustments")
+	}
+}
+
+func TestAccordionCloseNeverPopsHeightWithMultipleOpenPanels(t *testing.T) {
+	ui := newTestEditorUI(t)
+	scan := writeTestScanPNG(t, "acc_close_pop.png", 200, 160)
+	ui.loadFile(scan, false)
+	ui.handleSkipCrop()
+	ui.handleModeSwitch("disc")
+	ui.applyDrawDisc(100, 80, 40)
+	ui.lastWindowSz = image.Pt(1400, 900)
+	ui.accAdjustmentsOpen = true
+	ui.accToolsOpen = false
+	ui.accShortcutsOpen = true
+
+	var router input.Router
+	var ops op.Ops
+	now := time.Now()
+	maxAccHForTest := func() int {
+		openCount := 0
+		if ui.accAdjustmentsOpen {
+			openCount++
+		}
+		if ui.accToolsOpen {
+			openCount++
+		}
+		if ui.accShortcutsOpen {
+			openCount++
+		}
+		h := int(0.30 * float64(ui.lastWindowSz.Y))
+		switch openCount {
+		case 2:
+			h = int(0.18 * float64(ui.lastWindowSz.Y))
+		case 3:
+			h = int(0.12 * float64(ui.lastWindowSz.Y))
+		}
+		return max(h, 110)
+	}
+	stepFrame := func() (adjH, shH int) {
+		now = now.Add(16 * time.Millisecond)
+		ops.Reset()
+		gtx := layout.Context{
+			Ops:         &ops,
+			Source:      router.Source(),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(360, 860)),
+			Now:         now,
+		}
+		ui.overlays.beginFrame(gtx)
+		cg := gtx
+		cg.Constraints.Min = image.Pt(320, 0)
+		cg.Constraints.Max = image.Pt(320, 860)
+		maxH := maxAccHForTest()
+		adjH = ui.layoutAdjustmentsAccordion(cg, maxH).Size.Y
+		shH = ui.layoutShortcutsAccordion(cg, maxH).Size.Y
+		ui.overlays.layoutOverlayPass(gtx)
+		router.Frame(&ops)
+		return adjH, shH
+	}
+
+	// Render initial settled open state (2 panels open -> maxAccH = 162px).
+	prevAdjH, prevShH := stepFrame()
+	if prevAdjH <= 50 || prevShH <= 50 {
+		t.Fatalf("expected both panels open on first frame, got adjH=%d shH=%d", prevAdjH, prevShH)
+	}
+
+	// Close Adjustments while Shortcuts remains open (openCount drops 2 -> 1, maxAccH jumps 162 -> 270).
+	ui.accAdjustmentsOpen = false
+	var sawShSmoothStep bool
+	for i := 0; i < 40; i++ {
+		adjH, shH := stepFrame()
+		if adjH > prevAdjH {
+			t.Fatalf("frame %d: Adjustments popped taller on close: prev=%d cur=%d", i, prevAdjH, adjH)
+		}
+		if shH < prevShH {
+			t.Fatalf("frame %d: Shortcuts shrank while expanding: prev=%d cur=%d", i, prevShH, shH)
+		}
+		if shH > prevShH && ui.accShortcuts.animating {
+			sawShSmoothStep = true
+		}
+		prevAdjH, prevShH = adjH, shH
+	}
+	if ui.accAdjustments.displayH != 0 || ui.accAdjustments.animating {
+		t.Fatalf("expected Adjustments settled closed, got displayH=%v animating=%v",
+			ui.accAdjustments.displayH, ui.accAdjustments.animating)
+	}
+	if !sawShSmoothStep {
+		t.Fatal("expected Shortcuts to expand smoothly across frames after Adjustments closed")
+	}
+
+	// Close Shortcuts from settled expanded state and ensure strictly monotonic shrink.
+	ui.accShortcutsOpen = false
+	for i := 0; i < 40; i++ {
+		_, shH := stepFrame()
+		if shH > prevShH {
+			t.Fatalf("frame %d: Shortcuts popped taller on close: prev=%d cur=%d", i, prevShH, shH)
+		}
+		prevShH = shH
+	}
+	if ui.accShortcuts.displayH != 0 || ui.accShortcuts.animating {
+		t.Fatalf("expected Shortcuts settled closed, got displayH=%v animating=%v",
+			ui.accShortcuts.displayH, ui.accShortcuts.animating)
+	}
+}
+
+func TestSidebarAndAccordionContentHorizontallyCentered(t *testing.T) {
+	ui := newTestEditorUI(t)
+	var ops op.Ops
+
+	// 1. Slideout accordion content gets equal 16px left inset and 16px right gutter
+	// (6px inner inset + 10px Occupy scrollbar), so 320px card gives 288px body width.
+	var acc uiAccordion
+	var bodyMaxX int
+	gtx := layout.Context{
+		Ops:         &ops,
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(320, 400)),
+		Now:         time.Now(),
+	}
+	acc.Layout(gtx, ui.th, "Shortcuts", true, 240, nil, nil, func(gtx layout.Context) layout.Dimensions {
+		bodyMaxX = gtx.Constraints.Max.X
+		return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, 120)}
+	})
+	if bodyMaxX != 288 {
+		t.Fatalf("accordion body max width = %d, want 288 (16px left + 16px right gutter)", bodyMaxX)
+	}
+
+	// 2. Main sidebar middle mode area gives controls the same centered 320px width
+	// (360px sidebar - 20px left - 20px right) both with and without scrolling.
+	ui.handleModeSwitch("normal")
+	measureMiddle := func(availH int) int {
+		ops.Reset()
+		mg := layout.Context{
+			Ops:         &ops,
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(360, availH)),
+			Now:         time.Now(),
+		}
+		var modeW int
+		// Mirror layoutMiddleModeArea calling normal/line/corner panel constraints.
+		if ui.modePanelH > 0 && ui.modePanelH <= availH {
+			cg := mg
+			cg.Constraints.Min.Y = 0
+			cg.Constraints.Max.Y = availH
+			dims := layout.Inset{Left: unit.Dp(20), Right: unit.Dp(20)}.Layout(cg, func(gtx layout.Context) layout.Dimensions {
+				modeW = gtx.Constraints.Max.X
+				return layout.Dimensions{Size: image.Pt(modeW, 80)}
+			})
+			ui.modePanelH = dims.Size.Y
+		} else {
+			layout.Inset{Right: unit.Dp(4)}.Layout(mg, func(gtx layout.Context) layout.Dimensions {
+				return styledList(ui.th, &ui.sidebarList).Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(20), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						modeW = gtx.Constraints.Max.X
+						return layout.Dimensions{Size: image.Pt(modeW, 200)}
+					})
+				})
+			})
+		}
+		return modeW
+	}
+
+	scrollW := measureMiddle(120)
+	if scrollW != 320 {
+		t.Fatalf("scrolling middle area content width = %d, want 320", scrollW)
+	}
+	ui.modePanelH = 80
+	noScrollW := measureMiddle(300)
+	if noScrollW != 320 {
+		t.Fatalf("non-scrolling middle area content width = %d, want 320", noScrollW)
+	}
+
+	// Exercise the actual EditorUI.layoutMiddleModeArea in both overflowing and fitted heights.
+	ui.modePanelH = 0
+	overflowGtx := layout.Context{
+		Ops:         &ops,
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(360, 120)),
+		Now:         time.Now(),
+	}
+	ui.layoutMiddleModeArea(overflowGtx)
+	if ui.modePanelH <= 0 {
+		t.Fatal("expected layoutMiddleModeArea to measure modePanelH")
+	}
+	fitGtx := overflowGtx
+	fitGtx.Constraints = layout.Exact(image.Pt(360, ui.modePanelH+100))
+	ui.layoutMiddleModeArea(fitGtx)
+}
+
+func TestCompositorModalLayoutCompactHeaderRowsAndSpacer(t *testing.T) {
+	ui := newTestEditorUI(t)
+	var ops op.Ops
+
+	spacerGtx := layout.Context{
+		Ops:         &ops,
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Min: image.Pt(250, 0), Max: image.Pt(250, 40)},
+	}
+	if d := flexSpacer(spacerGtx); d.Size.X != 250 {
+		t.Fatalf("flexSpacer width = %d, want 250", d.Size.X)
+	}
+
+	c := &ui.compositorState
+	c.ensureInit()
+
+	renderModal := func(orientation string, paths []string) {
+		c.orientation = orientation
+		c.paths = paths
+		ui.compositorOpen = true
+		ops.Reset()
+		gtx := layout.Context{
+			Ops:         &ops,
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(1200, 900)),
+			Now:         time.Now(),
+		}
+		ui.overlays.beginFrame(gtx)
+		c.layout(gtx, ui)
+		ui.overlays.layoutOverlayPass(gtx)
+	}
+
+	// Render empty Stitch mode, populated Stitch mode, and Overlay mode cleanly.
+	renderModal("ltr", nil)
+	renderModal("ltr", []string{filepath.Join("scans", "scan_01.png"), filepath.Join("scans", "scan_02.png")})
+	renderModal("overlay", []string{filepath.Join("scans", "scan_01.png"), filepath.Join("scans", "scan_02.png")})
+
+	// Measure preview pane with tight Min.X=584 (matching layoutCenteredModal card inner width):
+	// rotate buttons must remain compact beside a single-line Preview label (never wrapping 1 char/line).
+	ops.Reset()
+	tightPaneGtx := layout.Context{
+		Ops:         &ops,
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(584, 300)),
+		Now:         time.Now(),
+	}
+	paneDims := c.layoutStitchPreviewPane(tightPaneGtx, ui)
+	if paneDims.Size != image.Pt(584, 300) {
+		t.Fatalf("stitch preview pane dims = %v, want 584x300", paneDims.Size)
+	}
+	// If rotBtn had captured tight Min.X=584, LastLayout.ViewportH would collapse to <= 160px.
+	if c.viewport.LastLayout.ViewportH < 240 || c.viewport.LastLayout.ViewportW > 584 {
+		t.Fatalf("expected compact rotate header leaving >=240px for viewport (<=584w), got %dx%d",
+			c.viewport.LastLayout.ViewportW, c.viewport.LastLayout.ViewportH)
+	}
+
+	// Measure file list section with tight Min.X=584 to verify compact item rows.
+	ops.Reset()
+	c.orientation = "ltr"
+	c.paths = []string{filepath.Join("scans", "scan_01.png"), filepath.Join("scans", "scan_02.png")}
+	tightFilesGtx := layout.Context{
+		Ops:         &ops,
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(584, 185)),
+		Now:         time.Now(),
+	}
+	filesDims := c.layoutFilesSection(tightFilesGtx, ui)
+	if filesDims.Size != image.Pt(584, 185) {
+		t.Fatalf("files section dims = %v, want 584x185", filesDims.Size)
+	}
+}

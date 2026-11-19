@@ -19,36 +19,9 @@ import (
 	"atropos/internal/imageops"
 	"atropos/internal/raster"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/image/bmp"
 	"golang.org/x/image/tiff"
 )
-
-// ---- Types -------------------------------------------------------------------
-
-// CompositorStitchRequest carries the ordered list of source file paths and
-// the orientation that describes how consecutive images are arranged.
-// Orientation is one of: "ltr" (left-to-right, default), "rtl" (right-to-left),
-// "ttb" (top-to-bottom), "btt" (bottom-to-top).
-// For reversed orientations ("rtl", "btt") the image array is reversed before
-// stitching so that image 0 is always the anchor in the reference frame.
-type CompositorStitchRequest struct {
-	ImagePaths  []string `json:"imagePaths"`
-	Orientation string   `json:"orientation"`
-}
-
-// CompositorResult is returned by CompositorStitch.
-type CompositorResult struct {
-	Preview string `json:"preview"`
-	Width   int    `json:"width"`
-	Height  int    `json:"height"`
-	Message string `json:"message"`
-}
-
-// CompositorSaveRequest carries the output path for saving the stitched image.
-type CompositorSaveRequest struct {
-	OutputPath string `json:"outputPath"`
-}
 
 // ---- Methods -----------------------------------------------------------------
 
@@ -56,12 +29,9 @@ type CompositorSaveRequest struct {
 // types and returns the selected paths (empty slice if cancelled).
 func (a *App) CompositorOpenFilesDialog() ([]string, error) {
 	a.logf("CompositorOpenFilesDialog: showing dialog")
-	paths, err := runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select Images to Composite",
-		Filters: []runtime.FileFilter{
-			{DisplayName: "Image Files (*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif)", Pattern: "*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif"},
-			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
-		},
+	paths, err := a.openMultipleFilesDialog("Select Images to Composite", "", []FileFilter{
+		{DisplayName: "Image Files (*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif)", Patterns: []string{"*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tiff", "*.tif", "*.gif", "*.webp"}},
+		{DisplayName: "All Files (*.*)", Patterns: []string{"*.*"}},
 	})
 	a.logf("CompositorOpenFilesDialog: %d paths, err=%v", len(paths), err)
 	return paths, err
@@ -195,10 +165,6 @@ func (a *App) CompositorAlignOverlay(req CompositorStitchRequest) (*CompositorRe
 	return response, err
 }
 
-type CompositorMaskRequest struct {
-	Stroke compositor.MaskStroke `json:"stroke"`
-}
-
 func (a *App) CompositorAddMask(req CompositorMaskRequest) (*CompositorResult, error) {
 	a.compositorMu.Lock()
 	defer a.compositorMu.Unlock()
@@ -269,15 +235,6 @@ func (a *App) CompositorRefreshPreview() (*CompositorResult, error) {
 	}, nil
 }
 
-// CompositorLoadResultRequest carries optional post-processing for the
-// compositor output before it enters the editing pipeline.
-type CompositorLoadResultRequest struct {
-	// RotationSteps is the number of 90-degree clockwise rotations to apply
-	// to the stitched image before loading it.  0 = no rotation, 1 = 90° CW,
-	// 2 = 180°, 3 = 270° CW.
-	RotationSteps int `json:"rotationSteps"`
-}
-
 // CompositorLoadResult promotes the cached stitched image into the main editing
 // pipeline exactly as if it had been opened from disk with LoadImage.  After
 // this call the compositor result becomes the active image and the user can
@@ -320,9 +277,7 @@ func (a *App) CompositorLoadResult(req CompositorLoadResultRequest) (*ImageInfo,
 	}
 
 	b := img.Bounds()
-	if a.ctx != nil {
-		runtime.WindowSetTitle(a.ctx, AppBaseTitle()+" — [Compositor Result]")
-	}
+	a.setWindowTitle(AppBaseTitle() + " — [Compositor Result]")
 	a.logf("CompositorLoadResult: loaded %dx%d stitched image into editing pipeline (rotationSteps=%d)", b.Dx(), b.Dy(), steps)
 	return &ImageInfo{
 		Width:                 b.Dx(),
@@ -384,15 +339,11 @@ func (a *App) CompositorSave(req CompositorSaveRequest) (string, error) {
 // formats and returns the chosen path (empty string if cancelled).
 func (a *App) CompositorOpenSaveDialog() (string, error) {
 	a.logf("CompositorOpenSaveDialog: showing dialog")
-	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:           "Save Stitched Image",
-		DefaultFilename: "stitched.png",
-		Filters: []runtime.FileFilter{
-			{DisplayName: "PNG (*.png)", Pattern: "*.png"},
-			{DisplayName: "JPEG (*.jpg)", Pattern: "*.jpg"},
-			{DisplayName: "TIFF (*.tiff)", Pattern: "*.tiff"},
-			{DisplayName: "BMP (*.bmp)", Pattern: "*.bmp"},
-		},
+	path, err := a.saveFileDialog("Save Stitched Image", "", "stitched.png", []FileFilter{
+		{DisplayName: "PNG (*.png)", Patterns: []string{"*.png"}},
+		{DisplayName: "JPEG (*.jpg)", Patterns: []string{"*.jpg", "*.jpeg"}},
+		{DisplayName: "TIFF (*.tiff)", Patterns: []string{"*.tiff", "*.tif"}},
+		{DisplayName: "BMP (*.bmp)", Patterns: []string{"*.bmp"}},
 	})
 	a.logf("CompositorOpenSaveDialog: path=%q err=%v", path, err)
 	return path, err

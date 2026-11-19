@@ -17,17 +17,17 @@ jobs:
         include:
           - name: Windows
             os: windows-latest
-            build-flags: -o atropos.exe
+            ldflags: -H=windowsgui
             binary: build/bin/atropos.exe
             asset-name: atropos-windows-amd64.exe
           - name: macOS
             os: macos-latest
-            build-flags: ""
-            binary: build/bin/atropos.app
+            ldflags: ""
+            binary: build/bin/atropos
             asset-name: atropos-macos-universal.zip
           - name: Linux
             os: ubuntu-latest
-            build-flags: -tags webkit2_41
+            ldflags: ""
             binary: build/bin/atropos
             asset-name: atropos-linux-amd64
 
@@ -37,31 +37,13 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version-file: "go.mod"
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install Linux dependencies
+      - name: Install Linux Gio dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
-
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
-
-      - name: Install frontend dependencies
-        run: npm ci
-        working-directory: frontend
-
-      - name: Build frontend
-        run: npm run build
-        working-directory: frontend
+          sudo apt-get install -y pkg-config libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dev libxcursor-dev libffi-dev
 
       - name: Compute version string
         shell: bash
@@ -69,13 +51,21 @@ jobs:
 
       - name: Build application
         shell: bash
-        run: wails build ${{ matrix.build-flags }} -ldflags "-X main.AppVersion=$APP_VERSION"
+        run: |
+          mkdir -p build/bin
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            CGO_ENABLED=1 GOARCH=amd64 go build -ldflags "-X main.AppVersion=$APP_VERSION" -o build/bin/atropos-amd64 .
+            CGO_ENABLED=1 GOARCH=arm64 go build -ldflags "-X main.AppVersion=$APP_VERSION" -o build/bin/atropos-arm64 .
+            lipo -create -output "${{ matrix.binary }}" build/bin/atropos-amd64 build/bin/atropos-arm64
+          else
+            go build -ldflags "${{ matrix.ldflags }} -X main.AppVersion=$APP_VERSION" -o "${{ matrix.binary }}" .
+          fi
 
       - name: Package binary for release
         shell: bash
         run: |
-          if [[ "${{ matrix.binary }}" == *.app ]]; then
-            cd build/bin && zip -r "$GITHUB_WORKSPACE/${{ matrix.asset-name }}" atropos.app
+          if [[ "${{ matrix.asset-name }}" == *.zip ]]; then
+            cd build/bin && zip -r "$GITHUB_WORKSPACE/${{ matrix.asset-name }}" atropos
           else
             cp "${{ matrix.binary }}" "${{ matrix.asset-name }}"
           fi

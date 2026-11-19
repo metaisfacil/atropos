@@ -27,45 +27,6 @@ type undoEntry struct {
 	selectedCorners []image.Point // in-progress corner clicks at save time (corner mode only)
 }
 
-// CropRequest specifies which edge to crop and how many source pixels to remove.
-type CropRequest struct {
-	Direction string `json:"direction"`
-	Amount    int    `json:"amount"`
-}
-
-// RotateRequest specifies the rotation/flip operation to apply.
-type RotateRequest struct {
-	FlipCode int `json:"flipCode"`
-}
-
-// ResizeRequest specifies the target width and height for resizing an image.
-type ResizeRequest struct {
-	Width  int `json:"width"`
-	Height int `json:"height"`
-}
-
-// SetLevelsRequest carries explicit black- and white-point values.
-type SetLevelsRequest struct {
-	Black     int                  `json:"black"`
-	White     int                  `json:"white"`
-	Selection *AdjustmentSelection `json:"selection,omitempty"`
-}
-
-// AutoContrastRequest optionally limits auto contrast to an image-space selection.
-type AutoContrastRequest struct {
-	Selection *AdjustmentSelection `json:"selection,omitempty"`
-}
-
-// DescreenRequest carries parameters for the FFT-based descreen filter.
-type DescreenRequest struct {
-	Thresh    int                  `json:"thresh"`
-	Radius    int                  `json:"radius"`
-	Middle    int                  `json:"middle"`
-	Highlight int                  `json:"highlight"`
-	Fast      bool                 `json:"fast"`
-	Selection *AdjustmentSelection `json:"selection,omitempty"`
-}
-
 // workingImage returns the image that adjustment operations should act on.
 // Once a warp/crop/disc operation has produced a warpedImage that is what
 // the user is editing; before any such operation it is currentImage.
@@ -81,6 +42,9 @@ func (a *App) workingImage() *image.NRGBA {
 // something to save, even when the user adjusts before cropping.
 func (a *App) setWorkingImage(img *image.NRGBA) {
 	a.warpedImage = img
+	if a.discRadius > 0 {
+		a.bakeDiscWorkingImage(img)
+	}
 }
 
 // saveUndo pushes the current working image onto the undo stack and clears
@@ -161,11 +125,17 @@ func (a *App) stepHistory(redo bool) (*ProcessResult, error) {
 		return nil, err
 	}
 	// Prepare both directions before mutating the stacks or document.
-	var discBase *image.NRGBA
+	var discBase, discBaked *image.NRGBA
 	var unmasked string
 	if entry.disc != nil {
 		discBase = entry.disc.base.restore()
-		if discBase != nil {
+		discBaked = entry.disc.bakedBase.restore()
+		if discBaked != nil {
+			unmasked, err = a.imagePreviewURL(discBaked)
+			if err != nil {
+				return nil, err
+			}
+		} else if discBase != nil {
 			unmasked, err = a.imagePreviewURL(discBase)
 			if err != nil {
 				return nil, err
@@ -208,6 +178,8 @@ func (a *App) stepHistory(redo bool) (*ProcessResult, error) {
 		a.discNoMaskPreview = ""
 		a.discWorkingCropRect = image.Rectangle{}
 		a.discCropInsets = discCropInsets{}
+		a.discBakedBase = nil
+		a.discBakedAngle = 0
 		a.postDiscBlack = 0
 		a.postDiscWhite = 255
 		a.levelsBaseImage = nil
@@ -225,7 +197,7 @@ func (a *App) stepHistory(redo bool) (*ProcessResult, error) {
 	}
 
 	a.selectedCorners = append([]image.Point(nil), entry.selectedCorners...)
-	a.restoreHistoryDisc(entry.disc, discBase, unmasked)
+	a.restoreHistoryDisc(entry.disc, discBase, discBaked, unmasked)
 	b := restored.Bounds()
 	res := &ProcessResult{
 		Preview:       preview,
@@ -332,6 +304,9 @@ func (a *App) Rotate(req RotateRequest) (*ProcessResult, error) {
 	a.saveUndo()
 
 	a.warpedImage = imageops.Rotate90(a.warpedImage, req.FlipCode)
+	if a.discRadius > 0 {
+		a.bakeDiscWorkingImage(a.warpedImage)
+	}
 
 	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
@@ -468,8 +443,11 @@ func (a *App) AutoContrast(req AutoContrastRequest) (*ProcessResult, error) {
 		return result, nil
 	}
 
-	// Post-warp, non-disc path (corner / line mode after warp).
+	// Post-warp, non-disc path (corner / line mode after warp, or selection-scoped).
 	a.warpedImage = adjusted
+	if a.discRadius > 0 {
+		a.bakeDiscWorkingImage(adjusted)
+	}
 	// Restore the pre-adjustment base for slider sessions as above.
 	a.levelsBaseImage = preLevelsBase
 	a.levelsSelection = selectionKey
@@ -560,6 +538,9 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
 	a.warpedImage = raster.CropNRGBA(img, image.Rect(left, top, right, bottom))
+	if a.discRadius > 0 {
+		a.bakeDiscWorkingImage(a.warpedImage)
+	}
 
 	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
@@ -720,9 +701,12 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 		return result, nil
 	}
 
-	// Post-warp, non-disc path (corner / line mode after warp).
+	// Post-warp, non-disc path (corner / line mode after warp, or selection-scoped).
 	adjusted := applyLevelsInSelection(a.levelsBaseImage, req.Black, req.White, selectionKey)
 	a.warpedImage = adjusted
+	if a.discRadius > 0 {
+		a.bakeDiscWorkingImage(adjusted)
+	}
 	preview, err := a.imagePreviewURL(adjusted)
 	if err != nil {
 		return nil, err

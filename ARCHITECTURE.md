@@ -4,7 +4,7 @@ This document contains the detailed system model, data flow, and operation order
 
 ## Table of Contents
 
-- [Frontend File Map](#frontend-file-map)
+- [UI File Map](#ui-file-map)
 - [Critical Image State Machine](#critical-image-state-machine)
   - [Fields](#fields-defined-in-appgo-app-struct)
   - [`workingImage()`](#workingimage-in-app_adjustgo)
@@ -50,47 +50,40 @@ This document contains the detailed system model, data flow, and operation order
 - [Internal Image Processing Packages](#internal-image-processing-packages)
   - [`applyWarpFill`](#applywarpfill-app_cornergo)
   - [Preview asset transport](#preview-asset-transport)
-- [Frontend Coordinate System](#frontend-coordinate-system)
-- [Zoom and Fit Width](#zoom-and-fit-width-hooksusezoompanjs)
+- [UI Coordinate System](#ui-coordinate-system)
+- [Zoom and Fit Width](#zoom-and-fit-width-uiviewportgo)
   - [Space+Drag Pan](#spacedrag-pan)
 - [Save](#save-app_iogo)
-- [Wails FFI Bridge](#wails-ffi-bridge-frontendwailsjsgomainappjs)
+- [Host Bridge](#host-bridge-app_hostgo-uihostgo)
 - [Error Handling](#error-handling)
 - [Settings Storage](#settings-storage)
 - [Image Compositor](#image-compositor-internalcompositor-app_compositorgo)
   - [App struct fields](#app-struct-fields)
-  - [Wails-facing methods](#wails-facing-methods)
+  - [UI-facing methods](#ui-facing-methods-app_compositorgo)
   - [Stitching pipeline](#stitching-pipeline-internalcompositorstitchgo)
-  - [Frontend flow](#frontend-flow)
+  - [UI flow](#ui-flow-uicompositorgo)
 - [Corner Calibration](#corner-calibration-app_calibrationgo)
 - [State transition ownership](#state-transition-ownership)
 
 ---
 
-## Frontend File Map
+## UI File Map
 
-`App.jsx` is a thin coordination layer: state declarations, hook wiring, and JSX render. Most logic lives under `frontend/src/`.
+`main.go` owns the Gio window event loop and delegates frame rendering and event dispatching to `EditorUI` (`ui/controller.go`). All UI code lives in `package ui` under `ui/`, communicating with the `package main` backend through `ui.Backend` (`ui/backend.go`) and shared UI-free DTOs/contracts in `internal/appapi/types.go`.
 
 | File | Responsibility |
 |------|----------------|
-| `hooks/useImageActions.js` | Go API action handlers: `loadFile`, `loadImageFromBytes`, `handleLoadImage`, `handlePasteImage`, `handleDetectCorners`, `handleSkipCrop`, `handleRecrop`, `handleResetCorners/Disc/Normal`, `handleNormalCrop`, `handleClearLines`, `handleSaveImage`, `flushPendingSave`, `handleModeSwitch`, `handleCompositorLoad`, `handleUndo`. Also owns the `OnFileDrop` / URL-drop / launch-args effects, close-request event flow, corner-detect generation guards (`detectGenRef`), cached corner entry (`cornerEntryRef`), and deferred save/drop queues. |
-| `hooks/useMouseHandlers.js` | All pointer interaction: `handleMouseDown/Move/Up/ImageMouseLeave` across all modes. Owns refs for corner click guards, disc drag state, line endpoint editing, and Normal-mode draw/move/resize (`normalDragPendingRef`, `normalMoveDragRef`, `normalHandleDragRef`). Uses shared `computeDiscShift` mapping from `utils/imageCoords` for consistent disc translation math across live preview and backend commit. Registers `window` `mouseup` and `mousemove` listeners to safely finish drags outside the canvas area. Returns `displayToImage` and `lineStartImgRef` for stable image-space coordinates during zoom changes mid-drag. |
-| `hooks/useKeyboardShortcuts.js` | Single `keydown` effect: arrow keys (disc shift), `+`/`-` (feather), `Y` (eyedrop), `Ctrl+A`/`Cmd+A` (select the whole image while the adjustment selection tool is active), `Ctrl+C`/`Cmd+C` (send an adjustment selection, uncommitted Normal crop rectangle, or the full image bounds to the backend for native clipboard copy), `Ctrl+V`/`Cmd+V` (ask the backend to read the native image clipboard and replace the document), `Ctrl+Z` (undo), `Ctrl+S` (save), `Ctrl+O` (load), `Ctrl+W`/`Cmd+W` (quit), `Enter` (apply Normal crop), and the physical `WASDQE` positions (crop/rotate). The displayed spatial keys come from `navigator.keyboard.getLayoutMap()`, so AZERTY shows `ZQSD`/`AE`, with QWERTY as a fallback. In corner mode, `Ctrl+Z` first calls `UndoLastCorner` for in-progress corner picks (1–3) before using backend image undo. Spatial crop/rotate keys are guarded by `canSave`; if no crop result exists, `showStatus` is shown instead of forwarding to Go. |
-| `hooks/useKeyboardLayout.js` | Reads the platform keyboard layout map for the physical crop/rotate positions and refreshes it on `layoutchange` or window focus. Supplies QWERTY labels when the Keyboard Map API is unavailable or denied. |
-| `hooks/useTouchup.js` | Touch-up brush state machine: `touchupStrokes`, `brushSize`, `commitTouchup`, bounded preview-patch handoff, window mouseup effect, `EventsOn("touchup-done")` effect. |
-| `hooks/useZoomPan.js` | Viewport camera state: `zoom`, `fitWidth`, `spacePanMode`, `canvasRef`, wheel zoom/feather handler, space-key pan, `ResizeObserver`, and scroll anchoring. `imgRef` points at the transparent logical image surface, so cursor anchoring and the existing pointer state machine use the same geometry as the canvas renderer without making image pixels a DOM `<img>`. |
-| `hooks/usePersistentSettings.js` | File-backed settings (`touchupBackend`, `iopaintURL`, `warpFillMode`, `warpFillColor`, `cropEdgePixels`, `discCenterCutout`, `discCutoutPercent`, manual corner parameters, `autoCornerParams`, workflow flags). Loads from Go (`GetAllSettings`) on mount and persists via `SaveAllSettings` on every change. Performs one-time migrations for legacy `localStorage` and corner defaults. |
-| `hooks/useStatusMessage.js` | `imageInfo` + fade timer logic (`showStatus`). |
-| `components/PreviewCanvas.jsx` | Visible viewport renderer. Requests only the visible/overscanned image-space region at the device density needed for the current zoom, receives that small JPEG through the Wails RPC bridge as a data URL, caches recent rasters, composites touch-up patches, and draws all visible image-space guides. |
-| `components/ImageOverlays.jsx` | Transparent DOM hit targets for editable Normal/Line handles. Visible guides are drawn by `PreviewCanvas`; this component exists so the mature pointer state machine can keep DOM hit testing. |
-| `components/StatusBar.jsx` | Bottom status bar. Shows file format, pixel dimensions, DPI when known, and zoom level. Zoom is clickable and resets to 100%. All fields use `DelayedHint`. |
-| `components/DelayedHint.jsx` | Portal-rendered tooltip that appears after a 1 s hover delay. Uses a two-pass `useLayoutEffect` to clamp the tooltip inside the viewport before making it visible, avoiding flicker and edge clipping. |
-| `components/*Panel.jsx` | Mode-specific sidebar controls. `AdjustmentsPanel` owns resize, trim borders, auto-contrast, levels, descreen, dust removal, touch-up brush, and disc straight-edge controls. `ShortcutsPanel` accepts `canSave` and `imageLoaded` props and applies `.shortcut-item--disabled` to unavailable shortcuts. `ToolsPanel` is a collapsible sidebar panel between Adjustments and Shortcuts that opens the Image Compositor. |
-| `components/CornerCalibrationModal.jsx` | Isolated batch queue for source-pixel TL/TR/BR/BL ground-truth annotation, zoom/pan verification, draft navigation, and JSON export. |
-| `components/ResizeModal.jsx` | Modal for width/height or percentage resize with optional aspect lock and warning confirmation for large upscales. |
-| `components/CompositorModal.jsx` | Modal for image stitching. Manages an ordered list of image paths and an orientation selector, calls `CompositorStitch`, shows a preview, and exposes a “Load output” button that calls `CompositorLoadResult` and triggers `handleCompositorLoad`. |
-
-`ctrlDragRef` and `shiftDragRef` are defined in `App.jsx` rather than moved to `useMouseHandlers` because `PreviewCanvas` reads their live values for disc-guide rendering while the mouse handlers write them during drag interactions.
+| `internal/appapi/types.go`, `app_api_aliases.go`, `ui/backend.go` | Shared UI-free request/result DTOs, `AppHost` interface, `Package main` type aliases, and the `ui.Backend` interface implemented by `*App`. |
+| `app_host.go`, `ui/host.go` | `AppHost` helper methods and `gioHost` implementation bridging native `zenity` open/save/color dialogs, external URLs, window titles, and async touch-up notifications. |
+| `ui/platform_windows.go`, `ui/platform_other.go` | OS window hooks (`WM_DROPFILES` drag-and-drop, window icon from `appIconPNG`), external URL open, and OS spatial keyboard layout queries (`W/A/S/D/Q/E` localized labels with QWERTY fallback). |
+| `ui/theme.go`, `ui/widgets.go` | Palette constants matching Atropos dark theme, `material.Theme` setup, buttons, commit-on-release sliders, delayed hover tooltips (1 s delay), dropdowns, inputs, and animated accordions. |
+| `ui/controller.go` | `EditorUI` state machine: sequential `backendJobs` worker, UI queue (`uiQueue`), mode switches, load/save/recrop/close handlers, corner/disc/line/normal/touchup orchestration, `detectGen` / `transitionGen` guards, and `layoutRoot`. |
+| `ui/canvas_input.go` | Pointer state machine across all 4 modes, adjustments marquee, touch-up brush + right-drag resize, disc `Ctrl+Drag` shift and `Shift+Drag` rotate (`computeDiscShift`), straight-edge drag, and line/rect handle editing. |
+| `ui/shortcuts.go` | Global/modal keyboard shortcuts (`Ctrl+O/S/C/V/Z/Y/A/D/W`, `Space+Drag`, `Enter`, `Escape`, disc arrows / `+/-` / `Y`, spatial `WASDQE`) and optimistic edge-crop helpers. |
+| `ui/viewport.go` | GPU viewport renderer (`viewportState`): in-process `*image.NRGBA` region downsampling on a background worker, 6-entry LRU `paint.ImageOp` cache, scrollbars, live disc affine transform, and vector guide rendering (`drawCanvasGuides`). |
+| `ui/sidebar.go`, `ui/adjustments.go`, `ui/statusbar.go` | Resizable left sidebar (200–600 dp, double-click reset), mode panels, Adjustments accordion (selection toggle, tools, Descreen, Dust, Touch-up, Stretch/Levels), Tools/Shortcuts accordions, top toolbar, bottom status bar, and loading overlay. |
+| `ui/modals.go`, `ui/options.go` | Backdrop pointer isolation, `ErrorModal`, `ConfirmationModal` (2- and 3-button), `AboutModal`, `ResizeModal` (aspect lock & 2M-px upscale prompt), and 6-tab `OptionsModal`. |
+| `ui/compositor.go`, `ui/calibration.go` | `CompositorModal` (stitch + repeated-scan overlay mask brush) and isolated `CornerCalibrationModal` (batch queue, `ResolveCalibrationImage` viewport, 4-corner annotation, JSON export). |
 
 ---
 
@@ -1030,159 +1023,41 @@ imagePreviewURL(img)
     register the immutable *image.NRGBA pointer as a numbered revision
     return /__atropos/preview/{session}/{revision}.jpg as the opaque revision identity
 
-RenderPreviewViewport({ preview, x, y, width, height, destWidth, destHeight, quality })
-    validate the opaque revision identity
-    validate and clamp the requested source rectangle
-    rasterize directly from that source rectangle to destWidth×destHeight
-    serialize JPEG encodes so work cannot pile up inside the encoder
-    cache immutable encoded rasters by revision + rectangle + output size + quality
-    return only that viewport JPEG through Wails RPC as data:image/jpeg;base64,...
-
-Compatibility URLs:
-GET /__atropos/preview/{session}/{revision}.jpg?x=X&y=Y&w=W&h=H&dw=DW&dh=DH&q=88
-    legacy/debug viewport HTTP transport
-GET /__atropos/preview/{session}/{revision}-low.jpg
-    legacy 1600px-max JPEG quality 85
-GET /__atropos/preview/{session}/{revision}.jpg
-    legacy full-frame JPEG quality 95
+ResolvePreviewImage(previewURL) / ResolveCalibrationImage(previewURL)
+    look up the immutable *image.NRGBA pointer directly in-process (zero JPEG round-trip)
 ```
 
-The full-resolution preview never travels through the Wails JSON/base64 method
-bridge. `imagePreviewURL` sends only an opaque revision URL; the backend retains
-the immutable source pointer while that revision remains in the bounded preview
-store. The *viewport-sized encoded JPEG* does cross the Wails bridge. This is
-intentional: on Windows/WebView2, the dynamic AssetsHandler can complete a
-query-parameterized image request while a programmatically created image never
-fires either `load` or `error`. Sending the already-small viewport raster through
-the normal Wails promise lifecycle avoids that ambiguous resource path without
-returning to full-frame IPC. Because revisions retain source pixels, the live
-revision store is intentionally capped at four entries.
-
-`PreviewCanvas` converts the scroller viewport through the logical image surface
-into an image-space source rectangle, adds a modest overscan margin, quantizes
-source bounds to reduce cache churn, and asks for only the raster density needed
-for the current CSS zoom and device-pixel ratio. It never intentionally upsamples
-beyond source-pixel density. Backend requests are defensively capped at 4096
-pixels per dimension and 16 MiPixels. The server resizer samples directly from
-the requested source rectangle, so a fit-to-window request does not first
-allocate a full-resolution crop.
-
-Only one Wails viewport request is in flight from the frontend at a time. Pan and
-zoom activity that occurs during an encode is coalesced into one follow-up
-request for the latest camera state. Successful data-URL responses decode through
-`HTMLImageElement` and enter a small LRU-style raster cache. During pan/zoom,
-cached covering/neighboring rasters can be drawn immediately while a better
-raster is in flight. The visible canvas stays viewport-sized (scaled by DPR); it
-is never allocated at full source-image dimensions merely because the source is
-large.
-
-Before drawing, the frontend clips each cached raster and the checkerboard
-skeleton to the visible canvas and maps that intersection back to bitmap
-coordinates. This keeps `drawImage`/`fillRect` destination rectangles bounded
-to the viewport. In particular, it avoids a macOS WebKit rendering failure when
-a cached full-frame raster would otherwise be drawn through an offscreen
-destination wider than the GPU texture limit at high zoom.
-
-The prior presented revision stays visible until the replacement raster has
-decoded and is ready to draw. `App.jsx` therefore still distinguishes the
-authoritative backend `preview` URL from `presentedPreview`; user-facing busy
-state remains `backend loading || preview presentation pending`. Dimensions,
-status metadata, and guide state advance with canvas presentation rather than
-with a DOM image `onLoad`. A full image-session token change still prevents a
-persistent WebView cache from confusing revisions across loads or launches.
-
-Touch-up commits remain incremental. Their transparent changed-pixel patch is
-decoded and composited by `PreviewCanvas` over the active revision, avoiding a
-full-frame refresh. Disc live drag likewise uses the renderer to transform the
-unmasked preview locally while the backend remains authoritative for the final
-commit.
+`viewportState` (`ui/viewport.go`) converts the scroller viewport through the logical stage geometry into a quantized, overscanned image-space source rectangle, asks the single-flight background worker to downsample only that visible region (`downsampleViewportRegion`), uploads the resulting `paint.ImageOp` into a 6-entry LRU cache, and composites it on the GPU. While panning or zooming, cached covering/neighboring rasters stay visible until the higher-density replacement completes. Disc live drag transforms the active raster via a GPU `f32.Affine2D` matrix while keeping the backend authoritative for final commit.
 
 ---
 
-## Frontend Coordinate System
+## UI Coordinate System
 
-`imgRef` no longer points at a visible DOM `<img>`. It points at a transparent
-logical image surface whose CSS width/height are exactly the currently presented
-image dimensions after fit-width and zoom. The surface defines scroll extent,
-pointer hit testing, and the shared display geometry for the viewport renderer.
+`viewportState.computeLayout` computes the exact stage rectangle (`StageX`, `StageY`, `StageWidth`, `StageHeight`) in device pixels from `fitWidthFor` and `Zoom`.
 
-Existing interaction code continues to use `displayToImage(dispX, dispY)`:
+Interaction code converts display coordinates inside the stage back to source image coordinates via `displayToImage(dispX, dispY)`:
 
-```javascript
-displayToImage(dispX, dispY) {
-    rect = imgRef.current.getBoundingClientRect()
-    return {
-        x: round(dispX * (realImageDims.w / rect.width)),
-        y: round(dispY * (realImageDims.h / rect.height)),
-    }
-}
+```go
+displayToImage(dispX, dispY, dims, stageW, stageH)
+    x = round(dispX * (dims.X / stageW))
+    y = round(dispY * (dims.Y / stageH))
 ```
 
-- `dispX/dispY` are CSS-pixel offsets relative to the logical image surface.
-- `realImageDims` is the authoritative source size reported by Go.
-- The ratio `realImageDims.w / rect.width` is the display-to-image scale factor.
-- `PreviewCanvas` uses the same logical surface rectangle to map image-space
-  pixels into viewport canvas coordinates, so pointer math and visible pixels
-  cannot drift because of independent DOM image sizing.
+All vector guides (detected/selected corners, touch-up strokes/cursor, line endpoints, Normal marquee, adjustment selection marquee, disc circle/cutout, straight-edge preview, and compositor overlay stroke) are drawn directly by `drawCanvasGuides` using `stagePointFromImage`, so pointer hit testing and rendered overlays share one exact transform.
 
-Visible persistent guides are drawn directly into the canvas from image-space
-state: detected/selected corners, touch-up strokes, line geometry, Normal crop,
-disc guide/cutout, and straight-edge state. `ImageOverlays.jsx` now supplies
-only transparent DOM hit targets for editable Normal/Line handles. Transient
-and persistent drawings therefore share one camera transform while preserving
-large DOM hit areas for the existing mouse state machine.
-
-**`lineStartImgRef`:** In line mode, image-space coordinates are captured in
-`lineStartImgRef` at mousedown so the live drag overlay and final committed line
-start remain stable if the user scrollwheels to zoom mid-drag.
+In line mode, `e.lineStartImg` captures the start point in image space on pointer press so wheel-zooming mid-drag does not distort the endpoint.
 
 ---
 
-## Zoom and Fit Width (`hooks/useZoomPan.js`)
+## Zoom and Fit Width (`ui/viewport.go`)
 
-```javascript
-fitWidth = min(container.clientWidth, container.clientHeight * aspectRatio)
+```go
+fitWidth = min(vpW, vpH * aspectRatio)
 displayWidth = fitWidth * zoom
 displayHeight = displayWidth / aspectRatio
 ```
 
-The transparent logical image surface is assigned that display size and owns
-scroll extent. The visible canvas remains fixed to the scroller viewport and is
-backed at approximately `clientWidth × devicePixelRatio` by
-`clientHeight × devicePixelRatio`; it does not grow to source-image dimensions.
-`PreviewCanvas` derives the visible source rectangle from the scroller and
-logical surface, then requests an appropriate LOD raster for that rectangle.
-
-`fitWidth` is recalculated by:
-1. `handleImgLoad(dims)` - now called when `PreviewCanvas` presents a decoded revision
-2. `ResizeObserver` on `canvasRef` - fires when the viewport container is resized
-
-Do not zero `fitWidth` while waiting for raster decode. Preserve the prior
-presented geometry until the replacement revision is ready, then update fit
-from the presented dimensions. This keeps interaction metadata and pixels
-atomic without depending on browser `<img>` load behavior.
-
-**Scroll-wheel zoom formula:** The wheel handler uses
-`imgRef.current.getBoundingClientRect()` to compute cursor position relative to
-the logical image surface's actual left/top edge. This accounts for centering
-when the image is smaller than the viewport. `pendingScrollRef` is set inside
-the `setZoom` updater and applied synchronously in `useLayoutEffect([zoom])`
-after the DOM commit.
-
-The maximum zoom is image-aware: at least the historical 5× limit, or enough
-to render two CSS pixels per source pixel for a large source image, with a
-defensive ceiling of 40×. The viewport raster request itself does not upsample
-past source-pixel density; extra zoom is performed by the canvas presentation
-transform.
-
-**Scroll-surface invariant:** `.preview-scroll-surface` / the logical image
-stage, not the visible canvas, defines overflow dimensions. Do not let that
-surface flex-shrink to the viewport or hide its scroll extent, or horizontal and
-vertical pan will disappear.
-
-### Space+Drag Pan
-
-Holding Space while dragging pans via `canvasRef.current.scrollLeft/scrollTop`. `e.preventDefault()` is called for **every** space keydown including repeats (suppresses native scroll), but `spaceDownRef`/`spacePanMode` only update on the first press.
+`maxUsefulZoom` allows at least `5x` zoom, or up to 2 display pixels per source pixel for large images, capped at `40x`. Wheel zooming anchors the cursor's image-space point under the pointer before adjusting `ScrollX` / `ScrollY`. Holding Space while dragging (or middle-mouse dragging) pans `ScrollX` / `ScrollY`. Custom scrollbars drawn after `canvasTag` allow dragging the horizontal and vertical thumbs directly.
 
 ---
 
@@ -1197,8 +1072,8 @@ SaveImage(req)
          .bmp       → BMP
          .tiff/.tif → TIFF
          default    → PNG with BestSpeed compression + 1MiB bufio.Writer
-    3. If CLI post-save command is configured, launch it with `{path}` substitution
-    4. If CLI post-save-exit is enabled, quit after launching command
+    3. If CLI or settings post-save command is configured, run RunPostSaveCommand
+    4. If CLI --post-save-exit or CloseAfterSave setting is enabled, close window
     5. Return "Saved to {path}"
 ```
 
@@ -1206,22 +1081,18 @@ SaveImage(req)
 
 ---
 
-## Wails FFI Bridge (`frontend/wailsjs/go/main/App.js`)
+## Host Bridge (`app_host.go`, `ui/host.go`)
 
-This file is auto-generated by Wails during `wails dev` / `wails build`.
-
-- Do not edit `frontend/wailsjs/go/main/App.js` by hand.
-- If you add/rename Go methods exported from `App`, rerun the Wails toolchain to regenerate the bridge.
-- Complex argument/return types are declared in `frontend/wailsjs/go/models.ts`.
+`App` never imports a GUI toolkit directly in core backend files. Native OS dialogs, window title updates, quit notifications, external URL launches, and `touchup-done` notifications flow through the UI-free `AppHost` interface (`internal/appapi/types.go`, wrapped by `app_host.go`), implemented at runtime by `gioHost` (`ui/host.go`) via Gio and `github.com/ncruces/zenity`. In tests where `a.host` is nil, helpers fall back cleanly.
 
 ---
 
 ## Error Handling
 
-- **Recoverable errors** (invalid state, bad args): Go returns `(nil, error)` → Wails rejects the JS promise → `catch` block in the frontend handler → `ErrorModal`
+- **Recoverable errors** (invalid state, bad args): Go returns `(nil, error)` → `EditorUI` displays `ErrorModal`
 - **Touch-up failure**: `ErrorModal` with user-friendly message; if IOPaint backend, includes a hint to check the server
-- **WASDQE before crop**: guarded in `useKeyboardShortcuts` - calls `showStatus(...)` instead of forwarding to Go (prevents error modal)
-- **Destructive confirmation** (Re-crop): `ConfirmationModal` (Cancel / Continue) before calling `RecropImage`. Use this pattern for any future action that irreversibly discards session state.
+- **WASDQE before crop**: guarded in `ui/shortcuts.go` — calls `showStatus("Apply a crop first before adjusting")` instead of forwarding to Go
+- **Destructive confirmation** (unsaved close, unsaved load discard, large resize upscale, dirty calibration close): `ConfirmationModal` before discarding state
 - **Warp outpaint failure**: hard error; no fallback
 - **Ctrl+W / Cmd+W**: fires before the `imageLoaded` guard, so quitting works even when no image is loaded
 
@@ -1266,7 +1137,7 @@ A standalone planar image compositor with two independent modes. Segment stitchi
 | `compositorOverlay` | `*compositor.OverlaySession` | Aligned repeated-scan layers and editable mask strokes. The full-resolution result is rendered when loaded or saved. |
 | `compositorMu` | `sync.Mutex` | Protects `compositorResult`. |
 
-### Wails-facing methods
+### UI-facing methods (`app_compositor.go`)
 
 - **`CompositorOpenFilesDialog()`** - multi-file picker returning selected paths
 - **`CompositorStitch(req)`** - decodes all images, reverses path order for `"rtl"`/`"btt"` orientations, runs `stitchImages`, caches result, returns preview + dimensions
@@ -1285,11 +1156,11 @@ A standalone planar image compositor with two independent modes. Segment stitchi
 
 `AlignOverlay` reuses the stitch feature matcher and homography estimator but tests 0°, 90°, 180°, and 270° for every scan against the first. The first scan fixes output dimensions and supplies every unpainted pixel. A brush stroke is stored in normalized output coordinates for one later scan; its mask reveals that scan in the painted area. Each stroke stores a feather fraction of its radius: 0 makes a hard edge, while higher values linearly blend a wider rim (the UI defaults to 20%). If strokes overlap, later scans in the list are on top. Preview renders are limited to 1400 px on the longest side and fit within the modal's available preview area, preserving the source aspect ratio and brush coordinates. Load/save render from full-resolution sources. Mask edits invalidate the cached full-resolution result.
 
-### Frontend flow
+### UI flow (`ui/compositor.go`)
 
-`handleCompositorLoad(info)` receives the `ImageInfo` from `CompositorLoadResult`, updates all image state, calls `resetImageState()`, updates `suggestedCornerParamsRef.current`, then switches to Corner mode and runs corner detection. The `CompositorModal` `onLoad` callback closes the modal **before** calling `handleCompositorLoad`.
+`compositorModalState.handleLoadOutput` calls `CompositorLoadResult`, closes `compositorOpen`, resets UI image state, and feeds the returned `ImageInfo` into `EditorUI.applyLoadedImageInfo` (updating image metadata, auto corner params if enabled, and detecting corners when in Corner mode).
 
-Closing the compositor modal drops its frontend preview URL but retains its paths, aligned layers, masks, and dimensions. On reopening, the modal calls `CompositorRefreshPreview()` to obtain a fresh URL; `CompositorLoadResult` resets the shared preview store, so the earlier URL cannot be reused.
+Closing the compositor modal drops the modal without discarding backend alignment, masks, or paths. On reopening, `compositorModalState.open` calls `CompositorRefreshPreview()` to obtain a valid preview revision if a main document load reset invalidated the previous preview key.
 
 ---
 
@@ -1305,9 +1176,7 @@ The backend decodes one calibration scan at a time into
 `CalibrationLoadImage` does not read or write `originalImage`, `currentImage`,
 `warpedImage`, history, modes, or any adjustment state. The separate store is
 important: reviewing many scans cannot evict the active document's preview.
-`RenderCalibrationPreviewViewport` uses the same bounded viewport raster path as
-the main canvas, so Fit, 1:1, and 2:1 annotation remain full-source-coordinate
-operations without sending an entire raw scan over the Wails bridge.
+`ResolveCalibrationImage` reads directly from `calibrationPreviewAssets`, keeping Fit, 25%, 50%, 100%, and 200% zoom annotation in full source-pixel coordinates without touching the main preview revision store.
 
 Points are recorded in strict screen-clockwise semantic order: top-left,
 top-right, bottom-right, bottom-left. Export writes schema-versioned JSON with

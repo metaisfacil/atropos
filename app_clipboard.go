@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"atropos/internal/raster"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // LoadImageFromClipboard reads and decodes the clipboard entirely in Go, then
@@ -34,7 +32,7 @@ func (a *App) LoadImageFromClipboard() (*ImageInfo, error) {
 	a.clipboardMu.Unlock()
 	if err != nil {
 		msg := fmt.Sprintf("LoadImageFromClipboard: read error: %v", err)
-		a.logf(msg)
+		a.logf("%s", msg)
 		return nil, errors.New(msg)
 	}
 	if nrgba == nil || nrgba.Bounds().Empty() {
@@ -56,14 +54,12 @@ func (a *App) LoadImageFromClipboard() (*ImageInfo, error) {
 	preview, err := a.imagePreviewURL(a.currentImage)
 	if err != nil {
 		msg := fmt.Sprintf("LoadImageFromClipboard: preview registration error: %v", err)
-		a.logf(msg)
+		a.logf("%s", msg)
 		return nil, errors.New(msg)
 	}
 	a.logf("LoadImageFromClipboard: preview registration took %v", time.Since(t2))
 
-	if a.ctx != nil {
-		runtime.WindowSetTitle(a.ctx, AppBaseTitle()+" — [Clipboard Data]")
-	}
+	a.setWindowTitle(AppBaseTitle() + " — [Clipboard Data]")
 	b := nrgba.Bounds()
 	a.logf("LoadImageFromClipboard: total %v, returning %dx%d, preview=%q", time.Since(t0), b.Dx(), b.Dy(), preview)
 	return &ImageInfo{
