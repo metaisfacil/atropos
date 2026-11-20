@@ -22,11 +22,11 @@
 // pmPatchSSD7OpaqueFullAVX2 computes all seven rows before reducing the four
 // integer lanes. Full-cost callers use this path with no threshold checks.
 TEXT ·pmPatchSSD7OpaqueFullAVX2(SB), NOSPLIT, $0-12
-	MOVQ args+0(FP), BP
-	MOVQ 0(BP), R8
-	MOVQ 8(BP), R9
-	MOVQ 16(BP), SI
-	MOVQ 24(BP), R10
+	MOVQ args+0(FP), BX
+	MOVQ 0(BX), R8
+	MOVQ 8(BX), R9
+	MOVQ 16(BX), SI
+	MOVQ 24(BX), R10
 	VPXOR X15, X15, X15
 
 	ACCUMULATE_SSD7_ROW
@@ -60,12 +60,12 @@ TEXT ·pmPatchSSD7OpaqueFullAVX2(SB), NOSPLIT, $0-12
 // partial sum reaches the incumbent. Returning the limit is sufficient because
 // bounded results are used only in a strict less-than comparison.
 TEXT ·pmPatchSSD7OpaqueBoundedAVX2(SB), NOSPLIT, $0-12
-	MOVQ args+0(FP), BP
-	MOVQ 0(BP), R8
-	MOVQ 8(BP), R9
-	MOVQ 16(BP), SI
-	MOVQ 24(BP), R10
-	MOVL 32(BP), R11
+	MOVQ args+0(FP), BX
+	MOVQ 0(BX), R8
+	MOVQ 8(BX), R9
+	MOVQ 16(BX), SI
+	MOVQ 24(BX), R10
+	MOVL 32(BX), R11
 	VPXOR X15, X15, X15
 
 	ACCUMULATE_SSD7_ROW

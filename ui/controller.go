@@ -389,17 +389,8 @@ func (e *EditorUI) RunWindowLoop() error {
 				ev.Abort()
 				e.handleCloseRequest()
 			}
-		case app.Win32ViewEvent:
-			if ev.Valid() {
-				hwnd := ev.HWND
-				if e.host != nil {
-					e.host.hwnd.Store(hwnd)
-				}
-				icon := e.appIconPNG
-				go e.win.Run(func() {
-					attachWindowsWindowHooks(hwnd, icon, e.handleDroppedFiles)
-				})
-			}
+		case app.ViewEvent:
+			e.handlePlatformViewEvent(ev)
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, ev)
 			e.layoutRoot(gtx)

@@ -11,6 +11,7 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
+	"gioui.org/app"
 	"github.com/ncruces/zenity"
 	"golang.org/x/sys/windows"
 )
@@ -102,6 +103,21 @@ func winWindowSubclassProc(hwnd, msg, wParam, lParam, uIdSubclass, dwRefData uin
 	}
 	ret, _, _ := procDefSubclassProc.Call(hwnd, msg, wParam, lParam)
 	return ret
+}
+
+func (e *EditorUI) handlePlatformViewEvent(ev app.ViewEvent) {
+	wev, ok := ev.(app.Win32ViewEvent)
+	if !ok || !wev.Valid() {
+		return
+	}
+	hwnd := wev.HWND
+	if e.host != nil {
+		e.host.hwnd.Store(hwnd)
+	}
+	icon := e.appIconPNG
+	go e.win.Run(func() {
+		attachWindowsWindowHooks(hwnd, icon, e.handleDroppedFiles)
+	})
 }
 
 func attachWindowsWindowHooks(hwnd uintptr, iconPNG []byte, onFilesDropped func([]string)) {
