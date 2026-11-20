@@ -23,7 +23,7 @@ jobs:
           - name: macOS
             os: macos-latest
             ldflags: ""
-            binary: build/bin/atropos
+            binary: build/bin/Atropos.app
             asset-name: atropos-macos-universal.zip
           - name: Linux
             os: ubuntu-latest
@@ -49,6 +49,20 @@ jobs:
         shell: bash
         run: echo "APP_VERSION=$(git log -1 --format=%cd-%h --date=format:%Y%m%d --abbrev=6)" >> "$GITHUB_ENV"
 
+      - name: Generate Windows resource (.syso)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if ! command -v windres >/dev/null 2>&1; then
+            for d in /c/msys64/mingw64/bin /c/msys64/ucrt64/bin; do
+              if [[ -x "$d/windres.exe" ]]; then
+                export PATH="$d:$PATH"
+                break
+              fi
+            done
+          fi
+          windres -F pe-x86-64 -O coff -I build/windows -i build/windows/atropos.rc -o rsrc_windows_amd64.syso
+
       - name: Build application
         shell: bash
         run: |
@@ -56,7 +70,26 @@ jobs:
           if [[ "${{ runner.os }}" == "macOS" ]]; then
             CGO_ENABLED=1 GOARCH=amd64 go build -ldflags "-X main.AppVersion=$APP_VERSION" -o build/bin/atropos-amd64 .
             CGO_ENABLED=1 GOARCH=arm64 go build -ldflags "-X main.AppVersion=$APP_VERSION" -o build/bin/atropos-arm64 .
-            lipo -create -output "${{ matrix.binary }}" build/bin/atropos-amd64 build/bin/atropos-arm64
+            APP_BUNDLE="${{ matrix.binary }}"
+            mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
+            lipo -create -output "$APP_BUNDLE/Contents/MacOS/atropos" build/bin/atropos-amd64 build/bin/atropos-arm64
+            chmod +x "$APP_BUNDLE/Contents/MacOS/atropos"
+            sed "s/__APP_VERSION__/$APP_VERSION/g" build/darwin/Info.plist > "$APP_BUNDLE/Contents/Info.plist"
+            ICONSET=build/bin/atropos.iconset
+            mkdir -p "$ICONSET"
+            sips -z 16 16     build/appicon.png --out "$ICONSET/icon_16x16.png" >/dev/null
+            sips -z 32 32     build/appicon.png --out "$ICONSET/icon_16x16@2x.png" >/dev/null
+            sips -z 32 32     build/appicon.png --out "$ICONSET/icon_32x32.png" >/dev/null
+            sips -z 64 64     build/appicon.png --out "$ICONSET/icon_32x32@2x.png" >/dev/null
+            sips -z 128 128   build/appicon.png --out "$ICONSET/icon_128x128.png" >/dev/null
+            sips -z 256 256   build/appicon.png --out "$ICONSET/icon_128x128@2x.png" >/dev/null
+            sips -z 256 256   build/appicon.png --out "$ICONSET/icon_256x256.png" >/dev/null
+            sips -z 512 512   build/appicon.png --out "$ICONSET/icon_256x256@2x.png" >/dev/null
+            sips -z 512 512   build/appicon.png --out "$ICONSET/icon_512x512.png" >/dev/null
+            cp build/appicon.png "$ICONSET/icon_512x512@2x.png"
+            iconutil -c icns "$ICONSET" -o "$APP_BUNDLE/Contents/Resources/iconfile.icns"
+            rm -rf "$ICONSET"
+            codesign --force --deep --sign - "$APP_BUNDLE"
           else
             go build -ldflags "${{ matrix.ldflags }} -X main.AppVersion=$APP_VERSION" -o "${{ matrix.binary }}" .
           fi
@@ -65,7 +98,7 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ matrix.asset-name }}" == *.zip ]]; then
-            cd build/bin && zip -r "$GITHUB_WORKSPACE/${{ matrix.asset-name }}" atropos
+            ditto -c -k --sequesterRsrc --keepParent "${{ matrix.binary }}" "$GITHUB_WORKSPACE/${{ matrix.asset-name }}"
           else
             cp "${{ matrix.binary }}" "${{ matrix.asset-name }}"
           fi

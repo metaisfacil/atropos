@@ -70,6 +70,20 @@ jobs:
         shell: bash
         run: echo "APP_VERSION=$(git log -1 --format=%cd-%h --date=format:%Y%m%d --abbrev=6)" >> "$GITHUB_ENV"
 
+      - name: Generate Windows resource (.syso)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if ! command -v windres >/dev/null 2>&1; then
+            for d in /c/msys64/mingw64/bin /c/msys64/ucrt64/bin; do
+              if [[ -x "$d/windres.exe" ]]; then
+                export PATH="$d:$PATH"
+                break
+              fi
+            done
+          fi
+          windres -F pe-x86-64 -O coff -I build/windows -i build/windows/atropos.rc -o rsrc_windows_amd64.syso
+
       - name: Build application
         shell: bash
         run: |

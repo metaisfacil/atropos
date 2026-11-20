@@ -3,6 +3,9 @@
 package ui
 
 import (
+	"bytes"
+	"image"
+	"image/png"
 	"os/exec"
 	"strings"
 	"sync"
@@ -13,16 +16,23 @@ import (
 
 	"gioui.org/app"
 	"github.com/ncruces/zenity"
+	xdraw "golang.org/x/image/draw"
 	"golang.org/x/sys/windows"
 )
 
 const (
-	wmDropFiles   = 0x0233
-	wmSetIcon     = 0x0080
-	iconSmall     = 0
-	iconBig       = 1
-	lrDefaultSize = 0x00000040
-	mapVkVscToVk  = 3
+	wmDropFiles  = 0x0233
+	wmDpiChanged = 0x02E0
+	wmSetIcon    = 0x0080
+	iconSmall    = 0
+	iconBig      = 1
+	gclpHIcon    = ^uintptr(13) // -14
+	gclpHIconSm  = ^uintptr(33) // -34
+	smCxIcon     = 11
+	smCyIcon     = 12
+	smCxSmIcon   = 49
+	smCySmIcon   = 50
+	mapVkVscToVk = 3
 )
 
 var (
@@ -40,7 +50,13 @@ var (
 	procDragQueryFileW                = modShell32.NewProc("DragQueryFileW")
 	procDragFinish                    = modShell32.NewProc("DragFinish")
 	procCreateIconFromResourceEx      = modUser32.NewProc("CreateIconFromResourceEx")
+	procDestroyIcon                   = modUser32.NewProc("DestroyIcon")
 	procSendMessageW                  = modUser32.NewProc("SendMessageW")
+	procSetClassLongPtrW              = modUser32.NewProc("SetClassLongPtrW")
+	procGetDpiForWindow               = modUser32.NewProc("GetDpiForWindow")
+	procGetDpiForSystem               = modUser32.NewProc("GetDpiForSystem")
+	procGetSystemMetricsForDpi        = modUser32.NewProc("GetSystemMetricsForDpi")
+	procGetSystemMetrics              = modUser32.NewProc("GetSystemMetrics")
 	procGetKeyboardLayout             = modUser32.NewProc("GetKeyboardLayout")
 	procMapVirtualKeyExW              = modUser32.NewProc("MapVirtualKeyExW")
 	procToUnicodeEx                   = modUser32.NewProc("ToUnicodeEx")
@@ -48,6 +64,9 @@ var (
 	winHookMu      sync.Mutex
 	winHookedHWND  uintptr
 	winDropHandler func([]string)
+	winIconImg     image.Image
+	winIconBig     uintptr
+	winIconSmall   uintptr
 	winSubclassCB  = syscall.NewCallback(winWindowSubclassProc)
 )
 
@@ -101,6 +120,11 @@ func winWindowSubclassProc(hwnd, msg, wParam, lParam, uIdSubclass, dwRefData uin
 		}
 		return 0
 	}
+	if msg == wmDpiChanged {
+		ret, _, _ := procDefSubclassProc.Call(hwnd, msg, wParam, lParam)
+		setWindowsWindowIcon(hwnd, nil, wParam&0xFFFF)
+		return ret
+	}
 	ret, _, _ := procDefSubclassProc.Call(hwnd, msg, wParam, lParam)
 	return ret
 }
@@ -140,31 +164,129 @@ func attachWindowsWindowHooks(hwnd uintptr, iconPNG []byte, onFilesDropped func(
 	if procSetWindowSubclass.Find() == nil {
 		procSetWindowSubclass.Call(hwnd, winSubclassCB, 1, 0)
 	}
-	setWindowsWindowIcon(hwnd, iconPNG)
+	setWindowsWindowIcon(hwnd, iconPNG, 0)
 }
 
-func setWindowsWindowIcon(hwnd uintptr, iconPNG []byte) {
-	if hwnd == 0 || len(iconPNG) == 0 || procCreateIconFromResourceEx.Find() != nil {
+func windowsWindowDPI(hwnd uintptr) uintptr {
+	if hwnd != 0 && procGetDpiForWindow.Find() == nil {
+		if dpi, _, _ := procGetDpiForWindow.Call(hwnd); dpi > 0 {
+			return dpi
+		}
+	}
+	if procGetDpiForSystem.Find() == nil {
+		if dpi, _, _ := procGetDpiForSystem.Call(); dpi > 0 {
+			return dpi
+		}
+	}
+	return 96
+}
+
+func windowsIconSize(hwnd, dpi uintptr, smX, smY, fallback int) (int, int) {
+	if dpi == 0 {
+		dpi = windowsWindowDPI(hwnd)
+	}
+	var w, h int
+	if procGetSystemMetricsForDpi.Find() == nil {
+		rx, _, _ := procGetSystemMetricsForDpi.Call(uintptr(smX), dpi)
+		ry, _, _ := procGetSystemMetricsForDpi.Call(uintptr(smY), dpi)
+		w, h = int(rx), int(ry)
+	} else if procGetSystemMetrics.Find() == nil {
+		rx, _, _ := procGetSystemMetrics.Call(uintptr(smX))
+		ry, _, _ := procGetSystemMetrics.Call(uintptr(smY))
+		w, h = int(rx), int(ry)
+	}
+	if w <= 0 || h <= 0 {
+		return fallback, fallback
+	}
+	return w, h
+}
+
+func createResampledIcon(src image.Image, w, h int) uintptr {
+	if src == nil || w <= 0 || h <= 0 || procCreateIconFromResourceEx.Find() != nil {
+		return 0
+	}
+	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), xdraw.Over, nil)
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, dst); err != nil {
+		return 0
+	}
+	raw := buf.Bytes()
+	if len(raw) == 0 {
+		return 0
+	}
+	hIcon, _, _ := procCreateIconFromResourceEx.Call(
+		uintptr(unsafe.Pointer(&raw[0])),
+		uintptr(len(raw)),
+		1,
+		0x00030000,
+		uintptr(w),
+		uintptr(h),
+		0,
+	)
+	return hIcon
+}
+
+func setWindowsWindowIcon(hwnd uintptr, iconPNG []byte, dpi uintptr) {
+	if hwnd == 0 || procCreateIconFromResourceEx.Find() != nil {
 		return
 	}
-	for _, spec := range []struct {
-		wParam uintptr
-		size   uintptr
-	}{
-		{iconBig, 48},
-		{iconSmall, 16},
-	} {
-		hIcon, _, _ := procCreateIconFromResourceEx.Call(
-			uintptr(unsafe.Pointer(&iconPNG[0])),
-			uintptr(len(iconPNG)),
-			1,
-			0x00030000,
-			spec.size,
-			spec.size,
-			lrDefaultSize,
-		)
-		if hIcon != 0 {
-			procSendMessageW.Call(hwnd, wmSetIcon, spec.wParam, hIcon)
+
+	winHookMu.Lock()
+	img := winIconImg
+	winHookMu.Unlock()
+	if img == nil && len(iconPNG) > 0 {
+		if decoded, err := png.Decode(bytes.NewReader(iconPNG)); err == nil {
+			winHookMu.Lock()
+			if winIconImg == nil {
+				winIconImg = decoded
+			}
+			img = winIconImg
+			winHookMu.Unlock()
+		}
+	}
+	if img == nil {
+		return
+	}
+
+	bigW, bigH := windowsIconSize(hwnd, dpi, smCxIcon, smCyIcon, 32)
+	smallW, smallH := windowsIconSize(hwnd, dpi, smCxSmIcon, smCySmIcon, 16)
+	hBig := createResampledIcon(img, bigW, bigH)
+	hSmall := createResampledIcon(img, smallW, smallH)
+
+	hasSetClassLong := procSetClassLongPtrW.Find() == nil
+	if hBig != 0 {
+		procSendMessageW.Call(hwnd, wmSetIcon, iconBig, hBig)
+		if hasSetClassLong {
+			procSetClassLongPtrW.Call(hwnd, gclpHIcon, hBig)
+		}
+	}
+	if hSmall != 0 {
+		procSendMessageW.Call(hwnd, wmSetIcon, iconSmall, hSmall)
+		if hasSetClassLong {
+			procSetClassLongPtrW.Call(hwnd, gclpHIconSm, hSmall)
+		}
+	}
+
+	var prevBig, prevSmall uintptr
+	winHookMu.Lock()
+	if hBig != 0 {
+		prevBig = winIconBig
+		winIconBig = hBig
+	}
+	if hSmall != 0 {
+		prevSmall = winIconSmall
+		winIconSmall = hSmall
+	}
+	winHookMu.Unlock()
+
+	if procDestroyIcon.Find() == nil {
+		if prevBig != 0 && prevBig != hBig {
+			procDestroyIcon.Call(prevBig)
+		}
+		if prevSmall != 0 && prevSmall != hSmall {
+			procDestroyIcon.Call(prevSmall)
 		}
 	}
 }
