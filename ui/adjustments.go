@@ -223,7 +223,7 @@ func (e *EditorUI) layoutAdjustmentsBody(gtx layout.Context) layout.Dimensions {
 			applyDescreenLabel = "Descreening…"
 		}
 		rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(10), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical, Gap: gtx.Dp(6)}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return e.layoutLabeledSlider(gtx, "Thresh", "sld_desc_thresh", "FFT peak detection threshold",
@@ -254,7 +254,9 @@ func (e *EditorUI) layoutAdjustmentsBody(gtx layout.Context) layout.Dimensions {
 							})
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutCheckbox(gtx, e.th, &e.chkDescreenFast, e.descreenFast, "Fast mode (luminance only)", "", !busy)
+						return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layoutCheckbox(gtx, e.th, &e.chkDescreenFast, e.descreenFast, "Fast mode (luminance only)", "", !busy)
+						})
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						st := defaultButtonStyle(btnPrimary, applyDescreenLabel)
