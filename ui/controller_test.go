@@ -920,3 +920,148 @@ func TestSkipCropThenResetButtonFlow(t *testing.T) {
 	}
 }
 
+type gatedStubBackend struct {
+	*stubBackend
+	gate chan struct{}
+}
+
+func (g *gatedStubBackend) waitGate() {
+	if g.gate != nil {
+		<-g.gate
+	}
+}
+
+func (g *gatedStubBackend) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
+	g.waitGate()
+	return g.stubBackend.LoadImage(req)
+}
+
+func (g *gatedStubBackend) ResetCorners() (*ProcessResult, error) {
+	g.waitGate()
+	return g.stubBackend.ResetCorners()
+}
+
+func (g *gatedStubBackend) ResetDisc() (*ProcessResult, error) {
+	g.waitGate()
+	return g.stubBackend.ResetDisc()
+}
+
+func (g *gatedStubBackend) ClearLines() (*ProcessResult, error) {
+	g.waitGate()
+	return g.stubBackend.ClearLines()
+}
+
+func (g *gatedStubBackend) ResetNormal() (*ProcessResult, error) {
+	g.waitGate()
+	return g.stubBackend.ResetNormal()
+}
+
+func TestModeSwitchHasNoLoadingFlickerOrSidebarLayoutJump(t *testing.T) {
+	scan := writeTestScanPNG(t, "modeswitch_flicker.png", 240, 180)
+	gb := &gatedStubBackend{stubBackend: newStubBackend()}
+	ui := NewEditorUI(gb, nil, Config{AppVersion: "test"})
+	ui.InitOnStartup()
+
+	flushBackend := func() {
+		t.Helper()
+		done := make(chan struct{})
+		ui.backendJobs <- func() { close(done) }
+		<-done
+		ui.drainUIQueue()
+	}
+
+	// 1. Full document load sets loadingFull=true while in flight and clears it once applied.
+	loadGate := make(chan struct{})
+	gb.gate = loadGate
+	ui.loadFile(scan, false)
+	if !ui.loadingFull || !ui.loading || !ui.isBusy() {
+		t.Fatalf("expected loadingFull=true while loadFile is in flight: loadingFull=%v loading=%v busy=%v",
+			ui.loadingFull, ui.loading, ui.isBusy())
+	}
+	close(loadGate)
+	flushBackend()
+	flushBackend()
+	if ui.loadingFull || ui.loading || ui.isBusy() || !ui.imageLoaded || !ui.cornersDetected {
+		t.Fatalf("expected loadFile to clear loadingFull and populate corners: loadingFull=%v loading=%v busy=%v loaded=%v corners=%v",
+			ui.loadingFull, ui.loading, ui.isBusy(), ui.imageLoaded, ui.cornersDetected)
+	}
+
+	// Render one full root frame so FitWidth is initialized and measure Corner panel height.
+	var ops op.Ops
+	renderRoot := func() {
+		ops.Reset()
+		gtx := layout.Context{
+			Ops:         &ops,
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(1280, 900)),
+			Now:         time.Now(),
+		}
+		ui.layoutRoot(gtx)
+	}
+	renderMiddleAt := func(h int) int {
+		ops.Reset()
+		gtx := layout.Context{
+			Ops:         &ops,
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(360, h)),
+			Now:         time.Now(),
+		}
+		ui.overlays.beginFrame(gtx)
+		ui.layoutMiddleModeArea(gtx)
+		ui.overlays.layoutOverlayPass(gtx)
+		return ui.modePanelH
+	}
+
+	renderRoot()
+	savedFitW := ui.mainViewport.FitWidth
+	if savedFitW <= 0 {
+		t.Fatalf("expected FitWidth > 0 after initial render, got %v", savedFitW)
+	}
+	cornerMiddleH := renderMiddleAt(220)
+	if cornerMiddleH <= 220 {
+		t.Fatalf("expected corner mode panel height > 220 at 360px width, got %d", cornerMiddleH)
+	}
+
+	// 2. Switching across all modes asynchronously never flashes loadingFull, loading, isBusy, or zero FitWidth,
+	// updates sidebar modePanelH on the very first frame, and restores cached corners immediately on return.
+	for _, nextMode := range []string{"disc", "line", "normal", "corner"} {
+		gate := make(chan struct{})
+		gb.gate = gate
+		ui.handleModeSwitch(nextMode)
+
+		if ui.loadingFull || ui.loading || ui.isBusy() {
+			close(gate)
+			flushBackend()
+			t.Fatalf("switch to %s unexpectedly set busy/loading overlay: loadingFull=%v loading=%v busy=%v",
+				nextMode, ui.loadingFull, ui.loading, ui.isBusy())
+		}
+		if ui.mainViewport.FitWidth <= 0 {
+			close(gate)
+			flushBackend()
+			t.Fatalf("switch to %s zeroed FitWidth synchronously", nextMode)
+		}
+		if nextMode == "corner" && (!ui.cornersDetected || len(ui.detectedCornerPts) == 0) {
+			close(gate)
+			flushBackend()
+			t.Fatalf("switch back to corner did not synchronously restore cached corner dots")
+		}
+
+		// Sidebar middle area must reflect the new mode's height on the very first frame (no 1-frame jump).
+		immediateH := renderMiddleAt(220)
+		if nextMode == "disc" && (immediateH <= 0 || immediateH > 220 || immediateH == cornerMiddleH) {
+			close(gate)
+			flushBackend()
+			t.Fatalf("switch to disc kept stale sidebar height: got %d (corner was %d)", immediateH, cornerMiddleH)
+		}
+		if nextMode == "corner" && immediateH != cornerMiddleH {
+			close(gate)
+			flushBackend()
+			t.Fatalf("switch back to corner had wrong first-frame height %d, want %d", immediateH, cornerMiddleH)
+		}
+
+		renderRoot()
+		close(gate)
+		flushBackend()
+	}
+}
+

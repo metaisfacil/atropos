@@ -109,6 +109,7 @@ type EditorUI struct {
 
 	// Loading & status
 	loading            bool
+	loadingFull        bool
 	loadingMessage     string
 	detectingCorners   bool
 	touchupPending     bool
@@ -628,6 +629,7 @@ func (e *EditorUI) hasOpenModal() bool {
 
 func (e *EditorUI) isBusy() bool {
 	return e.loading ||
+		e.loadingFull ||
 		e.detectingCorners ||
 		e.touchupPending ||
 		e.descreenPending ||
@@ -687,6 +689,7 @@ func (e *EditorUI) showErrorMsg(msg string) {
 	}
 	e.errorMessage = msg
 	e.loading = false
+	e.loadingFull = false
 	e.loadingMessage = ""
 	e.invalidate()
 }
@@ -703,6 +706,9 @@ func (e *EditorUI) beginTransition() uint64 {
 	e.transitionGen++
 	e.detectGen++
 	e.cancelActiveCanvasDrag()
+	e.loading = false
+	e.loadingFull = false
+	e.loadingMessage = ""
 	e.detectingCorners = false
 	e.touchupPending = false
 	e.descreenPending = false
@@ -806,6 +812,7 @@ func (e *EditorUI) handlePasteImage() {
 		gen := e.beginTransition()
 		e.resetImageState(true)
 		e.loading = true
+		e.loadingFull = true
 		e.loadingMessage = "Loading image from clipboard…"
 		e.showStatus("Loading image from clipboard…")
 		e.runBackend(func() {
@@ -816,6 +823,7 @@ func (e *EditorUI) handlePasteImage() {
 				}
 				if err != nil {
 					e.loading = false
+					e.loadingFull = false
 					e.loadingMessage = ""
 					e.showError(err)
 					return
@@ -871,6 +879,7 @@ func (e *EditorUI) loadFile(filePath string, fromCompositor bool) {
 		gen := e.beginTransition()
 		e.resetImageState(true)
 		e.loading = true
+		e.loadingFull = true
 		e.loadingMessage = "Loading image…"
 		e.showStatus("Loading image…")
 		e.runBackend(func() {
@@ -881,6 +890,7 @@ func (e *EditorUI) loadFile(filePath string, fromCompositor bool) {
 				}
 				if err != nil {
 					e.loading = false
+					e.loadingFull = false
 					e.loadingMessage = ""
 					e.showError(err)
 					return
@@ -908,6 +918,7 @@ func (e *EditorUI) loadFile(filePath string, fromCompositor bool) {
 }
 
 func (e *EditorUI) applyLoadedImageInfo(info *ImageInfo, gen uint64) {
+	e.loadingFull = false
 	if info == nil {
 		e.loading = false
 		e.loadingMessage = ""
@@ -967,17 +978,20 @@ func (e *EditorUI) handleModeSwitch(nextMode string) {
 	}
 	// Set mode synchronously at top so button highlight never lags async calls.
 	e.mode = nextMode
+	e.sidebarList.Position = layout.Position{}
 	if !e.imageLoaded || e.app == nil {
 		e.setBackendMode(nextMode)
 		return
 	}
 
+	hadPostCrop := e.canRecrop || e.cropSkipped || e.discActive || e.linesProcessed || e.cornerCount >= 4
 	gen := e.beginTransition()
 	e.resetImageState(false)
-	e.mainViewport.Zoom = 1
-	e.mainViewport.FitWidth = 0
-	e.mainViewport.ScrollX = 0
-	e.mainViewport.ScrollY = 0
+	if !hadPostCrop {
+		e.mainViewport.Zoom = 1
+		e.mainViewport.ScrollX = 0
+		e.mainViewport.ScrollY = 0
+	}
 
 	dots := e.dotRadius
 	autoDetect := e.settings.AutoDetectOnModeSwitch
@@ -990,8 +1004,10 @@ func (e *EditorUI) handleModeSwitch(nextMode string) {
 		e.cornerEntry.AccentValue == e.accentValue &&
 		e.cornerEntry.UseStretch == e.useStretch
 
-	e.loading = true
-	e.loadingMessage = "Switching mode…"
+	if nextMode == "corner" && cacheValid && !hadPostCrop {
+		e.detectedCornerPts = append([]image.Point(nil), e.cornerEntry.Corners...)
+		e.cornersDetected = true
+	}
 
 	e.runBackend(func() {
 		departing := e.getBackendMode()
@@ -1013,8 +1029,6 @@ func (e *EditorUI) handleModeSwitch(nextMode string) {
 					return
 				}
 				e.mode = departing
-				e.loading = false
-				e.loadingMessage = ""
 				e.showError(err)
 			})
 			return
@@ -1044,16 +1058,25 @@ func (e *EditorUI) handleModeSwitch(nextMode string) {
 			if e.transitionGen != gen {
 				return
 			}
+			if hadPostCrop {
+				e.mainViewport.Zoom = 1
+				e.mainViewport.FitWidth = 0
+				e.mainViewport.ScrollX = 0
+				e.mainViewport.ScrollY = 0
+				if clean != nil {
+					if clean.Preview != "" {
+						e.setPreview(clean.Preview)
+					}
+					if clean.Width > 0 && clean.Height > 0 {
+						e.realImageDims = image.Pt(clean.Width, clean.Height)
+						e.discSourceDims = e.realImageDims
+					}
+				}
+			}
 			if shouldDetect {
 				e.detectCornersWithGen(gen)
 				return
 			}
-			e.loading = false
-			e.loadingMessage = ""
-			e.mainViewport.Zoom = 1
-			e.mainViewport.FitWidth = 0
-			e.mainViewport.ScrollX = 0
-			e.mainViewport.ScrollY = 0
 			if restoredCorners {
 				e.detectedCornerPts = append([]image.Point(nil), res.Corners...)
 				e.cornersDetected = len(e.detectedCornerPts) > 0
@@ -2461,7 +2484,7 @@ func (e *EditorUI) layoutRoot(gtx layout.Context) layout.Dimensions {
 	// Sidebar resize sash positioned right over the sidebar/canvas border
 	e.layoutSidebarSash(gtx, sidebarW)
 
-	if e.loading && e.loadingMessage != "" {
+	if e.loadingFull && e.loadingMessage != "" {
 		e.layoutLoadingOverlay(gtx)
 	}
 	if e.hasOpenModal() {

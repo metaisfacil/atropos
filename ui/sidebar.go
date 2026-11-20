@@ -100,7 +100,6 @@ func (e *EditorUI) layoutSidebarSash(gtx layout.Context, sidebarW int) {
 }
 
 func (e *EditorUI) layoutModeTabs(gtx layout.Context) layout.Dimensions {
-	busy := e.isBusy()
 	tabs := []struct {
 		id   string
 		name string
@@ -113,12 +112,17 @@ func (e *EditorUI) layoutModeTabs(gtx layout.Context) layout.Dimensions {
 		{"normal", "Normal", "Switch to Normal mode (rectangular crop)", &e.btnModeNormal},
 	}
 
+	preBusy := e.isBusy()
+	for _, t := range tabs {
+		if t.clk.Clicked(gtx) && !preBusy {
+			e.handleModeSwitch(t.id)
+		}
+	}
+	busy := e.isBusy()
+
 	children := make([]layout.FlexChild, 0, len(tabs))
 	for _, t := range tabs {
 		t := t
-		if t.clk.Clicked(gtx) && !busy {
-			e.handleModeSwitch(t.id)
-		}
 		children = append(children, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return e.tooltips.Wrap(gtx, "mode_"+t.id, t.hint, func(gtx layout.Context) layout.Dimensions {
 				st := defaultButtonStyle(btnModeTab, t.name)
@@ -137,31 +141,33 @@ func (e *EditorUI) layoutMiddleModeArea(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{Size: avail}
 	}
 
-	if e.modePanelH > 0 && e.modePanelH <= avail.Y {
-		padTop := (avail.Y - e.modePanelH) / 2
-		st := op.Offset(image.Pt(0, padTop)).Push(gtx.Ops)
-		cg := gtx
-		cg.Constraints.Min.Y = 0
-		cg.Constraints.Max.Y = avail.Y
-		dims := layout.Inset{Left: unit.Dp(20), Right: unit.Dp(20)}.Layout(cg, e.layoutActiveModePanel)
+	contentW := max(1, avail.X-2*gtx.Dp(20))
+	measureGtx := gtx
+	measureGtx.Constraints = layout.Constraints{
+		Min: image.Pt(contentW, 0),
+		Max: image.Pt(contentW, 1<<20),
+	}
+	macro := op.Record(gtx.Ops)
+	panelDims := e.layoutActiveModePanel(measureGtx)
+	call := macro.Stop()
+	e.modePanelH = panelDims.Size.Y
+
+	if panelDims.Size.Y <= avail.Y {
+		padTop := (avail.Y - panelDims.Size.Y) / 2
+		st := op.Offset(image.Pt(gtx.Dp(20), padTop)).Push(gtx.Ops)
+		call.Add(gtx.Ops)
 		st.Pop()
-		e.modePanelH = dims.Size.Y
 		return layout.Dimensions{Size: avail}
 	}
 
-	var measuredH int
 	layout.Inset{Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return styledList(e.th, &e.sidebarList).Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(20), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				d := e.layoutActiveModePanel(gtx)
-				measuredH = d.Size.Y
-				return d
+				call.Add(gtx.Ops)
+				return panelDims
 			})
 		})
 	})
-	if measuredH > 0 {
-		e.modePanelH = measuredH
-	}
 	return layout.Dimensions{Size: avail}
 }
 

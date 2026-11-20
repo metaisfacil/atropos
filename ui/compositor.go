@@ -259,6 +259,7 @@ func (c *compositorModalState) handleLoadOutput(e *EditorUI) {
 		gen := e.beginTransition()
 		e.resetImageState(true)
 		e.loading = true
+		e.loadingFull = true
 		e.loadingMessage = "Loading compositor output…"
 		e.compositorOpen = false
 		e.runBackend(func() {
@@ -269,6 +270,7 @@ func (c *compositorModalState) handleLoadOutput(e *EditorUI) {
 				}
 				if err != nil {
 					e.loading = false
+					e.loadingFull = false
 					e.loadingMessage = ""
 					e.showError(err)
 					return

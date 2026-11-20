@@ -29,7 +29,7 @@ const (
 	viewportSourceQuantum    = 64
 	viewportMaxDim           = 2048
 	viewportMaxPixels        = 4 * 1024 * 1024
-	viewportCacheCap         = 6
+	viewportCacheCap         = 12
 	viewportCheckerSize      = 16
 )
 
