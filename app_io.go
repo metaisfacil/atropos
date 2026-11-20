@@ -372,14 +372,16 @@ func (a *App) OpenSaveDialog() (string, error) {
 	a.logf("OpenSaveDialog: showing dialog")
 
 	defaultDir := ""
-	defaultName := "output"
+	defaultName := "output.png"
 	if a.loadedFilePath != "" {
 		dir := filepath.Dir(a.loadedFilePath)
 		if _, statErr := os.Stat(dir); statErr == nil {
 			defaultDir = dir
 		}
 		base := filepath.Base(a.loadedFilePath)
-		defaultName = strings.TrimSuffix(base, filepath.Ext(base))
+		if stem := strings.TrimSuffix(base, filepath.Ext(base)); stem != "" {
+			defaultName = stem + ".png"
+		}
 	}
 
 	path, err := a.saveFileDialog("Save Image", defaultDir, defaultName, []FileFilter{
@@ -389,6 +391,9 @@ func (a *App) OpenSaveDialog() (string, error) {
 		{DisplayName: "TIFF Files (*.tiff;*.tif)", Patterns: []string{"*.tiff", "*.tif"}},
 		{DisplayName: "All Files (*.*)", Patterns: []string{"*.*"}},
 	})
+	if err == nil && path != "" && filepath.Ext(path) == "" {
+		path += ".png"
+	}
 	a.logf("OpenSaveDialog: path=%q err=%v", path, err)
 	return path, err
 }

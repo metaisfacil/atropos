@@ -4,6 +4,7 @@ import (
 	"errors"
 	"image/color"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 
 	"gioui.org/app"
@@ -96,7 +97,7 @@ func (h *gioHost) SaveFileDialog(title, defaultDir, defaultName string, filters 
 	if opt, ok := attachWindowOption(h.hwnd.Load()); ok {
 		opts = append(opts, opt)
 	}
-	if fn := dialogFilename(defaultDir, defaultName); fn != "" {
+	if fn := dialogFilename(defaultDir, saveDialogDefaultName(defaultName, filters)); fn != "" {
 		opts = append(opts, zenity.Filename(fn))
 	}
 	if zf := toZenityFilters(filters); len(zf) > 0 {
@@ -167,6 +168,21 @@ func dialogFilename(defaultDir, defaultName string) string {
 	}
 	if defaultDir != "" {
 		return defaultDir + string(filepath.Separator)
+	}
+	return defaultName
+}
+
+func saveDialogDefaultName(defaultName string, filters []FileFilter) string {
+	if defaultName == "" || filepath.Ext(defaultName) != "" {
+		return defaultName
+	}
+	for _, f := range filters {
+		for _, p := range f.Patterns {
+			ext := filepath.Ext(strings.TrimSpace(p))
+			if len(ext) > 1 && !strings.ContainsAny(ext, "*?") {
+				return defaultName + ext
+			}
+		}
 	}
 	return defaultName
 }
