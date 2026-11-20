@@ -482,6 +482,64 @@ func Rotate90(src *image.NRGBA, flipCode int) *image.NRGBA {
 	return dst
 }
 
+// Rotate180 rotates an NRGBA image by 180 degrees in a single pass.
+func Rotate180(src *image.NRGBA) *image.NRGBA {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w <= 0 || h <= 0 {
+		return image.NewNRGBA(image.Rect(0, 0, max(0, w), max(0, h)))
+	}
+	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
+
+	nCPU := goruntime.NumCPU()
+	var wg sync.WaitGroup
+	rowsPer := (h + nCPU - 1) / nCPU
+	for i := 0; i < nCPU; i++ {
+		y0, y1 := i*rowsPer, (i+1)*rowsPer
+		if y1 > h {
+			y1 = h
+		}
+		if y0 >= y1 {
+			break
+		}
+		wg.Add(1)
+		go func(y0, y1 int) {
+			defer wg.Done()
+			for y := y0; y < y1; y++ {
+				srcRowBase := (b.Min.Y+y)*src.Stride + b.Min.X*4
+				dstRowBase := (h - 1 - y) * dst.Stride
+				for x := 0; x < w; x++ {
+					si := srcRowBase + x*4
+					di := dstRowBase + (w-1-x)*4
+					dst.Pix[di+0] = src.Pix[si+0]
+					dst.Pix[di+1] = src.Pix[si+1]
+					dst.Pix[di+2] = src.Pix[si+2]
+					dst.Pix[di+3] = src.Pix[si+3]
+				}
+			}
+		}(y0, y1)
+	}
+	wg.Wait()
+	return dst
+}
+
+// RotateQuarterTurns applies a normalized number of 90-degree clockwise quarter-turns.
+func RotateQuarterTurns(src *image.NRGBA, steps int) *image.NRGBA {
+	if src == nil {
+		return nil
+	}
+	switch ((steps % 4) + 4) % 4 {
+	case 1:
+		return Rotate90(src, 1)
+	case 2:
+		return Rotate180(src)
+	case 3:
+		return Rotate90(src, -1)
+	default:
+		return src
+	}
+}
+
 // Rotate rotates an image by an arbitrary angle in degrees.
 func Rotate(src *image.NRGBA, angleDeg float64, bg color.NRGBA) *image.NRGBA {
 	b := src.Bounds()

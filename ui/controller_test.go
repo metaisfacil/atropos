@@ -24,12 +24,14 @@ import (
 )
 
 type stubBackend struct {
-	nextID        int
-	previews      map[string]*image.NRGBA
-	calibPreviews map[string]*image.NRGBA
-	current       *image.NRGBA
-	corners       []image.Point
-	settings      AllSettings
+	nextID         int
+	previews       map[string]*image.NRGBA
+	calibPreviews  map[string]*image.NRGBA
+	current        *image.NRGBA
+	corners        []image.Point
+	settings       AllSettings
+	lastStitchReq  CompositorStitchRequest
+	lastOverlayReq CompositorStitchRequest
 }
 
 func newStubBackend() *stubBackend {
@@ -208,11 +210,23 @@ func (s *stubBackend) CalibrationSaveDataset(CalibrationSaveRequest) (*Calibrati
 	return &CalibrationSaveResult{Cancelled: true}, nil
 }
 func (s *stubBackend) CompositorOpenFilesDialog() ([]string, error)                { return nil, nil }
-func (s *stubBackend) CompositorStitch(CompositorStitchRequest) (*CompositorResult, error) {
-	return &CompositorResult{}, nil
+func (s *stubBackend) CompositorStitch(req CompositorStitchRequest) (*CompositorResult, error) {
+	s.lastStitchReq = req
+	return &CompositorResult{
+		Preview: s.registerPreview(image.NewNRGBA(image.Rect(0, 0, 120, 80))),
+		Width:   120,
+		Height:  80,
+		Message: "Stitched",
+	}, nil
 }
-func (s *stubBackend) CompositorAlignOverlay(CompositorStitchRequest) (*CompositorResult, error) {
-	return &CompositorResult{}, nil
+func (s *stubBackend) CompositorAlignOverlay(req CompositorStitchRequest) (*CompositorResult, error) {
+	s.lastOverlayReq = req
+	return &CompositorResult{
+		Preview: s.registerPreview(image.NewNRGBA(image.Rect(0, 0, 120, 80))),
+		Width:   120,
+		Height:  80,
+		Message: "Aligned",
+	}, nil
 }
 func (s *stubBackend) CompositorAddMask(CompositorMaskRequest) (*CompositorResult, error) {
 	return &CompositorResult{}, nil
@@ -1365,6 +1379,9 @@ func TestCompositorFileListNoUnusedRightScrollbarGutter(t *testing.T) {
 			c.downBtns = append(c.downBtns, widget.Clickable{})
 			c.delBtns = append(c.delBtns, widget.Clickable{})
 		}
+		for len(c.rotBtns) < len(c.paths) {
+			c.rotBtns = append(c.rotBtns, widget.Clickable{})
+		}
 		ops.Reset()
 		gtx := layout.Context{
 			Ops:         &ops,
@@ -1422,6 +1439,220 @@ func TestCompositorFileListNoUnusedRightScrollbarGutter(t *testing.T) {
 	scrollDelRight := firstDeleteRight()
 	if scrollDelRight >= nonScrollDelRight-4 {
 		t.Fatalf("scrollable delRight=%d did not reserve scrollbar room relative to non-scrollable delRight=%d", scrollDelRight, nonScrollDelRight)
+	}
+}
+
+func TestCompositorPerImageRotationPointerFlow(t *testing.T) {
+	ui := newTestEditorUI(t)
+	sb := ui.app.(*stubBackend)
+	previewURL := sb.registerPreview(image.NewNRGBA(image.Rect(0, 0, 120, 90)))
+	scanA := filepath.Join("scans", "scan_a.png")
+	scanB := filepath.Join("scans", "scan_b.png")
+
+	c := &ui.compositorState
+	c.open(ui)
+	c.orientation = "ltr"
+	c.paths = []string{scanA, scanB}
+	c.previewURL = previewURL
+	c.previewDims = image.Pt(120, 90)
+
+	var router input.Router
+	var ops op.Ops
+	frame := func() {
+		ops.Reset()
+		gtx := layout.Context{
+			Ops:         &ops,
+			Source:      router.Source(),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(1280, 900)),
+			Now:         time.Now(),
+		}
+		ui.layoutRoot(gtx)
+		router.Frame(&ops)
+	}
+
+	findButtons := func(label string) []image.Rectangle {
+		nodes := router.AppendSemantics(nil)
+		seen := make(map[image.Rectangle]bool)
+		var rects []image.Rectangle
+		var walk func([]input.SemanticNode)
+		walk = func(ns []input.SemanticNode) {
+			for _, n := range ns {
+				if n.Desc.Gestures == input.ClickGesture && !n.Desc.Bounds.Empty() && !seen[n.Desc.Bounds] {
+					matched := n.Desc.Label == label
+					if !matched {
+						for _, child := range n.Children {
+							if child.Desc.Label == label {
+								matched = true
+								break
+							}
+						}
+					}
+					if matched {
+						seen[n.Desc.Bounds] = true
+						rects = append(rects, n.Desc.Bounds)
+					}
+				}
+				if len(n.Children) > 0 {
+					walk(n.Children)
+				}
+			}
+		}
+		walk(nodes)
+		sort.Slice(rects, func(i, j int) bool {
+			return rects[i].Min.Y < rects[j].Min.Y
+		})
+		return rects
+	}
+
+	clickRect := func(r image.Rectangle) {
+		pt := f32.Pt(float32(r.Min.X+r.Dx()/2), float32(r.Min.Y+r.Dy()/2))
+		router.Queue(
+			pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pt},
+			pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt},
+			pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pt},
+		)
+		frame()
+		frame()
+	}
+
+	frame()
+
+	// Click Row 1 ↻ -> 90°, clears stale preview, prompts to re-stitch.
+	rotRects := findButtons("↻")
+	if len(rotRects) != 2 {
+		t.Fatalf("expected 2 ↻ buttons, got %v", rotRects)
+	}
+	clickRect(rotRects[1])
+	if len(c.rotations) != 2 || c.rotations[0] != 0 || c.rotations[1] != 1 {
+		t.Fatalf("rotations after first click = %v, want [0 1]", c.rotations)
+	}
+	if c.previewURL != "" {
+		t.Fatalf("expected rotation click to clear stale preview, got %q", c.previewURL)
+	}
+	wantStatus := `Rotation updated — click "Stitch images" to update`
+	if c.statusMsg != wantStatus {
+		t.Fatalf("statusMsg = %q, want %q", c.statusMsg, wantStatus)
+	}
+
+	// Click "↻ 90°" -> 180° (restrict to file list rows y < 330 so preview "↻ 90°" is excluded).
+	rot90All := findButtons("↻ 90°")
+	var rot90 []image.Rectangle
+	for _, r := range rot90All {
+		if r.Max.Y < 330 {
+			rot90 = append(rot90, r)
+		}
+	}
+	if len(rot90) != 1 {
+		t.Fatalf("expected 1 row '↻ 90°' button, got %v (all=%v)", rot90, rot90All)
+	}
+	clickRect(rot90[0])
+	if c.rotations[0] != 0 || c.rotations[1] != 2 {
+		t.Fatalf("rotations after second click = %v, want [0 2]", c.rotations)
+	}
+	if len(findButtons("↻ 180°")) != 1 {
+		t.Fatal("expected '↻ 180°' button after second click")
+	}
+
+	// Move Row 1 up (▲) -> rotations swap alongside paths.
+	upRects := findButtons("▲")
+	if len(upRects) != 1 {
+		t.Fatalf("expected 1 enabled ▲ button for 2 rows, got %v", upRects)
+	}
+	clickRect(upRects[0])
+	if c.paths[0] != scanB || c.paths[1] != scanA || c.rotations[0] != 2 || c.rotations[1] != 0 {
+		t.Fatalf("after reorder: paths=%v rots=%v, want [%q %q] [2 0]", c.paths, c.rotations, scanB, scanA)
+	}
+
+	// Click "Stitch images" -> sends updated order and RotationSteps [2, 0].
+	stitchRects := findButtons("Stitch images")
+	if len(stitchRects) != 1 {
+		t.Fatalf("expected 1 Stitch images button, got %v", stitchRects)
+	}
+	clickRect(stitchRects[0])
+	if len(sb.lastStitchReq.ImagePaths) != 2 || sb.lastStitchReq.ImagePaths[0] != scanB || sb.lastStitchReq.ImagePaths[1] != scanA {
+		t.Fatalf("lastStitchReq.ImagePaths = %v, want [%q %q]", sb.lastStitchReq.ImagePaths, scanB, scanA)
+	}
+	if len(sb.lastStitchReq.RotationSteps) != 2 || sb.lastStitchReq.RotationSteps[0] != 2 || sb.lastStitchReq.RotationSteps[1] != 0 {
+		t.Fatalf("lastStitchReq.RotationSteps = %v, want [2 0]", sb.lastStitchReq.RotationSteps)
+	}
+
+	// Cycle Row 0 from 180° -> 270° -> 0°.
+	clickRect(findButtons("↻ 180°")[0])
+	if c.rotations[0] != 3 || len(findButtons("↻ 270°")) != 1 {
+		t.Fatalf("expected rotation 3 ('↻ 270°'), got rots=%v", c.rotations)
+	}
+	clickRect(findButtons("↻ 270°")[0])
+	if c.rotations[0] != 0 || len(findButtons("↻")) != 2 {
+		t.Fatalf("expected rotation wrapped back to 0 ('↻'), got rots=%v", c.rotations)
+	}
+
+	// Delete Row 0 -> both paths and rotations shrink in sync.
+	clickRect(findButtons("✕")[0])
+	if len(c.paths) != 1 || c.paths[0] != scanA || len(c.rotations) != 1 || c.rotations[0] != 0 {
+		t.Fatalf("after remove row 0: paths=%v rots=%v", c.paths, c.rotations)
+	}
+}
+
+func TestCompositorRotatedPreviewResolvesFromCache(t *testing.T) {
+	ui := newTestEditorUI(t)
+	sb := ui.app.(*stubBackend)
+	orig := image.NewNRGBA(image.Rect(0, 0, 200, 120))
+	orig.SetNRGBA(10, 5, color.NRGBA{R: 255, G: 0, B: 0, A: 255})
+	url := sb.registerPreview(orig)
+
+	c := &ui.compositorState
+	c.ensureInit()
+	c.orientation = "ltr"
+	c.previewURL = url
+	c.previewDims = image.Pt(200, 120)
+
+	// Step 1 (90° CW): rotated 120x200 image cached and reused across calls.
+	c.rotationSteps = 1
+	rot1a, ok := c.resolveCompositorImage(ui, c.effectivePreviewKey())
+	if !ok || rot1a == nil || rot1a.Bounds().Size() != image.Pt(120, 200) {
+		t.Fatalf("step 1 resolve failed: ok=%v img=%v", ok, rot1a)
+	}
+	rot1b, ok := c.resolveCompositorImage(ui, c.effectivePreviewKey())
+	if !ok || rot1b != rot1a {
+		t.Fatalf("expected second resolve at step 1 to hit rotatedCacheImg pointer: got %p != %p", rot1b, rot1a)
+	}
+
+	// Step 3 (270° CW): rebuilds cache for 270°, then reuses pointer.
+	c.rotationSteps = 3
+	rot3a, ok := c.resolveCompositorImage(ui, c.effectivePreviewKey())
+	if !ok || rot3a == nil || rot3a.Bounds().Size() != image.Pt(120, 200) || rot3a == rot1a {
+		t.Fatalf("step 3 resolve unexpected: ok=%v bounds=%v samePtr=%v", ok, rot3a.Bounds().Size(), rot3a == rot1a)
+	}
+	rot3b, ok := c.resolveCompositorImage(ui, c.effectivePreviewKey())
+	if !ok || rot3b != rot3a {
+		t.Fatal("expected second resolve at step 3 to hit cache")
+	}
+
+	// Step 2 (180°): rebuilds cache for 200x120, then reuses pointer.
+	c.rotationSteps = 2
+	rot2a, ok := c.resolveCompositorImage(ui, c.effectivePreviewKey())
+	if !ok || rot2a == nil || rot2a.Bounds().Size() != image.Pt(200, 120) {
+		t.Fatalf("step 2 resolve unexpected: ok=%v img=%v", ok, rot2a)
+	}
+	rot2b, ok := c.resolveCompositorImage(ui, c.effectivePreviewKey())
+	if !ok || rot2b != rot2a {
+		t.Fatal("expected second resolve at step 2 to hit cache")
+	}
+
+	// Step 0: returns original pointer and clears rotated cache.
+	c.rotationSteps = 0
+	got0, ok := c.resolveCompositorImage(ui, c.effectivePreviewKey())
+	if !ok || got0 != orig || c.rotatedCacheImg != nil || c.rotatedCacheKey != "" {
+		t.Fatalf("step 0 should return orig and clear cache: ok=%v same=%v cacheImg=%v cacheKey=%q", ok, got0 == orig, c.rotatedCacheImg != nil, c.rotatedCacheKey)
+	}
+
+	// Re-populate cache then clearResult() must release it.
+	c.rotationSteps = 1
+	_, _ = c.resolveCompositorImage(ui, c.effectivePreviewKey())
+	c.clearResult()
+	if c.rotatedCacheImg != nil || c.rotatedCacheKey != "" {
+		t.Fatalf("clearResult left rotated cache behind: key=%q img=%v", c.rotatedCacheKey, c.rotatedCacheImg != nil)
 	}
 }
 

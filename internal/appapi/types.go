@@ -412,11 +412,13 @@ type CalibrationSaveResult struct {
 	Cancelled  bool   `json:"cancelled,omitempty"`
 }
 
-// CompositorStitchRequest carries the ordered list of source file paths and
-// the orientation that describes how consecutive images are arranged.
+// CompositorStitchRequest carries the ordered list of source file paths,
+// optional per-image quarter-turn clockwise rotations (mod 4), and the
+// orientation that describes how consecutive images are arranged.
 type CompositorStitchRequest struct {
-	ImagePaths  []string `json:"imagePaths"`
-	Orientation string   `json:"orientation"`
+	ImagePaths    []string `json:"imagePaths"`
+	Orientation   string   `json:"orientation"`
+	RotationSteps []int    `json:"rotationSteps,omitempty"`
 }
 
 // CompositorResult is returned by CompositorStitch and overlay preview calls.

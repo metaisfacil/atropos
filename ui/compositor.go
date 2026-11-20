@@ -24,12 +24,15 @@ type compositorModalState struct {
 	owner         *EditorUI
 	orientation   string
 	paths         []string
+	rotations     []int
 	previewURL    string
 	previewDims   image.Point
 	statusMsg     string
-	errMsg        string
-	busy          bool
-	rotationSteps int
+	errMsg          string
+	busy            bool
+	rotationSteps   int
+	rotatedCacheKey string
+	rotatedCacheImg *image.NRGBA
 
 	// Overlay mode state
 	alignedLayers int
@@ -46,6 +49,7 @@ type compositorModalState struct {
 	ddLayer       uiDropdown
 	fileList      widget.List
 	fileListRowH  int
+	rotBtns       []widget.Clickable
 	upBtns        []widget.Clickable
 	downBtns      []widget.Clickable
 	delBtns       []widget.Clickable
@@ -94,9 +98,13 @@ func (c *compositorModalState) open(e *EditorUI) {
 					// Previous session was cleared; silently drop stale preview
 					c.previewURL = ""
 					c.previewDims = image.Point{}
+					c.clearRotatedCache()
 					return
 				}
 				if res != nil {
+					if res.Preview != c.previewURL {
+						c.clearRotatedCache()
+					}
 					c.previewURL = res.Preview
 					c.previewDims = image.Pt(res.Width, res.Height)
 					c.statusMsg = res.Message
@@ -123,6 +131,11 @@ func (c *compositorModalState) effectivePreviewKey() string {
 	return c.previewURL
 }
 
+func (c *compositorModalState) clearRotatedCache() {
+	c.rotatedCacheKey = ""
+	c.rotatedCacheImg = nil
+}
+
 func (c *compositorModalState) resolveCompositorImage(e *EditorUI, src string) (*image.NRGBA, bool) {
 	if c.previewURL == "" {
 		return nil, false
@@ -131,13 +144,22 @@ func (c *compositorModalState) resolveCompositorImage(e *EditorUI, src string) (
 	if !ok || img == nil {
 		return nil, false
 	}
-	if c.orientation != "overlay" {
-		steps := ((c.rotationSteps % 4) + 4) % 4
-		for i := 0; i < steps; i++ {
-			img = imageops.Rotate90(img, 1)
-		}
+	if c.orientation == "overlay" {
+		return img, true
 	}
-	return img, true
+	steps := ((c.rotationSteps % 4) + 4) % 4
+	if steps == 0 {
+		c.clearRotatedCache()
+		return img, true
+	}
+	key := c.effectivePreviewKey()
+	if c.rotatedCacheKey == key && c.rotatedCacheImg != nil {
+		return c.rotatedCacheImg, true
+	}
+	rot := imageops.RotateQuarterTurns(img, steps)
+	c.rotatedCacheKey = key
+	c.rotatedCacheImg = rot
+	return rot, true
 }
 
 func (c *compositorModalState) clearResult() {
@@ -145,6 +167,7 @@ func (c *compositorModalState) clearResult() {
 	c.previewDims = image.Point{}
 	c.alignedLayers = 0
 	c.rotationSteps = 0
+	c.clearRotatedCache()
 	c.maskStroke = nil
 	c.maskDragging = false
 	c.errMsg = ""
@@ -157,11 +180,25 @@ func (c *compositorModalState) clearResult() {
 	}
 }
 
+func (c *compositorModalState) syncRotations() {
+	for len(c.rotations) < len(c.paths) {
+		c.rotations = append(c.rotations, 0)
+	}
+	if len(c.rotations) > len(c.paths) {
+		c.rotations = c.rotations[:len(c.paths)]
+	}
+	for i, r := range c.rotations {
+		c.rotations[i] = ((r % 4) + 4) % 4
+	}
+}
+
 func (c *compositorModalState) moveItem(from, to int, e *EditorUI) {
 	if from < 0 || from >= len(c.paths) || to < 0 || to >= len(c.paths) || from == to {
 		return
 	}
+	c.syncRotations()
 	c.paths[from], c.paths[to] = c.paths[to], c.paths[from]
+	c.rotations[from], c.rotations[to] = c.rotations[to], c.rotations[from]
 	if c.previewURL != "" || c.alignedLayers > 0 {
 		c.clearResult()
 		if c.orientation == "overlay" {
@@ -177,11 +214,34 @@ func (c *compositorModalState) moveItem(from, to int, e *EditorUI) {
 	}
 }
 
+func (c *compositorModalState) rotateItem(idx int, e *EditorUI) {
+	c.syncRotations()
+	if idx < 0 || idx >= len(c.paths) {
+		return
+	}
+	c.rotations[idx] = (c.rotations[idx] + 1) % 4
+	if c.previewURL != "" || c.alignedLayers > 0 {
+		c.clearResult()
+		if c.orientation == "overlay" {
+			c.statusMsg = "Rotation updated — click \"Align scans\" to update"
+		} else {
+			c.statusMsg = "Rotation updated — click \"Stitch images\" to update"
+		}
+	} else {
+		c.errMsg = ""
+	}
+	if e != nil {
+		e.invalidate()
+	}
+}
+
 func (c *compositorModalState) removeItem(idx int, e *EditorUI) {
 	if idx < 0 || idx >= len(c.paths) {
 		return
 	}
+	c.syncRotations()
 	c.paths = append(c.paths[:idx], c.paths[idx+1:]...)
+	c.rotations = append(c.rotations[:idx], c.rotations[idx+1:]...)
 	c.clearResult()
 	if len(c.paths) < 2 {
 		c.activeLayer = 1
@@ -275,6 +335,7 @@ func (c *compositorModalState) addPaths(paths []string, e *EditorUI) {
 		return
 	}
 	c.ensureInit()
+	c.syncRotations()
 	added := 0
 	for _, p := range paths {
 		trimmed := strings.TrimSpace(p)
@@ -282,6 +343,7 @@ func (c *compositorModalState) addPaths(paths []string, e *EditorUI) {
 			continue
 		}
 		c.paths = append(c.paths, trimmed)
+		c.rotations = append(c.rotations, 0)
 		added++
 	}
 	if added == 0 {
@@ -317,15 +379,18 @@ func (c *compositorModalState) handleRun(e *EditorUI) {
 	c.busy = true
 	c.errMsg = ""
 	c.rotationSteps = 0
+	c.clearRotatedCache()
 	c.alignedLayers = 0
 	c.viewport.ResetCache()
 	c.viewport.Zoom = 1
 	c.viewport.FitWidth = 0
 	c.viewport.ScrollX = 0
 	c.viewport.ScrollY = 0
+	c.syncRotations()
 	req := CompositorStitchRequest{
-		ImagePaths:  append([]string(nil), c.paths...),
-		Orientation: c.orientation,
+		ImagePaths:    append([]string(nil), c.paths...),
+		Orientation:   c.orientation,
+		RotationSteps: append([]int(nil), c.rotations...),
 	}
 	isOverlay := c.orientation == "overlay"
 	if isOverlay {
@@ -415,6 +480,7 @@ func (c *compositorModalState) handleLoadOutput(e *EditorUI) {
 		e.loadingFull = true
 		e.loadingMessage = "Loading compositor output…"
 		e.compositorOpen = false
+		c.clearRotatedCache()
 		e.runBackend(func() {
 			info, err := e.app.CompositorLoadResult(CompositorLoadResultRequest{RotationSteps: steps})
 			e.postUI(func() {
@@ -535,14 +601,23 @@ func (c *compositorModalState) layout(gtx layout.Context, e *EditorUI) {
 	}
 	if c.btnClearAll.Clicked(gtx) && !c.busy {
 		c.paths = nil
+		c.rotations = nil
 		c.clearResult()
 		c.statusMsg = ""
 	}
 	if c.btnRotCCW.Clicked(gtx) && !c.busy && c.previewURL != "" {
 		c.rotationSteps = (c.rotationSteps + 3) % 4
+		c.viewport.Zoom = 1
+		c.viewport.FitWidth = 0
+		c.viewport.ScrollX = 0
+		c.viewport.ScrollY = 0
 	}
 	if c.btnRotCW.Clicked(gtx) && !c.busy && c.previewURL != "" {
 		c.rotationSteps = (c.rotationSteps + 1) % 4
+		c.viewport.Zoom = 1
+		c.viewport.FitWidth = 0
+		c.viewport.ScrollX = 0
+		c.viewport.ScrollY = 0
 	}
 	if c.btnFit.Clicked(gtx) {
 		c.viewport.SetZoomKeepCenter(1)
@@ -592,12 +667,20 @@ func (c *compositorModalState) layout(gtx layout.Context, e *EditorUI) {
 	}
 
 	// Process per-item list button events before layout
+	c.syncRotations()
 	for len(c.upBtns) < len(c.paths) {
 		c.upBtns = append(c.upBtns, widget.Clickable{})
 		c.downBtns = append(c.downBtns, widget.Clickable{})
 		c.delBtns = append(c.delBtns, widget.Clickable{})
 	}
+	for len(c.rotBtns) < len(c.paths) {
+		c.rotBtns = append(c.rotBtns, widget.Clickable{})
+	}
 	for i := range c.paths {
+		if !c.busy && c.rotBtns[i].Clicked(gtx) {
+			c.rotateItem(i, e)
+			break
+		}
 		if i > 0 && !c.busy && c.upBtns[i].Clicked(gtx) {
 			c.moveItem(i, i-1, e)
 			break
@@ -765,6 +848,7 @@ func (c *compositorModalState) layoutFilesSection(gtx layout.Context, e *EditorU
 				return layout.Dimensions{Size: gtx.Constraints.Max}
 			}
 			layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				c.syncRotations()
 				rowH := c.fileListRowH
 				if rowH <= 0 {
 					rowH = gtx.Dp(29)
@@ -780,8 +864,8 @@ func (c *compositorModalState) layoutFilesSection(gtx layout.Context, e *EditorU
 					rowDims := layout.Inset{Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						macro := op.Record(gtx.Ops)
 						dims := layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(6), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							smallBtn := func(gtx layout.Context, clk *widget.Clickable, sym string, enabled bool) layout.Dimensions {
-								st := defaultButtonStyle(btnSecondary, sym)
+							rowBtn := func(gtx layout.Context, clk *widget.Clickable, variant btnVariant, sym string, enabled bool) layout.Dimensions {
+								st := defaultButtonStyle(variant, sym)
 								st.Enabled = enabled
 								st.FontSize = unit.Sp(10.5)
 								st.Pad = layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2), Left: unit.Dp(5), Right: unit.Dp(5)}
@@ -797,6 +881,15 @@ func (c *compositorModalState) layoutFilesSection(gtx layout.Context, e *EditorU
 								upHint = "Move lower in the layer stack."
 								downHint = "Move higher in the layer stack."
 							}
+							rot := c.rotations[i] % 4
+							rotLabel := "↻"
+							rotHint := "Rotate scan 90° clockwise before compositing."
+							rotVariant := btnSecondary
+							if rot > 0 {
+								rotLabel = fmt.Sprintf("↻ %d°", rot*90)
+								rotHint = fmt.Sprintf("Rotated %d° clockwise. Click to rotate another 90°.", rot*90)
+								rotVariant = btnPrimary
+							}
 							displayName := compositorDisplayName(c.paths, i)
 							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle, Gap: gtx.Dp(3)}.Layout(gtx,
 								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -809,18 +902,23 @@ func (c *compositorModalState) layoutFilesSection(gtx layout.Context, e *EditorU
 									})
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return e.tooltips.Wrap(gtx, fmt.Sprintf("comp-rot-%d", i), rotHint, func(gtx layout.Context) layout.Dimensions {
+										return rowBtn(gtx, &c.rotBtns[i], rotVariant, rotLabel, !c.busy)
+									})
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									return e.tooltips.Wrap(gtx, fmt.Sprintf("comp-up-%d", i), upHint, func(gtx layout.Context) layout.Dimensions {
-										return smallBtn(gtx, &c.upBtns[i], "▲", i > 0 && !c.busy)
+										return rowBtn(gtx, &c.upBtns[i], btnSecondary, "▲", i > 0 && !c.busy)
 									})
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									return e.tooltips.Wrap(gtx, fmt.Sprintf("comp-down-%d", i), downHint, func(gtx layout.Context) layout.Dimensions {
-										return smallBtn(gtx, &c.downBtns[i], "▼", i+1 < len(c.paths) && !c.busy)
+										return rowBtn(gtx, &c.downBtns[i], btnSecondary, "▼", i+1 < len(c.paths) && !c.busy)
 									})
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									return e.tooltips.Wrap(gtx, fmt.Sprintf("comp-del-%d", i), "Remove from sequence.", func(gtx layout.Context) layout.Dimensions {
-										return smallBtn(gtx, &c.delBtns[i], "✕", !c.busy)
+										return rowBtn(gtx, &c.delBtns[i], btnSecondary, "✕", !c.busy)
 									})
 								}),
 							)

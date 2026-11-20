@@ -47,17 +47,27 @@ func (a *App) CompositorStitch(req CompositorStitchRequest) (*CompositorResult, 
 
 	a.logf("CompositorStitch: %d images, orientation=%q", len(req.ImagePaths), req.Orientation)
 
+	rotSteps := make([]int, len(req.ImagePaths))
+	for i := range rotSteps {
+		if i < len(req.RotationSteps) {
+			rotSteps[i] = ((req.RotationSteps[i] % 4) + 4) % 4
+		}
+	}
+
 	// For reversed orientations the user listed images in the opposite direction
-	// to the reference frame.  Reverse the path list so image[0] is always the
-	// "first" segment (anchor) and each subsequent image extends in the forward
-	// direction.
+	// to the reference frame.  Reverse the path and rotation lists together so
+	// image[0] is always the "first" segment (anchor) and each subsequent image
+	// keeps its matching per-image rotation.
 	paths := req.ImagePaths
 	if req.Orientation == "rtl" || req.Orientation == "btt" {
 		rev := make([]string, len(paths))
+		revRot := make([]int, len(paths))
 		for i, p := range paths {
 			rev[len(paths)-1-i] = p
+			revRot[len(paths)-1-i] = rotSteps[i]
 		}
 		paths = rev
+		rotSteps = revRot
 	}
 
 	// Decode all images in parallel — decoding is I/O + CPU bound and dominates
@@ -70,16 +80,17 @@ func (a *App) CompositorStitch(req CompositorStitchRequest) (*CompositorResult, 
 	}
 	ch := make(chan decodeResult, len(paths))
 	for i, path := range paths {
-		go func(i int, path string) {
+		rot := rotSteps[i]
+		go func(i int, path string, rot int) {
 			raw, err := a.decodeImageFile(path)
 			if err != nil {
 				ch <- decodeResult{idx: i, err: fmt.Errorf("failed to decode image %d (%q): %w", i, filepath.Base(path), err)}
 				return
 			}
-			img := raster.ToNRGBA(raw)
-			a.logf("CompositorStitch: image %d decoded: %v", i, img.Bounds())
+			img := imageops.RotateQuarterTurns(raster.ToNRGBA(raw), rot)
+			a.logf("CompositorStitch: image %d decoded: %v (rot=%d)", i, img.Bounds(), rot)
 			ch <- decodeResult{idx: i, img: img}
-		}(i, path)
+		}(i, path, rot)
 	}
 	imgs := make([]*image.NRGBA, len(paths))
 	for range paths {
@@ -132,14 +143,19 @@ func (a *App) CompositorAlignOverlay(req CompositorStitchRequest) (*CompositorRe
 	}
 	results := make(chan decoded, len(imgs))
 	for i, path := range req.ImagePaths {
-		go func(i int, path string) {
+		rot := 0
+		if i < len(req.RotationSteps) {
+			rot = ((req.RotationSteps[i] % 4) + 4) % 4
+		}
+		go func(i int, path string, rot int) {
 			raw, err := a.decodeImageFile(path)
 			if err != nil {
 				results <- decoded{index: i, err: fmt.Errorf("failed to decode image %d (%q): %w", i+1, filepath.Base(path), err)}
 				return
 			}
-			results <- decoded{index: i, image: raster.ToNRGBA(raw)}
-		}(i, path)
+			img := imageops.RotateQuarterTurns(raster.ToNRGBA(raw), rot)
+			results <- decoded{index: i, image: img}
+		}(i, path, rot)
 	}
 	var decodeErr error
 	for range imgs {
