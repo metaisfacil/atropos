@@ -5,6 +5,7 @@ import (
 	"image"
 	"math"
 	"path/filepath"
+	"strings"
 
 	"atropos/internal/compositor"
 	"atropos/internal/imageops"
@@ -44,6 +45,7 @@ type compositorModalState struct {
 	ddOrientation uiDropdown
 	ddLayer       uiDropdown
 	fileList      widget.List
+	fileListRowH  int
 	upBtns        []widget.Clickable
 	downBtns      []widget.Clickable
 	delBtns       []widget.Clickable
@@ -138,6 +140,160 @@ func (c *compositorModalState) resolveCompositorImage(e *EditorUI, src string) (
 	return img, true
 }
 
+func (c *compositorModalState) clearResult() {
+	c.previewURL = ""
+	c.previewDims = image.Point{}
+	c.alignedLayers = 0
+	c.rotationSteps = 0
+	c.maskStroke = nil
+	c.maskDragging = false
+	c.errMsg = ""
+	if c.viewport != nil {
+		c.viewport.ResetCache()
+		c.viewport.Zoom = 1
+		c.viewport.FitWidth = 0
+		c.viewport.ScrollX = 0
+		c.viewport.ScrollY = 0
+	}
+}
+
+func (c *compositorModalState) moveItem(from, to int, e *EditorUI) {
+	if from < 0 || from >= len(c.paths) || to < 0 || to >= len(c.paths) || from == to {
+		return
+	}
+	c.paths[from], c.paths[to] = c.paths[to], c.paths[from]
+	if c.previewURL != "" || c.alignedLayers > 0 {
+		c.clearResult()
+		if c.orientation == "overlay" {
+			c.statusMsg = "Order updated — click \"Align scans\" to update"
+		} else {
+			c.statusMsg = "Order updated — click \"Stitch images\" to update"
+		}
+	} else {
+		c.errMsg = ""
+	}
+	if e != nil {
+		e.invalidate()
+	}
+}
+
+func (c *compositorModalState) removeItem(idx int, e *EditorUI) {
+	if idx < 0 || idx >= len(c.paths) {
+		return
+	}
+	c.paths = append(c.paths[:idx], c.paths[idx+1:]...)
+	c.clearResult()
+	if len(c.paths) < 2 {
+		c.activeLayer = 1
+	} else if c.activeLayer >= len(c.paths) {
+		c.activeLayer = len(c.paths) - 1
+	} else if c.activeLayer < 1 {
+		c.activeLayer = 1
+	}
+	if len(c.paths) == 0 {
+		c.statusMsg = ""
+	} else {
+		c.statusMsg = fmt.Sprintf("%d image(s) queued", len(c.paths))
+	}
+	if e != nil {
+		e.invalidate()
+	}
+}
+
+func compositorDisplayName(paths []string, idx int) string {
+	if idx < 0 || idx >= len(paths) {
+		return ""
+	}
+	p := paths[idx]
+	base := filepath.Base(p)
+	dup := false
+	for j, other := range paths {
+		if j != idx && strings.EqualFold(filepath.Base(other), base) {
+			dup = true
+			break
+		}
+	}
+	if !dup {
+		return base
+	}
+	parent := filepath.Base(filepath.Dir(p))
+	if parent == "" || parent == "." || parent == "/" || parent == `\` || parent == string(filepath.Separator) {
+		return base
+	}
+	return parent + "/" + base
+}
+
+func measureLabelWidth(gtx layout.Context, th *material.Theme, size unit.Sp, s string) int {
+	if th == nil || s == "" {
+		return 0
+	}
+	var ops op.Ops
+	mg := gtx
+	mg.Ops = &ops
+	mg.Constraints = layout.Constraints{Max: image.Pt(1e6, 1e6)}
+	lbl := material.Label(th, size, s)
+	lbl.MaxLines = 1
+	return lbl.Layout(mg).Size.X
+}
+
+func middleTruncateLabel(gtx layout.Context, th *material.Theme, size unit.Sp, maxWidth int, prefix, name string) string {
+	full := prefix + name
+	if maxWidth <= 0 || name == "" || measureLabelWidth(gtx, th, size, full) <= maxWidth {
+		return full
+	}
+	runes := []rune(name)
+	if len(runes) <= 1 {
+		return full
+	}
+	format := func(keep int) string {
+		left := (keep * 4) / 10
+		if keep >= 2 && left < 1 {
+			left = 1
+		}
+		right := keep - left
+		return prefix + string(runes[:left]) + "…" + string(runes[len(runes)-right:])
+	}
+	lo, hi := 1, len(runes)-1
+	best := 0
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		if measureLabelWidth(gtx, th, size, format(mid)) <= maxWidth {
+			best = mid
+			lo = mid + 1
+		} else {
+			hi = mid - 1
+		}
+	}
+	if best == 0 {
+		return prefix + "…" + string(runes[len(runes)-1:])
+	}
+	return format(best)
+}
+
+func (c *compositorModalState) addPaths(paths []string, e *EditorUI) {
+	if c.busy || len(paths) == 0 {
+		return
+	}
+	c.ensureInit()
+	added := 0
+	for _, p := range paths {
+		trimmed := strings.TrimSpace(p)
+		if trimmed == "" {
+			continue
+		}
+		c.paths = append(c.paths, trimmed)
+		added++
+	}
+	if added == 0 {
+		return
+	}
+	c.errMsg = ""
+	c.statusMsg = fmt.Sprintf("%d image(s) queued", len(c.paths))
+	if e != nil {
+		e.invalidate()
+	}
+}
+
 func (c *compositorModalState) handleAddImages(e *EditorUI) {
 	if e.app == nil || c.busy {
 		return
@@ -149,11 +305,7 @@ func (c *compositorModalState) handleAddImages(e *EditorUI) {
 				c.errMsg = err.Error()
 				return
 			}
-			if len(paths) == 0 {
-				return
-			}
-			c.paths = append(c.paths, paths...)
-			c.errMsg = ""
+			c.addPaths(paths, e)
 		})
 	})
 }
@@ -168,6 +320,7 @@ func (c *compositorModalState) handleRun(e *EditorUI) {
 	c.alignedLayers = 0
 	c.viewport.ResetCache()
 	c.viewport.Zoom = 1
+	c.viewport.FitWidth = 0
 	c.viewport.ScrollX = 0
 	c.viewport.ScrollY = 0
 	req := CompositorStitchRequest{
@@ -382,10 +535,7 @@ func (c *compositorModalState) layout(gtx layout.Context, e *EditorUI) {
 	}
 	if c.btnClearAll.Clicked(gtx) && !c.busy {
 		c.paths = nil
-		c.previewURL = ""
-		c.previewDims = image.Point{}
-		c.alignedLayers = 0
-		c.errMsg = ""
+		c.clearResult()
 		c.statusMsg = ""
 	}
 	if c.btnRotCCW.Clicked(gtx) && !c.busy && c.previewURL != "" {
@@ -442,22 +592,22 @@ func (c *compositorModalState) layout(gtx layout.Context, e *EditorUI) {
 	}
 
 	// Process per-item list button events before layout
-	if len(c.upBtns) < len(c.paths) {
-		c.upBtns = make([]widget.Clickable, len(c.paths))
-		c.downBtns = make([]widget.Clickable, len(c.paths))
-		c.delBtns = make([]widget.Clickable, len(c.paths))
+	for len(c.upBtns) < len(c.paths) {
+		c.upBtns = append(c.upBtns, widget.Clickable{})
+		c.downBtns = append(c.downBtns, widget.Clickable{})
+		c.delBtns = append(c.delBtns, widget.Clickable{})
 	}
 	for i := range c.paths {
-		if c.upBtns[i].Clicked(gtx) && i > 0 && !c.busy {
-			c.paths[i-1], c.paths[i] = c.paths[i], c.paths[i-1]
+		if i > 0 && !c.busy && c.upBtns[i].Clicked(gtx) {
+			c.moveItem(i, i-1, e)
 			break
 		}
-		if c.downBtns[i].Clicked(gtx) && i+1 < len(c.paths) && !c.busy {
-			c.paths[i], c.paths[i+1] = c.paths[i+1], c.paths[i]
+		if i+1 < len(c.paths) && !c.busy && c.downBtns[i].Clicked(gtx) {
+			c.moveItem(i, i+1, e)
 			break
 		}
-		if c.delBtns[i].Clicked(gtx) && !c.busy {
-			c.paths = append(c.paths[:i], c.paths[i+1:]...)
+		if !c.busy && c.delBtns[i].Clicked(gtx) {
+			c.removeItem(i, e)
 			break
 		}
 	}
@@ -496,11 +646,7 @@ func (c *compositorModalState) layout(gtx layout.Context, e *EditorUI) {
 							return c.ddOrientation.Layout(cg, e.th, e.overlays, oriOpts, c.orientation, !c.busy, func(v string) {
 								if v != c.orientation {
 									c.orientation = v
-									c.previewURL = ""
-									c.previewDims = image.Point{}
-									c.alignedLayers = 0
-									c.rotationSteps = 0
-									c.errMsg = ""
+									c.clearResult()
 									c.statusMsg = ""
 								}
 							})
@@ -514,7 +660,7 @@ func (c *compositorModalState) layout(gtx layout.Context, e *EditorUI) {
 						return layout.Flex{Axis: layout.Horizontal, Gap: gtx.Dp(14)}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								cg := gtx
-								cg.Constraints = layout.Exact(image.Pt(gtx.Dp(270), gtx.Constraints.Max.Y))
+								cg.Constraints = layout.Exact(image.Pt(gtx.Dp(300), gtx.Constraints.Max.Y))
 								return c.layoutFilesSection(cg, e)
 							}),
 							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -619,36 +765,63 @@ func (c *compositorModalState) layoutFilesSection(gtx layout.Context, e *EditorU
 				return layout.Dimensions{Size: gtx.Constraints.Max}
 			}
 			layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return styledList(e.th, &c.fileList).Layout(gtx, len(c.paths), func(gtx layout.Context, i int) layout.Dimensions {
-					return layout.Inset{Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				rowH := c.fileListRowH
+				if rowH <= 0 {
+					rowH = gtx.Dp(29)
+				}
+				scrollable := len(c.paths)*rowH > gtx.Constraints.Max.Y ||
+					c.fileList.Position.First > 0 ||
+					c.fileList.Position.Offset > 0
+				ls := styledList(e.th, &c.fileList)
+				if !scrollable {
+					ls.AnchorStrategy = material.Overlay
+				}
+				listDims := ls.Layout(gtx, len(c.paths), func(gtx layout.Context, i int) layout.Dimensions {
+					rowDims := layout.Inset{Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						macro := op.Record(gtx.Ops)
 						dims := layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(6), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							smallBtn := func(gtx layout.Context, clk *widget.Clickable, sym string, enabled bool) layout.Dimensions {
-								st := defaultButtonStyle(btnGhost, sym)
+								st := defaultButtonStyle(btnSecondary, sym)
 								st.Enabled = enabled
-								st.FontSize = unit.Sp(11)
+								st.FontSize = unit.Sp(10.5)
 								st.Pad = layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2), Left: unit.Dp(5), Right: unit.Dp(5)}
 								return layoutButton(gtx, e.th, clk, st)
 							}
 							prefix := fmt.Sprintf("%d. ", i+1)
-							if c.orientation == "overlay" && i == 0 {
-								prefix = "Ref. "
+							upHint := "Move earlier in the sequence."
+							downHint := "Move later in the sequence."
+							if c.orientation == "overlay" {
+								if i == 0 {
+									prefix = "Ref. "
+								}
+								upHint = "Move lower in the layer stack."
+								downHint = "Move higher in the layer stack."
 							}
+							displayName := compositorDisplayName(c.paths, i)
 							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle, Gap: gtx.Dp(3)}.Layout(gtx,
 								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-									lbl := material.Label(e.th, unit.Sp(12), prefix+filepath.Base(c.paths[i]))
-									lbl.Color = colText
-									lbl.MaxLines = 1
-									return lbl.Layout(gtx)
+									labelText := middleTruncateLabel(gtx, e.th, unit.Sp(12), gtx.Constraints.Max.X, prefix, displayName)
+									return e.tooltips.Wrap(gtx, fmt.Sprintf("comp-file-%d", i), c.paths[i], func(gtx layout.Context) layout.Dimensions {
+										lbl := material.Label(e.th, unit.Sp(12), labelText)
+										lbl.Color = colText
+										lbl.MaxLines = 1
+										return lbl.Layout(gtx)
+									})
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return smallBtn(gtx, &c.upBtns[i], "▲", i > 0 && !c.busy)
+									return e.tooltips.Wrap(gtx, fmt.Sprintf("comp-up-%d", i), upHint, func(gtx layout.Context) layout.Dimensions {
+										return smallBtn(gtx, &c.upBtns[i], "▲", i > 0 && !c.busy)
+									})
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return smallBtn(gtx, &c.downBtns[i], "▼", i+1 < len(c.paths) && !c.busy)
+									return e.tooltips.Wrap(gtx, fmt.Sprintf("comp-down-%d", i), downHint, func(gtx layout.Context) layout.Dimensions {
+										return smallBtn(gtx, &c.downBtns[i], "▼", i+1 < len(c.paths) && !c.busy)
+									})
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return smallBtn(gtx, &c.delBtns[i], "✕", !c.busy)
+									return e.tooltips.Wrap(gtx, fmt.Sprintf("comp-del-%d", i), "Remove from sequence.", func(gtx layout.Context) layout.Dimensions {
+										return smallBtn(gtx, &c.delBtns[i], "✕", !c.busy)
+									})
 								}),
 							)
 						})
@@ -660,7 +833,18 @@ func (c *compositorModalState) layoutFilesSection(gtx layout.Context, e *EditorU
 						call.Add(gtx.Ops)
 						return dims
 					})
+					if rowDims.Size.Y > 0 {
+						c.fileListRowH = rowDims.Size.Y
+					}
+					return rowDims
 				})
+				actualScrollable := c.fileList.Position.Length > gtx.Constraints.Max.Y ||
+					c.fileList.Position.First > 0 ||
+					c.fileList.Position.Offset > 0
+				if actualScrollable != scrollable {
+					gtx.Execute(op.InvalidateCmd{})
+				}
+				return listDims
 			})
 			return layout.Dimensions{Size: gtx.Constraints.Max}
 		}),
@@ -733,11 +917,17 @@ func (c *compositorModalState) layoutStitchPreviewPane(gtx layout.Context, e *Ed
 
 func (c *compositorModalState) layoutOverlayPreviewPane(gtx layout.Context, e *EditorUI) layout.Dimensions {
 	dims := c.effectivePreviewDims()
+	viewportDims := dims
+	if c.previewURL != "" {
+		if img, ok := e.resolveMainPreview(c.previewURL); ok && img != nil && !img.Bounds().Empty() {
+			viewportDims = img.Bounds().Size()
+		}
+	}
 	var layerOpts []uiSelectOption
 	for i := 1; i < len(c.paths); i++ {
 		layerOpts = append(layerOpts, uiSelectOption{
 			Value: fmt.Sprintf("%d", i),
-			Label: fmt.Sprintf("Scan %d: %s", i+1, filepath.Base(c.paths[i])),
+			Label: middleTruncateLabel(gtx, e.th, unit.Sp(12), gtx.Dp(135), fmt.Sprintf("Scan %d: ", i+1), compositorDisplayName(c.paths, i)),
 		})
 	}
 	if len(layerOpts) == 0 {
@@ -808,7 +998,7 @@ func (c *compositorModalState) layoutOverlayPreviewPane(gtx layout.Context, e *E
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			overlayVisual := func() viewportVisualState {
 				return viewportVisualState{
-					RealImageDims:   c.effectivePreviewDims(),
+					RealImageDims:   viewportDims,
 					OverlayStroke:   c.maskStroke,
 					OverlayBrushPct: c.brushPct,
 				}
@@ -825,7 +1015,7 @@ func (c *compositorModalState) layoutOverlayPreviewPane(gtx layout.Context, e *E
 					e.th,
 					func(src string) (*image.NRGBA, bool) { return e.resolveMainPreview(src) },
 					c.previewURL,
-					dims,
+					viewportDims,
 					c.previewURL == "",
 					"Align scans first, then paint mask strokes from Scan 2+ onto Scan 1",
 					nil,

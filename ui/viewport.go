@@ -727,18 +727,27 @@ func (v *viewportState) ensureRaster(
 	info viewportLayoutInfo,
 	cb viewportCallbacks,
 ) {
-	visible := visibleImageRect(info, dims)
-	srcRect := quantizeSourceRect(visible, dims)
-	scale := info.StageWidth / float64(dims.X)
-	dstW, dstH := boundedDestSize(srcRect, scale)
-	reqSX := float64(dstW) / float64(srcRect.Dx())
-	reqSY := float64(dstH) / float64(srcRect.Dy())
+	cacheDims := dims
+	if v.activeEntry != nil && v.activeEntry.source == source && v.activeEntry.dims.X > 0 && v.activeEntry.dims.Y > 0 {
+		cacheDims = v.activeEntry.dims
+	}
 
-	if cov := v.findCoveringCached(source, dims, visible, reqSX, reqSY); cov != nil {
+	computeSpec := func(targetDims image.Point) (visible, srcRect image.Rectangle, dstW, dstH int, reqSX, reqSY float64, key string) {
+		visible = visibleImageRect(info, targetDims)
+		srcRect = quantizeSourceRect(visible, targetDims)
+		scale := info.StageWidth / float64(targetDims.X)
+		dstW, dstH = boundedDestSize(srcRect, scale)
+		reqSX = float64(dstW) / float64(srcRect.Dx())
+		reqSY = float64(dstH) / float64(srcRect.Dy())
+		key = fmt.Sprintf("%s:%d,%d,%d,%d:%dx%d", source, srcRect.Min.X, srcRect.Min.Y, srcRect.Dx(), srcRect.Dy(), dstW, dstH)
+		return visible, srcRect, dstW, dstH, reqSX, reqSY, key
+	}
+
+	visible, srcRect, dstW, dstH, reqSX, reqSY, key := computeSpec(cacheDims)
+	if cov := v.findCoveringCached(source, cacheDims, visible, reqSX, reqSY); cov != nil {
 		v.activateEntry(cov, cb)
 		return
 	}
-	key := fmt.Sprintf("%s:%d,%d,%d,%d:%dx%d", source, srcRect.Min.X, srcRect.Min.Y, srcRect.Dx(), srcRect.Dy(), dstW, dstH)
 	if exact := v.findExactCached(key); exact != nil {
 		v.activateEntry(exact, cb)
 		return
@@ -748,13 +757,28 @@ func (v *viewportState) ensureRaster(
 	if !ok || srcImg == nil {
 		return
 	}
+	actualDims := srcImg.Bounds().Size()
+	if actualDims.X <= 0 || actualDims.Y <= 0 {
+		return
+	}
+	if actualDims != cacheDims {
+		visible, srcRect, dstW, dstH, reqSX, reqSY, key = computeSpec(actualDims)
+		if cov := v.findCoveringCached(source, actualDims, visible, reqSX, reqSY); cov != nil {
+			v.activateEntry(cov, cb)
+			return
+		}
+		if exact := v.findExactCached(key); exact != nil {
+			v.activateEntry(exact, cb)
+			return
+		}
+	}
 
 	// Build small/medium rasters synchronously for zero flicker.
 	if srcRect.Dx()*srcRect.Dy() <= 1_500_000 {
 		entry := buildViewportRaster(rasterBuildSpec{
 			key:      key,
 			source:   source,
-			dims:     dims,
+			dims:     actualDims,
 			rect:     srcRect,
 			dstW:     dstW,
 			dstH:     dstH,
@@ -768,7 +792,7 @@ func (v *viewportState) ensureRaster(
 	spec := &rasterBuildSpec{
 		key:      key,
 		source:   source,
-		dims:     dims,
+		dims:     actualDims,
 		rect:     srcRect,
 		dstW:     dstW,
 		dstH:     dstH,

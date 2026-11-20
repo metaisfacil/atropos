@@ -7,6 +7,8 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
+	"gioui.org/widget"
 )
 
 type stubBackend struct {
@@ -1064,4 +1067,362 @@ func TestModeSwitchHasNoLoadingFlickerOrSidebarLayoutJump(t *testing.T) {
 		flushBackend()
 	}
 }
+
+func TestCompositorAcceptsDroppedImageFiles(t *testing.T) {
+	ui := newTestEditorUI(t)
+	scan1 := writeTestScanPNG(t, "drop1.png", 120, 90)
+	scan2 := writeTestScanPNG(t, "drop2.jpg", 120, 90)
+	scan3 := writeTestScanPNG(t, "drop3.png", 120, 90)
+
+	ui.compositorState.open(ui)
+	ui.handleDroppedFiles([]string{scan1, "notes.txt", scan2})
+
+	got := ui.compositorState.paths
+	if len(got) != 2 || got[0] != scan1 || got[1] != scan2 {
+		t.Fatalf("compositor paths = %v, want [%q %q]", got, scan1, scan2)
+	}
+	if ui.compositorState.statusMsg != "2 image(s) queued" {
+		t.Fatalf("compositor statusMsg = %q, want %q", ui.compositorState.statusMsg, "2 image(s) queued")
+	}
+	if ui.imageLoaded {
+		t.Fatal("dropping files into open compositor unexpectedly loaded main editor image")
+	}
+
+	// Drops while compositor is busy must be ignored.
+	ui.compositorState.busy = true
+	ui.handleDroppedFiles([]string{scan3})
+	if len(ui.compositorState.paths) != 2 {
+		t.Fatalf("expected busy compositor to ignore drop, got %d paths", len(ui.compositorState.paths))
+	}
+	ui.compositorState.busy = false
+
+	// Closing compositor resumes routing drops to the main editor.
+	ui.compositorOpen = false
+	ui.handleDroppedFiles([]string{scan1})
+	if !ui.imageLoaded {
+		t.Fatal("expected dropping file with compositor closed to load main editor image")
+	}
+}
+
+func TestCompositorOverlayReducedPreviewFillsStage(t *testing.T) {
+	ui := newTestEditorUI(t)
+	sb := ui.app.(*stubBackend)
+	reducedDims := image.Pt(102, 140)
+	reducedImg := image.NewNRGBA(image.Rectangle{Max: reducedDims})
+	url := sb.registerPreview(reducedImg)
+
+	c := &ui.compositorState
+	c.ensureInit()
+	c.orientation = "overlay"
+	c.alignedLayers = 2
+	c.paths = []string{"scan1.png", "scan2.png"}
+	c.previewURL = url
+	c.previewDims = image.Pt(510, 700)
+
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(760, 620)),
+		Now:         time.Now(),
+	}
+	ui.overlays.beginFrame(gtx)
+	c.layoutOverlayPreviewPane(gtx, ui)
+	ui.overlays.layoutOverlayPass(gtx)
+
+	if c.viewport.activeEntry == nil {
+		t.Fatal("expected compositor viewport activeEntry after layoutOverlayPreviewPane")
+	}
+	if c.viewport.activeEntry.dims != reducedDims {
+		t.Fatalf("compositor viewport activeEntry.dims = %v, want %v", c.viewport.activeEntry.dims, reducedDims)
+	}
+	wantRect := image.Rectangle{Max: reducedDims}
+	if c.viewport.activeEntry.rect != wantRect {
+		t.Fatalf("compositor viewport activeEntry.rect = %v, want %v", c.viewport.activeEntry.rect, wantRect)
+	}
+}
+
+func TestCompositorReorderAndRemovePointerClicks(t *testing.T) {
+	runMode := func(orientation string) {
+		ui := newTestEditorUI(t)
+		sb := ui.app.(*stubBackend)
+		previewURL := sb.registerPreview(image.NewNRGBA(image.Rect(0, 0, 120, 90)))
+		scanA := filepath.Join("scans", "aeternam moongod 2026-11-19-0001.tif")
+		scanB := filepath.Join("scans", "aeternam moongod 2026-11-19-0002.tif")
+		scanC := filepath.Join("scans", "aeternam moongod 2026-11-19-0003.tif")
+		c := &ui.compositorState
+		c.open(ui)
+		c.orientation = orientation
+		c.paths = []string{scanA, scanB, scanC}
+		c.previewURL = previewURL
+		c.previewDims = image.Pt(120, 90)
+		if orientation == "overlay" {
+			c.alignedLayers = 3
+			c.activeLayer = 2
+		}
+
+		var router input.Router
+		var ops op.Ops
+		frame := func() {
+			ops.Reset()
+			gtx := layout.Context{
+				Ops:         &ops,
+				Source:      router.Source(),
+				Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+				Constraints: layout.Exact(image.Pt(1280, 900)),
+				Now:         time.Now(),
+			}
+			ui.layoutRoot(gtx)
+			router.Frame(&ops)
+		}
+
+		findButtons := func(label string) []image.Rectangle {
+			nodes := router.AppendSemantics(nil)
+			seen := make(map[image.Rectangle]bool)
+			var rects []image.Rectangle
+			var walk func([]input.SemanticNode)
+			walk = func(ns []input.SemanticNode) {
+				for _, n := range ns {
+					if n.Desc.Gestures == input.ClickGesture && !n.Desc.Bounds.Empty() && !seen[n.Desc.Bounds] {
+						matched := n.Desc.Label == label
+						if !matched {
+							for _, child := range n.Children {
+								if child.Desc.Label == label {
+									matched = true
+									break
+								}
+							}
+						}
+						if matched {
+							seen[n.Desc.Bounds] = true
+							rects = append(rects, n.Desc.Bounds)
+						}
+					}
+					if len(n.Children) > 0 {
+						walk(n.Children)
+					}
+				}
+			}
+			walk(nodes)
+			sort.Slice(rects, func(i, j int) bool {
+				return rects[i].Min.Y < rects[j].Min.Y
+			})
+			return rects
+		}
+
+		clickRect := func(r image.Rectangle) {
+			pt := f32.Pt(float32(r.Min.X+r.Dx()/2), float32(r.Min.Y+r.Dy()/2))
+			router.Queue(
+				pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pt},
+				pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt},
+				pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pt},
+			)
+			frame()
+			frame()
+		}
+
+		frame()
+
+		downRects := findButtons("▼")
+		if len(downRects) != 2 {
+			t.Fatalf("%s: expected 2 enabled ▼ semantic rects for 3 rows, got %v", orientation, downRects)
+		}
+		upRects := findButtons("▲")
+		if len(upRects) != 2 {
+			t.Fatalf("%s: expected 2 enabled ▲ semantic rects for 3 rows, got %v", orientation, upRects)
+		}
+		delRects := findButtons("✕")
+		if len(delRects) != 3 {
+			t.Fatalf("%s: expected 3 ✕ semantic rects, got %v", orientation, delRects)
+		}
+
+		// Clicking disabled ▲ on row 0 (just left of row 0 ▼) and disabled ▼ on last row (between last ▲ and last ✕) must do nothing.
+		row0DisabledUp := downRects[0].Sub(image.Pt(downRects[0].Dx()+3, 0))
+		clickRect(row0DisabledUp)
+		if c.paths[0] != scanA || c.paths[1] != scanB || c.paths[2] != scanC || c.previewURL == "" {
+			t.Fatalf("%s: clicking disabled row 0 ▲ altered state: paths=%v preview=%q", orientation, c.paths, c.previewURL)
+		}
+		lastRowDisabledDown := image.Rect(upRects[1].Max.X+3, delRects[2].Min.Y, delRects[2].Min.X-3, delRects[2].Max.Y)
+		clickRect(lastRowDisabledDown)
+		if c.paths[0] != scanA || c.paths[1] != scanB || c.paths[2] != scanC || c.previewURL == "" {
+			t.Fatalf("%s: clicking disabled last-row ▼ altered state: paths=%v preview=%q", orientation, c.paths, c.previewURL)
+		}
+
+		// Click Row 0 ▼ -> swaps scanA/scanB and invalidates stale preview/alignment.
+		clickRect(downRects[0])
+		if len(c.paths) != 3 || c.paths[0] != scanB || c.paths[1] != scanA || c.paths[2] != scanC {
+			t.Fatalf("%s: after clicking row 0 ▼ (%v), paths = %v, want [%q %q %q]", orientation, downRects[0], c.paths, scanB, scanA, scanC)
+		}
+		if c.previewURL != "" || c.alignedLayers != 0 {
+			t.Fatalf("%s: expected reorder to clear stale preview/alignment, got preview=%q alignedLayers=%d", orientation, c.previewURL, c.alignedLayers)
+		}
+		wantMsg := `Order updated — click "Stitch images" to update`
+		if orientation == "overlay" {
+			wantMsg = `Order updated — click "Align scans" to update`
+		}
+		if c.statusMsg != wantMsg {
+			t.Fatalf("%s: reorder statusMsg = %q, want %q", orientation, c.statusMsg, wantMsg)
+		}
+
+		// Click Row 1 ▲ -> swaps back.
+		upRects = findButtons("▲")
+		if len(upRects) != 2 {
+			t.Fatalf("%s: expected 2 enabled ▲ semantic rects after reorder, got %v", orientation, upRects)
+		}
+		clickRect(upRects[0])
+		if len(c.paths) != 3 || c.paths[0] != scanA || c.paths[1] != scanB || c.paths[2] != scanC {
+			t.Fatalf("%s: after clicking row 1 ▲ (%v), paths = %v, want [%q %q %q]", orientation, upRects[0], c.paths, scanA, scanB, scanC)
+		}
+
+		// Re-populate stale preview and remove last row (✕) -> clears preview/alignment and clamps activeLayer.
+		c.previewURL = previewURL
+		if orientation == "overlay" {
+			c.alignedLayers = 3
+			c.activeLayer = 2
+		}
+		frame()
+		delRects = findButtons("✕")
+		if len(delRects) != 3 {
+			t.Fatalf("%s: expected 3 ✕ semantic rects before remove, got %v", orientation, delRects)
+		}
+		clickRect(delRects[2])
+		if len(c.paths) != 2 || c.paths[0] != scanA || c.paths[1] != scanB {
+			t.Fatalf("%s: after clicking row 2 ✕, paths = %v, want [%q %q]", orientation, c.paths, scanA, scanB)
+		}
+		if c.previewURL != "" || c.alignedLayers != 0 {
+			t.Fatalf("%s: expected remove to clear preview/alignment, got preview=%q alignedLayers=%d", orientation, c.previewURL, c.alignedLayers)
+		}
+		if orientation == "overlay" && c.activeLayer != 1 {
+			t.Fatalf("overlay: expected activeLayer clamped to 1 after removing row 2, got %d", c.activeLayer)
+		}
+		if c.statusMsg != "2 image(s) queued" {
+			t.Fatalf("%s: remove statusMsg = %q, want %q", orientation, c.statusMsg, "2 image(s) queued")
+		}
+	}
+
+	runMode("ltr")
+	runMode("overlay")
+}
+
+func TestCompositorMiddleTruncatePreservesDistinguishingSuffix(t *testing.T) {
+	ui := newTestEditorUI(t)
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:    &ops,
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Now:    time.Now(),
+	}
+
+	paths := []string{
+		filepath.Join("scans", "aeternam moongod 2026-11-19-0001.tif"),
+		filepath.Join("scans", "aeternam moongod 2026-11-19-0002.tif"),
+	}
+	const maxWidth = 170
+	out1 := middleTruncateLabel(gtx, ui.th, unit.Sp(12), maxWidth, "Ref. ", compositorDisplayName(paths, 0))
+	out2 := middleTruncateLabel(gtx, ui.th, unit.Sp(12), maxWidth, "2. ", compositorDisplayName(paths, 1))
+
+	if out1 == out2 {
+		t.Fatalf("expected middle-truncated labels to differ, both were %q", out1)
+	}
+	if !strings.Contains(out1, "0001.tif") {
+		t.Fatalf("expected first label %q to preserve suffix 0001.tif", out1)
+	}
+	if !strings.Contains(out2, "0002.tif") {
+		t.Fatalf("expected second label %q to preserve suffix 0002.tif", out2)
+	}
+	if w1 := measureLabelWidth(gtx, ui.th, unit.Sp(12), out1); w1 > maxWidth {
+		t.Fatalf("first label %q width %d exceeds budget %d", out1, w1, maxWidth)
+	}
+	if w2 := measureLabelWidth(gtx, ui.th, unit.Sp(12), out2); w2 > maxWidth {
+		t.Fatalf("second label %q width %d exceeds budget %d", out2, w2, maxWidth)
+	}
+
+	// Duplicate basenames from different directories include their parent folder name.
+	dupPaths := []string{
+		filepath.Join("rollA", "scan_01.tif"),
+		filepath.Join("rollB", "scan_01.tif"),
+	}
+	if got := compositorDisplayName(dupPaths, 0); got != "rollA/scan_01.tif" {
+		t.Fatalf("compositorDisplayName(dup, 0) = %q, want %q", got, "rollA/scan_01.tif")
+	}
+	if got := compositorDisplayName(dupPaths, 1); got != "rollB/scan_01.tif" {
+		t.Fatalf("compositorDisplayName(dup, 1) = %q, want %q", got, "rollB/scan_01.tif")
+	}
+}
+
+func TestCompositorFileListNoUnusedRightScrollbarGutter(t *testing.T) {
+	ui := newTestEditorUI(t)
+	c := &ui.compositorState
+	c.open(ui)
+	c.orientation = "ltr"
+
+	var router input.Router
+	var ops op.Ops
+	const boxW, boxH = 584, 185
+	frame := func() {
+		for len(c.upBtns) < len(c.paths) {
+			c.upBtns = append(c.upBtns, widget.Clickable{})
+			c.downBtns = append(c.downBtns, widget.Clickable{})
+			c.delBtns = append(c.delBtns, widget.Clickable{})
+		}
+		ops.Reset()
+		gtx := layout.Context{
+			Ops:         &ops,
+			Source:      router.Source(),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(boxW, boxH)),
+			Now:         time.Now(),
+		}
+		ui.overlays.beginFrame(gtx)
+		c.layoutFilesSection(gtx, ui)
+		ui.overlays.layoutOverlayPass(gtx)
+		router.Frame(&ops)
+	}
+	firstDeleteRight := func() int {
+		nodes := router.AppendSemantics(nil)
+		var delRight int
+		var walk func([]input.SemanticNode)
+		walk = func(ns []input.SemanticNode) {
+			for _, n := range ns {
+				if n.Desc.Gestures == input.ClickGesture && !n.Desc.Bounds.Empty() {
+					for _, child := range n.Children {
+						if child.Desc.Label == "✕" {
+							if n.Desc.Bounds.Max.X > delRight {
+								delRight = n.Desc.Bounds.Max.X
+							}
+							break
+						}
+					}
+				}
+				if len(n.Children) > 0 {
+					walk(n.Children)
+				}
+			}
+		}
+		walk(nodes)
+		return delRight
+	}
+
+	// Non-scrollable (2 items): no 10px scrollbar gutter should be reserved on the right.
+	c.paths = []string{"scan_01.png", "scan_02.png"}
+	frame()
+	frame()
+	nonScrollDelRight := firstDeleteRight()
+	if gap := boxW - nonScrollDelRight; gap > 10 {
+		t.Fatalf("non-scrollable right gap = %dpx (delRight=%d, boxW=%d), want <= 10px (no unused scrollbar gutter)", gap, nonScrollDelRight, boxW)
+	}
+
+	// Scrollable (10 items): Occupy reserves scrollbar width so ✕ shifts left cleanly.
+	c.paths = make([]string, 10)
+	for i := range c.paths {
+		c.paths[i] = fmt.Sprintf("scan_%02d.png", i+1)
+	}
+	frame()
+	frame()
+	scrollDelRight := firstDeleteRight()
+	if scrollDelRight >= nonScrollDelRight-4 {
+		t.Fatalf("scrollable delRight=%d did not reserve scrollbar room relative to non-scrollable delRight=%d", scrollDelRight, nonScrollDelRight)
+	}
+}
+
 

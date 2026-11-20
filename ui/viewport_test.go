@@ -358,3 +358,71 @@ func BenchmarkCornerOverlayRebuild1000Corners(b *testing.B) {
 		v.drawDetectedCornersOverlay(&ops, pts, dims, 5+(i%2), 2.5, info)
 	}
 }
+
+func TestViewportReducedResolutionPreviewFillsFullStage(t *testing.T) {
+	v := newViewportState()
+	th := newAtroposTheme()
+	logicalDims := image.Pt(5100, 7020)
+	reducedDims := image.Pt(1017, 1400)
+	reducedImg := image.NewNRGBA(image.Rectangle{Max: reducedDims})
+	resolveCalls := 0
+	resolveImg := func(src string) (*image.NRGBA, bool) {
+		resolveCalls++
+		return reducedImg, true
+	}
+
+	var ops op.Ops
+	renderFrame := func() {
+		ops.Reset()
+		gtx := layout.Context{
+			Ops:         &ops,
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(800, 700)),
+		}
+		v.Layout(
+			gtx,
+			th,
+			resolveImg,
+			"reduced-preview",
+			logicalDims,
+			false,
+			"",
+			nil,
+			viewportVisualState{RealImageDims: logicalDims},
+			viewportCallbacks{},
+		)
+	}
+
+	renderFrame()
+	if v.activeEntry == nil {
+		t.Fatal("expected activeEntry after rendering reduced preview")
+	}
+	if v.activeEntry.dims != reducedDims {
+		t.Fatalf("activeEntry.dims = %v, want %v", v.activeEntry.dims, reducedDims)
+	}
+	wantFullRect := image.Rectangle{Max: reducedDims}
+	if v.activeEntry.rect != wantFullRect {
+		t.Fatalf("activeEntry.rect = %v, want %v (full reduced source covering stage)", v.activeEntry.rect, wantFullRect)
+	}
+
+	prevCalls := resolveCalls
+	renderFrame()
+	if resolveCalls != prevCalls {
+		t.Fatalf("expected second identical frame to hit cache without resolving image: calls %d -> %d", prevCalls, resolveCalls)
+	}
+
+	// Zoom in and pan to bottom-right; raster coordinates must remain in reducedDims space.
+	v.Zoom = 3.0
+	v.ScrollX = 1e6
+	v.ScrollY = 1e6
+	renderFrame()
+	if v.activeEntry == nil || v.activeEntry.rect.Empty() {
+		t.Fatal("expected non-empty activeEntry after zoomed pan")
+	}
+	if v.activeEntry.dims != reducedDims {
+		t.Fatalf("zoomed activeEntry.dims = %v, want %v", v.activeEntry.dims, reducedDims)
+	}
+	if v.activeEntry.rect.Max != reducedDims {
+		t.Fatalf("expected panned bottom-right rect to reach %v, got %v", reducedDims, v.activeEntry.rect.Max)
+	}
+}

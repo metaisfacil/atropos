@@ -850,21 +850,47 @@ func (e *EditorUI) handlePasteImage() {
 	doPaste()
 }
 
+func filterDroppedImagePaths(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		trimmed := strings.TrimSpace(p)
+		if trimmed == "" {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(trimmed)) {
+		case ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".webp":
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
 func (e *EditorUI) handleDroppedFiles(paths []string) {
 	if len(paths) == 0 {
 		return
 	}
 	e.postUI(func() {
+		if e.errorMessage != "" || e.confirmDialog != nil {
+			return
+		}
 		if e.calibrationOpen {
-			e.calibState.addPaths(paths, e)
+			if imgPaths := filterDroppedImagePaths(paths); len(imgPaths) > 0 {
+				e.calibState.addPaths(imgPaths, e)
+			}
+			return
+		}
+		if e.compositorOpen {
+			if imgPaths := filterDroppedImagePaths(paths); len(imgPaths) > 0 {
+				e.compositorState.addPaths(imgPaths, e)
+			}
 			return
 		}
 		if e.hasOpenModal() {
 			return
 		}
 		for _, p := range paths {
-			if strings.TrimSpace(p) != "" {
-				e.loadFile(p, false)
+			if trimmed := strings.TrimSpace(p); trimmed != "" {
+				e.loadFile(trimmed, false)
 				return
 			}
 		}
