@@ -27,15 +27,6 @@ import (
 //  - apply perspective transform; if warp fill required, call applyWarpFill
 //  - saveUndo(); set warpedImage to result
 
-// LineAddRequest defines start and end coordinates for a user-drawn line
-// used in 4-line perspective correction mode.
-type LineAddRequest struct {
-	X1 int `json:"x1"`
-	Y1 int `json:"y1"`
-	X2 int `json:"x2"`
-	Y2 int `json:"y2"`
-}
-
 // AddLine records a line for line-based perspective correction.
 func (a *App) AddLine(req LineAddRequest) (*ProcessResult, error) {
 	a.redoStack = nil
@@ -171,8 +162,10 @@ func (a *App) ClearLines() (*ProcessResult, error) {
 	a.logf("ClearLines")
 	descreenReset := a.descreenResultImage != nil
 	a.levelsBaseImage = nil
+	a.levelsSelection = adjustmentSelectionKey{}
 	a.descreenBaseImage = nil
 	a.descreenResultImage = nil
+	a.descreenSelection = adjustmentSelectionKey{}
 	a.lines = nil
 	a.warpedImage = nil
 	a.cropSkipped = false

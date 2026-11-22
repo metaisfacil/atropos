@@ -3,13 +3,13 @@
 // cornerSobelAVX2 evaluates sixteen adjacent Sobel pixels using signed 16-bit
 // arithmetic. Source rows include the one-pixel halo on both sides.
 TEXT ·cornerSobelAVX2(SB), NOSPLIT, $0-8
-	MOVQ args+0(FP), BP
-	MOVQ 0(BP), R8
-	MOVQ 8(BP), R9
-	MOVQ 16(BP), R10
-	MOVQ 24(BP), R11
-	MOVQ 32(BP), R12
-	MOVQ 40(BP), CX
+	MOVQ args+0(FP), BX
+	MOVQ 0(BX), R8
+	MOVQ 8(BX), R9
+	MOVQ 16(BX), R10
+	MOVQ 24(BX), R11
+	MOVQ 32(BX), R12
+	MOVQ 40(BX), CX
 	XORQ DI, DI
 
 sobel_avx2_loop:
@@ -54,12 +54,12 @@ sobel_avx2_loop:
 
 // cornerBlurAVX2 applies [1 2 1]/4 to sixteen byte lanes per iteration.
 TEXT ·cornerBlurAVX2(SB), NOSPLIT, $0-8
-	MOVQ args+0(FP), BP
-	MOVQ 0(BP), R8
-	MOVQ 8(BP), R9
-	MOVQ 16(BP), R10
-	MOVQ 24(BP), R11
-	MOVQ 32(BP), CX
+	MOVQ args+0(FP), BX
+	MOVQ 0(BX), R8
+	MOVQ 8(BX), R9
+	MOVQ 16(BX), R10
+	MOVQ 24(BX), R11
+	MOVQ 32(BX), CX
 	XORQ DI, DI
 
 blur_avx2_loop:
@@ -81,42 +81,42 @@ blur_avx2_loop:
 
 // cornerEigenAVX2 evaluates four adjacent structure tensors per iteration.
 TEXT ·cornerEigenAVX2(SB), NOSPLIT, $0-8
-	MOVQ args+0(FP), BP
-	MOVQ 96(BP), R15        // destination
-	MOVQ 104(BP), CX        // vectorized element count
+	MOVQ args+0(FP), BX
+	MOVQ 96(BX), R15        // destination
+	MOVQ 104(BX), CX        // vectorized element count
 	VXORPD Y15, Y15, Y15    // lane-local maxima
 	VXORPD Y14, Y14, Y14    // zero for discriminant clamp
 	XORQ DI, DI
 
 eigen_avx2_loop:
 	// sxx
-	MOVQ 0(BP), AX
+	MOVQ 0(BX), AX
 	VMOVUPD (AX)(DI*8), Y0
-	MOVQ 8(BP), AX
+	MOVQ 8(BX), AX
 	VSUBPD (AX)(DI*8), Y0, Y0
-	MOVQ 16(BP), AX
+	MOVQ 16(BX), AX
 	VSUBPD (AX)(DI*8), Y0, Y0
-	MOVQ 24(BP), AX
+	MOVQ 24(BX), AX
 	VADDPD (AX)(DI*8), Y0, Y0
 
 	// syy
-	MOVQ 32(BP), AX
+	MOVQ 32(BX), AX
 	VMOVUPD (AX)(DI*8), Y1
-	MOVQ 40(BP), AX
+	MOVQ 40(BX), AX
 	VSUBPD (AX)(DI*8), Y1, Y1
-	MOVQ 48(BP), AX
+	MOVQ 48(BX), AX
 	VSUBPD (AX)(DI*8), Y1, Y1
-	MOVQ 56(BP), AX
+	MOVQ 56(BX), AX
 	VADDPD (AX)(DI*8), Y1, Y1
 
 	// sxy
-	MOVQ 64(BP), AX
+	MOVQ 64(BX), AX
 	VMOVUPD (AX)(DI*8), Y2
-	MOVQ 72(BP), AX
+	MOVQ 72(BX), AX
 	VSUBPD (AX)(DI*8), Y2, Y2
-	MOVQ 80(BP), AX
+	MOVQ 80(BX), AX
 	VSUBPD (AX)(DI*8), Y2, Y2
-	MOVQ 88(BP), AX
+	MOVQ 88(BX), AX
 	VADDPD (AX)(DI*8), Y2, Y2
 
 	// trace, determinant and minimum eigenvalue. Avoid FMA so operation
@@ -143,7 +143,7 @@ eigen_avx2_loop:
 	VMAXPD X13, X15, X15
 	VPERMILPD $1, X15, X13
 	VMAXSD X13, X15, X15
-	VMOVSD X15, 112(BP)
+	VMOVSD X15, 112(BX)
 	VZEROUPPER
 	RET
 
@@ -161,12 +161,12 @@ GLOBL ·cornerHalf<>(SB), RODATA|NOPTR, $32
 
 // cornerTensorEigenAVX2 evaluates four tensors held as exact int32 sums.
 TEXT ·cornerTensorEigenAVX2(SB), NOSPLIT, $0-8
-	MOVQ args+0(FP), BP
-	MOVQ 0(BP), R8
-	MOVQ 8(BP), R9
-	MOVQ 16(BP), R10
-	MOVQ 24(BP), R11
-	MOVQ 32(BP), CX
+	MOVQ args+0(FP), BX
+	MOVQ 0(BX), R8
+	MOVQ 8(BX), R9
+	MOVQ 16(BX), R10
+	MOVQ 24(BX), R11
+	MOVQ 32(BX), CX
 	VXORPD Y15, Y15, Y15
 	VXORPD Y14, Y14, Y14
 	XORQ DI, DI
@@ -196,17 +196,17 @@ tensor_eigen_avx2_loop:
 	VMAXPD X13, X15, X15
 	VPERMILPD $1, X15, X13
 	VMAXSD X13, X15, X15
-	VMOVSD X15, 40(BP)
+	VMOVSD X15, 40(BX)
 	VZEROUPPER
 	RET
 
 // cornerResizeGray2AVX2 averages sixteen 2x2 source blocks per iteration.
 TEXT ·cornerResizeGray2AVX2(SB), NOSPLIT, $0-8
-	MOVQ args+0(FP), BP
-	MOVQ 0(BP), R8
-	MOVQ 8(BP), R9
-	MOVQ 16(BP), R10
-	MOVQ 24(BP), CX
+	MOVQ args+0(FP), BX
+	MOVQ 0(BX), R8
+	MOVQ 8(BX), R9
+	MOVQ 16(BX), R10
+	MOVQ 24(BX), CX
 	LEAQ ·cornerByteOnes<>(SB), R11
 	VMOVDQU (R11), Y15
 	XORQ DI, DI
@@ -233,11 +233,11 @@ resize_gray2_loop:
 
 // cornerResizeGray4AVX2 averages eight 4x4 source blocks per iteration.
 TEXT ·cornerResizeGray4AVX2(SB), NOSPLIT, $0-8
-	MOVQ args+0(FP), BP
-	MOVQ 0(BP), R8
-	MOVQ 8(BP), R9
-	MOVQ 16(BP), R10
-	MOVQ 24(BP), CX
+	MOVQ args+0(FP), BX
+	MOVQ 0(BX), R8
+	MOVQ 8(BX), R9
+	MOVQ 16(BX), R10
+	MOVQ 24(BX), CX
 	LEAQ ·cornerByteOnes<>(SB), R11
 	VMOVDQU (R11), Y15
 	LEAQ ·cornerWordOnes<>(SB), R11

@@ -3,11 +3,11 @@
 // applyLevelsAVX2 maps sixteen interleaved NRGBA bytes with float64 arithmetic
 // matching the Go implementation, then restores the four alpha bytes.
 TEXT ·applyLevelsAVX2(SB), NOSPLIT, $0-8
-	MOVQ args+0(FP), BP
-	MOVQ 0(BP), R8
-	MOVQ 8(BP), CX
-	VBROADCASTSD 16(BP), Y13
-	VBROADCASTSD 24(BP), Y14
+	MOVQ args+0(FP), BX
+	MOVQ 0(BX), R8
+	MOVQ 8(BX), CX
+	VBROADCASTSD 16(BX), Y13
+	VBROADCASTSD 24(BX), Y14
 	VPXOR X15, X15, X15
 	MOVQ $255, AX
 	MOVD AX, X11
@@ -73,14 +73,14 @@ GLOBL ·levelsAlphaMask<>(SB), RODATA|NOPTR, $16
 // grayscaleAccentAVX2 converts four NRGBA pixels to exact BT.601 luma while
 // applying an optional saturating accent adjustment to RGB.
 TEXT ·grayscaleAccentAVX2(SB), NOSPLIT, $0-8
-	MOVQ args+0(FP), BP
-	MOVQ 0(BP), R8
-	MOVQ 8(BP), R9
-	MOVQ 16(BP), CX
-	MOVBLZX 24(BP), AX
+	MOVQ args+0(FP), BX
+	MOVQ 0(BX), R8
+	MOVQ 8(BX), R9
+	MOVQ 16(BX), CX
+	MOVBLZX 24(BX), AX
 	MOVD AX, X13
 	VPBROADCASTB X13, X13
-	MOVBLZX 25(BP), R10
+	MOVBLZX 25(BX), R10
 	LEAQ ·grayCoefficients<>(SB), AX
 	VMOVDQU (AX), Y14
 	LEAQ ·grayGreenShuffle<>(SB), AX
@@ -135,14 +135,14 @@ GLOBL ·grayGreenShuffle<>(SB), RODATA|NOPTR, $16
 
 // maskBlendAVX2 blends four NRGBA pixels against a constant RGB background.
 TEXT ·maskBlendAVX2(SB), NOSPLIT, $0-8
-	MOVQ args+0(FP), BP
-	MOVQ 0(BP), R8
-	MOVQ 8(BP), R9
-	MOVQ 16(BP), R10
-	MOVQ 24(BP), CX
-	VBROADCASTSD 32(BP), Y11
-	VBROADCASTSD 40(BP), Y12
-	VBROADCASTSD 48(BP), Y13
+	MOVQ args+0(FP), BX
+	MOVQ 0(BX), R8
+	MOVQ 8(BX), R9
+	MOVQ 16(BX), R10
+	MOVQ 24(BX), CX
+	VBROADCASTSD 32(BX), Y11
+	VBROADCASTSD 40(BX), Y12
+	VBROADCASTSD 48(BX), Y13
 	LEAQ ·maskBlendShuffle<>(SB), AX
 	VMOVDQU 0(AX), X14
 	VMOVDQU 16(AX), X15

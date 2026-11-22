@@ -12,42 +12,7 @@ import (
 	"time"
 
 	"atropos/internal/raster"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
-
-type CalibrationLoadRequest struct {
-	FilePath string `json:"filePath"`
-}
-
-type CalibrationImageInfo struct {
-	ImagePath string `json:"imagePath"`
-	Preview   string `json:"preview"`
-	Width     int    `json:"width"`
-	Height    int    `json:"height"`
-}
-
-type CalibrationPoint struct {
-	X int `json:"x"`
-	Y int `json:"y"`
-}
-
-type CalibrationEntryRequest struct {
-	ImagePath string             `json:"imagePath"`
-	Width     int                `json:"width"`
-	Height    int                `json:"height"`
-	Corners   []CalibrationPoint `json:"corners"`
-}
-
-type CalibrationSaveRequest struct {
-	Entries []CalibrationEntryRequest `json:"entries"`
-}
-
-type CalibrationSaveResult struct {
-	OutputPath string `json:"outputPath"`
-	Count      int    `json:"count"`
-	Cancelled  bool   `json:"cancelled,omitempty"`
-}
 
 type calibrationNamedPoint struct {
 	Name string `json:"name"`
@@ -80,12 +45,9 @@ var calibrationCornerNames = []string{"topLeft", "topRight", "bottomRight", "bot
 // CalibrationOpenFilesDialog selects a batch of scans without loading them
 // into the main editing pipeline.
 func (a *App) CalibrationOpenFilesDialog() ([]string, error) {
-	return runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select Scans for Corner Calibration",
-		Filters: []runtime.FileFilter{
-			{DisplayName: "Image Files (*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif;*.gif;*.webp)", Pattern: "*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif;*.gif;*.webp"},
-			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
-		},
+	return a.openMultipleFilesDialog("Select Scans for Corner Calibration", "", []FileFilter{
+		{DisplayName: "Image Files (*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif;*.gif;*.webp)", Patterns: []string{"*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tiff", "*.tif", "*.gif", "*.webp"}},
+		{DisplayName: "All Files (*.*)", Patterns: []string{"*.*"}},
 	})
 }
 
@@ -141,13 +103,8 @@ func (a *App) CalibrationSaveDataset(req CalibrationSaveRequest) (*CalibrationSa
 	if dir := commonCalibrationDirectory(req.Entries); dir != "" {
 		defaultDir = dir
 	}
-	outputPath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:            "Export Corner Ground Truth",
-		DefaultDirectory: defaultDir,
-		DefaultFilename:  "corner-ground-truth.json",
-		Filters: []runtime.FileFilter{
-			{DisplayName: "JSON Files (*.json)", Pattern: "*.json"},
-		},
+	outputPath, err := a.saveFileDialog("Export Corner Ground Truth", defaultDir, "corner-ground-truth.json", []FileFilter{
+		{DisplayName: "JSON Files (*.json)", Patterns: []string{"*.json"}},
 	})
 	if err != nil {
 		return nil, err

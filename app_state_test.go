@@ -38,6 +38,10 @@ func TestCornerDetectionOwnership(t *testing.T) {
 func TestCompositorLoadUsesCompleteReset(t *testing.T) {
 	a := newTestApp(100, 80)
 	a.compositorResult = solidTouchupTestImage(30)
+	compositorBefore, err := a.CompositorRefreshPreview()
+	if err != nil {
+		t.Fatal(err)
+	}
 	a.warpedImage, a.levelsBaseImage = a.currentImage, a.currentImage
 	a.descreenBaseImage, a.descreenResultImage = a.currentImage, a.currentImage
 	a.discBaseImage, a.discWorkingCrop, a.discNoMaskPreview = a.currentImage, a.currentImage, "/old"
@@ -61,6 +65,13 @@ func TestCompositorLoadUsesCompleteReset(t *testing.T) {
 	}
 	if before == res.Preview || a.originalImage == a.currentImage {
 		t.Fatal("load reused preview or mutable original")
+	}
+	compositorAfter, err := a.CompositorRefreshPreview()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compositorBefore.Preview == compositorAfter.Preview {
+		t.Fatal("compositor preview was not republished after image load reset")
 	}
 }
 

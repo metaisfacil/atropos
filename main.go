@@ -1,35 +1,22 @@
 package main
 
 import (
-	"context"
-	"embed"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"atropos/ui"
+
+	"gioui.org/app"
+	"gioui.org/unit"
 )
 
-//go:embed all:frontend/dist/*
-var assets embed.FS
-
-func main() {
-	// Parse flags: --debug, --corners, --disc, --lines, --normal, --post-save, and positional image path
-	debug := false
+func parseCLIArgs(args []string) (debug bool, launchMode, launchFile, postSave string, postSaveExit bool) {
 	if os.Getenv("ATROPOS_DEBUG") == "1" || strings.EqualFold(os.Getenv("ATROPOS_DEBUG"), "true") {
 		debug = true
 	}
-	launchMode := ""
-	launchFile := ""
-	postSave := ""
-	postSaveExit := false
-	for i := 1; i < len(os.Args); i++ {
-		arg := os.Args[i]
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		switch {
 		case arg == "--debug" || arg == "-debug":
 			debug = true
@@ -49,22 +36,24 @@ func main() {
 				postSaveExit = true
 			}
 		case arg == "--post-save":
-			// Consume next arg as the command, if present
-			if i+1 < len(os.Args) {
+			if i+1 < len(args) {
 				i++
-				postSave = os.Args[i]
+				postSave = args[i]
 			}
 		case arg == "--post-save-exit":
 			postSaveExit = true
 		default:
-			// Treat non-flag args as file path
 			if len(arg) > 0 && arg[0] != '-' {
 				launchFile = arg
 			}
 		}
 	}
+	return debug, launchMode, launchFile, postSave, postSaveExit
+}
 
-	// Set up debug logger if requested
+func main() {
+	dpiMode := ui.InitPlatformDPI()
+	debug, launchMode, launchFile, postSave, postSaveExit := parseCLIArgs(os.Args[1:])
 	var logger *log.Logger
 	if debug {
 		logger = log.New(os.Stderr, "[Atropos] ", log.Ldate|log.Ltime|log.Lmicroseconds)
@@ -72,58 +61,33 @@ func main() {
 		logger.Println("=== Atropos debug session started ===")
 		logger.Printf("CWD: %s", cwd)
 		logger.Printf("Args: %v", os.Args)
+		logger.Printf("DPI awareness: %s", dpiMode)
 	}
 
-	// Create an instance of the app structure
-	app := NewApp()
-	app.logger = logger
-	app.launchFilePath = launchFile
-	app.launchMode = launchMode
-	app.postSaveCmd = postSave
-	app.postSaveExit = postSaveExit
+	application := NewApp()
+	application.logger = logger
+	application.launchFilePath = launchFile
+	application.launchMode = launchMode
+	application.postSaveCmd = postSave
+	application.postSaveExit = postSaveExit
 
-	// Resolve a WebView2 user data directory that is not already locked by
-	// another running instance.  The stable per-user path is preferred so
-	// that localStorage preferences survive across launches; a PID-keyed
-	// temp path is used as a fallback when a second (or further) instance
-	// is opened.
-	dataPath := webviewUserDataPath()
+	go func() {
+		win := new(app.Window)
+		win.Option(
+			app.Title(AppBaseTitle()),
+			app.Size(unit.Dp(1200), unit.Dp(900)),
+			app.MinSize(unit.Dp(1080), unit.Dp(820)),
+		)
+		editor := ui.NewEditorUI(application, win, ui.Config{
+			AppVersion: AppVersion,
+			AppIconPNG: appIconPNG,
+		})
+		editor.InitOnStartup()
+		if err := editor.RunWindowLoop(); err != nil {
+			log.Printf("window loop error: %v", err)
+		}
+		os.Exit(0)
+	}()
 
-	// Create application with options
-	err := wails.Run(&options.App{
-		Title:     AppBaseTitle(),
-		Width:     1200,
-		Height:    900,
-		MinWidth:  1080,
-		MinHeight: 820,
-		AssetServer: &assetserver.Options{
-			Assets:  assets,
-			Handler: http.HandlerFunc(app.servePreviewAsset),
-		},
-		BackgroundColour: &options.RGBA{R: 27, G: 27, B: 27, A: 1},
-		DragAndDrop: &options.DragAndDrop{
-			EnableFileDrop:     true,
-			DisableWebViewDrop: true,
-		},
-		Windows: &windows.Options{
-			WebviewUserDataPath: dataPath,
-		},
-		OnStartup:  app.startup,
-		OnShutdown: app.shutdown,
-		OnBeforeClose: func(ctx context.Context) (prevent bool) {
-			if app.closeConfirmed {
-				return false
-			}
-			// Ask frontend path for confirmation.
-			runtime.EventsEmit(ctx, "app-close-requested")
-			return true
-		},
-		Bind: []interface{}{
-			app,
-		},
-	})
-
-	if err != nil {
-		println("Error:", err.Error())
-	}
+	app.Main()
 }

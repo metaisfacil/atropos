@@ -688,3 +688,48 @@ func TestResizeNRGBA_PreservesColor(t *testing.T) {
 		}
 	}
 }
+
+func TestRotateQuarterTurnsAndRotate180(t *testing.T) {
+	const w, h = 7, 5
+	src := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			src.SetNRGBA(x, y, color.NRGBA{R: uint8(x * 30), G: uint8(y * 40), B: uint8(x + y), A: 255})
+		}
+	}
+
+	got180 := Rotate180(src)
+	want180 := Rotate90(Rotate90(src, 1), 1)
+	if got180.Bounds() != want180.Bounds() || !bytes.Equal(got180.Pix, want180.Pix) {
+		t.Fatal("Rotate180 differs from two clockwise Rotate90 passes")
+	}
+
+	if RotateQuarterTurns(nil, 1) != nil {
+		t.Fatal("RotateQuarterTurns(nil, 1) != nil")
+	}
+	for _, s := range []int{0, 4, -4} {
+		if got := RotateQuarterTurns(src, s); got != src {
+			t.Fatalf("RotateQuarterTurns(src, %d) should return src unchanged", s)
+		}
+	}
+	for _, s := range []int{1, 5, -3} {
+		got := RotateQuarterTurns(src, s)
+		want := Rotate90(src, 1)
+		if got.Bounds() != want.Bounds() || !bytes.Equal(got.Pix, want.Pix) {
+			t.Fatalf("RotateQuarterTurns(src, %d) differs from 90° CW", s)
+		}
+	}
+	for _, s := range []int{2, -2} {
+		got := RotateQuarterTurns(src, s)
+		if got.Bounds() != want180.Bounds() || !bytes.Equal(got.Pix, want180.Pix) {
+			t.Fatalf("RotateQuarterTurns(src, %d) differs from 180°", s)
+		}
+	}
+	for _, s := range []int{3, -1} {
+		got := RotateQuarterTurns(src, s)
+		want := Rotate90(src, -1)
+		if got.Bounds() != want.Bounds() || !bytes.Equal(got.Pix, want.Pix) {
+			t.Fatalf("RotateQuarterTurns(src, %d) differs from 270° CW", s)
+		}
+	}
+}

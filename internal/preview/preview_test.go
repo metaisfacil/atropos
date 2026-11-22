@@ -293,3 +293,23 @@ func TestServePreviewAssetConcurrentLegacyFullRequestsShareEncoding(t *testing.T
 		}
 	}
 }
+
+func TestPreviewStoreResolve(t *testing.T) {
+	store := NewStore(2, nil)
+	img := image.NewNRGBA(image.Rect(0, 0, 12, 8))
+	url, err := store.Register(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := store.Resolve(url)
+	if !ok || got != img {
+		t.Fatalf("Resolve(%q) = (%v, %v), want (%v, true)", url, got, ok, img)
+	}
+	if _, ok := store.Resolve(PathPrefix + "invalid/999.jpg"); ok {
+		t.Fatal("Resolve succeeded for unknown revision")
+	}
+	store.Reset()
+	if _, ok := store.Resolve(url); ok {
+		t.Fatal("Resolve succeeded after Reset")
+	}
+}

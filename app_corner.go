@@ -35,17 +35,6 @@ func suggestCornerParams(w, h int) SuggestedCornerParams {
 	}
 }
 
-// CornerDetectRequest contains parameters for the Shi-Tomasi corner detector.
-type CornerDetectRequest struct {
-	MaxCorners   int     `json:"maxCorners"`
-	QualityLevel float64 `json:"qualityLevel"`
-	MinDistance  int     `json:"minDistance"`
-	AccentValue  int     `json:"accentValue"`
-	UseStretch   bool    `json:"useStretch"`
-	StretchLow   float64 `json:"stretchLow"`
-	StretchHigh  float64 `json:"stretchHigh"`
-}
-
 // cornerDetectBlockSize uses a wider structure-tensor window at the coarsest
 // scale. Broad, low-contrast object corners are otherwise easily outranked by
 // small high-contrast details after the image has been reduced to that scale.
@@ -357,29 +346,6 @@ func highlightRecoveryBudget(maxCorners int, perimeter cornerdetect.PerimeterBac
 		budget = maxCorners
 	}
 	return budget
-}
-
-// ClickCornerRequest holds the image-space coordinates of a user click.
-type ClickCornerRequest struct {
-	X      int  `json:"x"`
-	Y      int  `json:"y"`
-	Custom bool `json:"custom"`
-}
-
-// ClickCornerResult is returned after each corner click.
-// For clicks 1–3 only SnappedX/SnappedY/Count/Message are set; Preview is empty.
-// On the 4th click Done is true, Preview contains the warped image, and
-// Width/Height reflect the new image dimensions.
-type ClickCornerResult struct {
-	Preview       string `json:"preview"`
-	Message       string `json:"message"`
-	Count         int    `json:"count"`
-	Done          bool   `json:"done"`
-	SnappedX      int    `json:"snappedX"`
-	SnappedY      int    `json:"snappedY"`
-	Width         int    `json:"width"`
-	Height        int    `json:"height"`
-	DescreenReset bool   `json:"descreenReset,omitempty"`
 }
 
 // warpFromCorners sorts 4 corner points and applies a perspective transform,
@@ -873,12 +839,6 @@ func (a *App) ClickCorner(req ClickCornerRequest) (*ClickCornerResult, error) {
 	}, nil
 }
 
-// RestoreCornerOverlayRequest is the argument for RestoreCornerOverlay.
-// It contains the dot radius for rendering the SVG overlay when switching back to corner mode.
-type RestoreCornerOverlayRequest struct {
-	DotRadius int `json:"dotRadius"`
-}
-
 // RestoreCornerOverlay returns the clean preview and cached detected corners for SVG overlay restoration when switching back to corner mode.
 func (a *App) RestoreCornerOverlay(req RestoreCornerOverlayRequest) (*ProcessResult, error) {
 	a.logf("RestoreCornerOverlay: %d cached corners", len(a.detectedCorners))
@@ -921,8 +881,10 @@ func (a *App) ResetCorners() (*ProcessResult, error) {
 	a.logf("ResetCorners")
 	descreenReset := a.descreenResultImage != nil
 	a.levelsBaseImage = nil
+	a.levelsSelection = adjustmentSelectionKey{}
 	a.descreenBaseImage = nil
 	a.descreenResultImage = nil
+	a.descreenSelection = adjustmentSelectionKey{}
 	a.selectedCorners = nil
 	a.warpedImage = nil
 	a.cropSkipped = false

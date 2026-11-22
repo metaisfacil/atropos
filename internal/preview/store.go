@@ -177,6 +177,15 @@ func (s *Store) Register(img *image.NRGBA) (string, error) {
 	return s.url(id), nil
 }
 
+// Resolve returns the immutable source image associated with previewURL.
+func (s *Store) Resolve(previewURL string) (*image.NRGBA, bool) {
+	_, revision, err := s.revisionFromURL(previewURL)
+	if err != nil || revision == nil || revision.source == nil {
+		return nil, false
+	}
+	return revision.source, true
+}
+
 func (s *Store) get(session string, id uint64) *previewAssetRevision {
 	s.mu.Lock()
 	defer s.mu.Unlock()

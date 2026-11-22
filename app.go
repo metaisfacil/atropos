@@ -7,12 +7,14 @@ import (
 	"log"
 	"sync"
 
+	"atropos/internal/compositor"
 	"atropos/internal/preview"
 )
 
 // App struct holds all application state.
 type App struct {
 	ctx    context.Context
+	host   AppHost
 	logger *log.Logger
 	loadMu sync.Mutex
 
@@ -115,6 +117,14 @@ type App struct {
 	// subsequent redraw (such as AutoContrast) preserves those trims.
 	discCropInsets discCropInsets
 
+	// discBakedBase snapshots warpedImage when a direct post-disc raster edit
+	// (such as Touch-up, Dust removal, or Descreen) modifies the cropped disc.
+	// Subsequent disc redraws (StraightEdgeRotate, RotateDisc, levels) render
+	// from discBakedBase at (rotationAngle - discBakedAngle) so those edits
+	// are never silently discarded.
+	discBakedBase  *image.NRGBA
+	discBakedAngle float64
+
 	// postDiscBlack / postDiscWhite record any levels stretch applied after the
 	// disc was committed. redrawDisc re-applies them at the end of every render
 	// so that disc re-renders (shift, rotate, feather) never silently discard a
@@ -172,13 +182,15 @@ type App struct {
 	discCutoutPercent int  // diameter of the cutout as a percentage of the disc diameter (1–50)
 
 	// Compositor state
-	compositorMu     sync.Mutex
-	compositorResult *image.NRGBA
+	compositorMu      sync.Mutex
+	compositorResult  *image.NRGBA
+	compositorOverlay *compositor.OverlaySession
 }
 
 // NewApp creates a new App application struct.
 func NewApp() *App {
 	app := &App{
+		ctx:               context.Background(),
 		undoLimit:         defaultUndoLimit,
 		featherSize:       15,
 		cropAmount:        3,
@@ -206,6 +218,11 @@ func (a *App) logf(format string, args ...interface{}) {
 	}
 }
 
+// Logf writes a formatted message to the backend debug log if enabled.
+func (a *App) Logf(format string, args ...interface{}) {
+	a.logf(format, args...)
+}
+
 // LogFrontend writes a message from the frontend into the debug log file.
 func (a *App) LogFrontend(msg string) {
 	a.logf("[FE] %s", msg)
@@ -225,60 +242,6 @@ func (a *App) startup(ctx context.Context) {
 // shutdown is called when the app is being destroyed.
 func (a *App) shutdown(ctx context.Context) {
 	a.logf("shutdown: application closing")
-}
-
-// ProcessResult is the standard response for image processing operations,
-// carrying an optional preview, status message, and image dimensions.
-type ProcessResult struct {
-	CropSkipped bool `json:"cropSkipped,omitempty"`
-	// History-only fields synchronize controls without triggering a disc redraw.
-	HistoryDiscSettings *DiscSettings `json:"historyDiscSettings,omitempty"`
-	HistoryFeatherSize  int           `json:"historyFeatherSize,omitempty"`
-	Preview             string        `json:"preview"`
-	Message             string        `json:"message"`
-	Width               int           `json:"width"`
-	Height              int           `json:"height"`
-	// Changed is set by operations that can legitimately produce no pixel
-	// changes, allowing the frontend to preserve its unsaved-state indicator.
-	Changed bool `json:"changed,omitempty"`
-	// Optional numeric results (e.g. from AutoContrast)
-	Black int `json:"black,omitempty"`
-	White int `json:"white,omitempty"`
-	// Corners is populated by DetectCorners and ResetCorners so the frontend
-	// can render the overlay dots via SVG instead of baking them into the image.
-	Corners []image.Point `json:"corners,omitempty"`
-	// SelectedCorners is populated by Undo when restoring a pre-warp corner
-	// selection, so the frontend can restore the in-progress corner dots.
-	SelectedCorners []image.Point `json:"selectedCorners,omitempty"`
-	// Uncropped is set by Undo when the popped entry was saved before any warp
-	// had produced a warpedImage — i.e. undoing the initial crop itself.  The
-	// frontend uses this to return the UI to the cropping phase.
-	Uncropped bool `json:"uncropped,omitempty"`
-	// DescreenReset is true when the operation invalidated an active descreen
-	// session, meaning the next Descreen call will re-snapshot from scratch.
-	// The frontend uses this to untoggle the Descreen button as a subtle hint.
-	DescreenReset bool `json:"descreenReset,omitempty"`
-	// UnmaskedPreview is the preview of disc source image without the disc mask
-	// above it, used during live preview drag operations.
-	UnmaskedPreview string `json:"unmaskedPreview,omitempty"`
-	// Disc preview metadata (returned for mode sync)
-	DiscCenterX  int     `json:"discCenterX,omitempty"`
-	DiscCenterY  int     `json:"discCenterY,omitempty"`
-	DiscRadius   int     `json:"discRadius,omitempty"`
-	DiscRotation float64 `json:"discRotation,omitempty"`
-	DiscBgR      int     `json:"discBgR,omitempty"`
-	DiscBgG      int     `json:"discBgG,omitempty"`
-	DiscBgB      int     `json:"discBgB,omitempty"`
-}
-
-// LaunchArgs contains the initial file path and mode from CLI arguments.
-type LaunchArgs struct {
-	FilePath        string `json:"filePath"`
-	Mode            string `json:"mode"`
-	Debug           bool   `json:"debug,omitempty"`
-	PostSaveCommand string `json:"postSaveCommand,omitempty"`
-	PostSaveEnabled bool   `json:"postSaveEnabled,omitempty"`
-	PostSaveExit    bool   `json:"postSaveExit,omitempty"`
 }
 
 // GetLaunchArgs returns any CLI-provided file path and mode.

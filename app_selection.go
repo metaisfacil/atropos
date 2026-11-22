@@ -10,15 +10,6 @@ import (
 	"atropos/internal/raster"
 )
 
-// AdjustmentSelection is an optional image-space rectangle used to limit a
-// pixel adjustment. Coordinates may arrive in either drag direction.
-type AdjustmentSelection struct {
-	X1 float64 `json:"x1"`
-	Y1 float64 `json:"y1"`
-	X2 float64 `json:"x2"`
-	Y2 float64 `json:"y2"`
-}
-
 type adjustmentSelectionKey struct {
 	Rect   image.Rectangle
 	Active bool

@@ -3,50 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"image/color"
 	"os"
 	"path/filepath"
-	"strings"
 )
-
-// AllSettings is the complete set of user-facing persistent settings.
-// It is serialised to / deserialised from the per-user settings file so that
-// every application instance shares the same values regardless of which
-// WebView2 user data directory it is using.
-type AllSettings struct {
-	// Touch-up
-	TouchupBackend string `json:"touchupBackend"`
-	IOPaintURL     string `json:"iopaintUrl"`
-	// Warp fill
-	WarpFillMode  string `json:"warpFillMode"`
-	WarpFillColor string `json:"warpFillColor"`
-	// Keyboard edge crop
-	CropEdgePixels int `json:"cropEdgePixels"`
-	// Disc
-	DiscCenterCutout  bool `json:"discCenterCutout"`
-	DiscCutoutPercent int  `json:"discCutoutPercent"`
-	// Corner detection
-	CornerMaxCorners      int `json:"cornerMaxCorners"`
-	CornerMinDistance     int `json:"cornerMinDistance"`
-	CornerSettingsVersion int `json:"cornerSettingsVersion"`
-	// Behaviour flags (frontend-only values persisted here for sharing)
-	AutoCornerParams          bool   `json:"autoCornerParams"`
-	CloseAfterSave            bool   `json:"closeAfterSave"`
-	PostSaveEnabled           bool   `json:"postSaveEnabled"`
-	PostSaveCommand           string `json:"postSaveCommand"`
-	TouchupRemainsActive      bool   `json:"touchupRemainsActive"`
-	StraightEdgeRemainsActive bool   `json:"straightEdgeRemainsActive"`
-	AutoDetectOnModeSwitch    bool   `json:"autoDetectOnModeSwitch"`
-	// AppVersion is the build version string of the last app instance that
-	// successfully wrote this file.  Useful for troubleshooting.
-	AppVersion string `json:"appVersion"`
-	// Initialized is false when the settings file did not exist on disk,
-	// meaning this is the first launch of a version that uses file-based
-	// settings.  The frontend uses this flag to migrate any values it finds
-	// in localStorage (written by older versions) before they are lost.
-	// The field is never written to the JSON file itself (json:"-").
-	Initialized bool `json:"-"`
-}
 
 // settingsFilePath returns the path to the shared settings JSON file.
 func settingsFilePath() (string, error) {
@@ -175,12 +134,6 @@ func (a *App) SaveAllSettings(s AllSettings) error {
 	return nil
 }
 
-// TouchupSettings holds the configuration for the touch-up backend.
-type TouchupSettings struct {
-	Backend    string `json:"backend"`
-	IOPaintURL string `json:"iopaintUrl"`
-}
-
 // GetTouchupSettings returns the current touch-up backend settings.
 func (a *App) GetTouchupSettings() TouchupSettings {
 	return TouchupSettings{
@@ -198,15 +151,6 @@ func (a *App) SetTouchupSettings(settings TouchupSettings) {
 		a.iopaintURL = settings.IOPaintURL
 	}
 	a.logf("SetTouchupSettings: backend=%q url=%q", a.touchupBackend, a.iopaintURL)
-}
-
-// WarpSettings holds configuration for how out-of-bounds regions produced by
-// perspective warping are handled.
-type WarpSettings struct {
-	// FillMode is "clamp", "fill" (solid colour), or "outpaint" (PatchMatch).
-	FillMode string `json:"fillMode"`
-	// FillColor is a CSS hex colour string (e.g. "#ffffff") used when FillMode=="fill".
-	FillColor string `json:"fillColor"`
 }
 
 // GetWarpSettings returns the current warp out-of-bounds fill settings.
@@ -231,17 +175,6 @@ func (a *App) SetWarpSettings(settings WarpSettings) {
 	a.logf("SetWarpSettings: fillMode=%q fillColor=%q", a.warpFillMode, settings.FillColor)
 }
 
-// DiscSettings holds configuration for disc-mode rendering.
-type DiscSettings struct {
-	// CenterCutout controls whether a circular hole is punched out at the
-	// centre, filling it with the background colour so the eyedropper can
-	// affect that region too.
-	CenterCutout bool `json:"centerCutout"`
-	// CutoutPercent is the cutout diameter as a percentage of the disc
-	// diameter (1–50). Only used when CenterCutout is true.
-	CutoutPercent int `json:"cutoutPercent"`
-}
-
 // GetDiscSettings returns the current disc mode settings.
 func (a *App) GetDiscSettings() DiscSettings {
 	return DiscSettings{
@@ -262,21 +195,4 @@ func (a *App) SetDiscSettings(settings DiscSettings) (*ProcessResult, error) {
 		return a.redrawDisc()
 	}
 	return &ProcessResult{}, nil
-}
-
-// parseHexColor parses a CSS hex colour string ("#rrggbb" or "#rgb") into color.NRGBA.
-func parseHexColor(s string) (color.NRGBA, error) {
-	s = strings.TrimPrefix(s, "#")
-	if len(s) == 3 {
-		s = string([]byte{s[0], s[0], s[1], s[1], s[2], s[2]})
-	}
-	if len(s) != 6 {
-		return color.NRGBA{}, fmt.Errorf("invalid hex color %q", s)
-	}
-	var r, g, b uint8
-	_, err := fmt.Sscanf(s, "%02x%02x%02x", &r, &g, &b)
-	if err != nil {
-		return color.NRGBA{}, err
-	}
-	return color.NRGBA{R: r, G: g, B: b, A: 255}, nil
 }

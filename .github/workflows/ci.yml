@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, gio-ui]
   pull_request:
-    branches: [main, master]
+    branches: [main, master, gio-ui]
 
 jobs:
   test:
@@ -16,33 +16,18 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version-file: "go.mod"
 
-      - name: Install Linux dependencies
+      - name: Install Linux Gio dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
+          sudo apt-get install -y pkg-config libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dev libxcursor-dev libxfixes-dev libvulkan-dev libffi-dev
 
-      - name: Create frontend dist placeholder
-        run: mkdir -p frontend/dist && touch frontend/dist/.gitkeep
+      - name: Run go vet
+        run: go vet ./...
 
       - name: Run Go tests
-        run: go test -tags webkit2_41 ./... -count=1 -v
-
-      - name: Set up Node.js for frontend tests
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install frontend dependencies
-        run: npm ci
-        working-directory: frontend
-
-      - name: Run Vite/Vitest tests
-        run: npm run test:all
-        working-directory: frontend
+        run: go test ./... -count=1 -v
 
   build:
     name: Build (${{ matrix.name }})
@@ -54,17 +39,17 @@ jobs:
           - name: Windows
             os: windows-latest
             artifact: atropos-windows
-            build-flags: -o atropos.exe
+            ldflags: -H=windowsgui
             binary: build/bin/atropos.exe
           - name: macOS
             os: macos-latest
             artifact: atropos-macos
-            build-flags: ""
-            binary: build/bin/atropos.app
+            ldflags: ""
+            binary: build/bin/atropos
           - name: Linux
             os: ubuntu-latest
             artifact: atropos-linux
-            build-flags: -tags webkit2_41
+            ldflags: ""
             binary: build/bin/atropos
 
     steps:
@@ -73,39 +58,37 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version-file: "go.mod"
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install Linux dependencies
+      - name: Install Linux Gio dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
-
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
-
-      - name: Install frontend dependencies
-        run: npm ci
-        working-directory: frontend
-
-      - name: Build frontend
-        run: npm run build
-        working-directory: frontend
+          sudo apt-get install -y pkg-config libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dev libxcursor-dev libxfixes-dev libvulkan-dev libffi-dev
 
       - name: Compute version string
         shell: bash
         run: echo "APP_VERSION=$(git log -1 --format=%cd-%h --date=format:%Y%m%d --abbrev=6)" >> "$GITHUB_ENV"
 
+      - name: Generate Windows resource (.syso)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if ! command -v windres >/dev/null 2>&1; then
+            for d in /c/msys64/mingw64/bin /c/msys64/ucrt64/bin; do
+              if [[ -x "$d/windres.exe" ]]; then
+                export PATH="$d:$PATH"
+                break
+              fi
+            done
+          fi
+          windres -F pe-x86-64 -O coff -I build/windows -i build/windows/atropos.rc -o rsrc_windows_amd64.syso
+
       - name: Build application
         shell: bash
-        run: wails build ${{ matrix.build-flags }} -ldflags "-X main.AppVersion=$APP_VERSION"
+        run: |
+          mkdir -p build/bin
+          go build -ldflags "${{ matrix.ldflags }} -X main.AppVersion=$APP_VERSION" -o "${{ matrix.binary }}" .
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

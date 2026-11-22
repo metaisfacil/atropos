@@ -35,14 +35,6 @@ import (
 //
 // ResetNormal clears `warpedImage` so that GetCleanPreview returns `currentImage`.
 
-// NormalCropRequest holds the image-space bounding box for a rectangle crop.
-type NormalCropRequest struct {
-	X1 int `json:"x1"`
-	Y1 int `json:"y1"`
-	X2 int `json:"x2"`
-	Y2 int `json:"y2"`
-}
-
 // NormalCrop crops the working image to the given rectangle.
 // Coordinates are normalised (x1/y1 need not be the top-left corner) and
 // clamped to the image bounds before the crop is applied.
@@ -109,8 +101,10 @@ func (a *App) ResetNormal() (*ProcessResult, error) {
 	a.logf("ResetNormal")
 	descreenReset := a.descreenResultImage != nil
 	a.levelsBaseImage = nil
+	a.levelsSelection = adjustmentSelectionKey{}
 	a.descreenBaseImage = nil
 	a.descreenResultImage = nil
+	a.descreenSelection = adjustmentSelectionKey{}
 	a.warpedImage = nil
 	a.cropSkipped = false
 	img := a.workingImage()

@@ -19,7 +19,6 @@ import (
 
 	"atropos/internal/raster"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/image/bmp"
 	"golang.org/x/image/tiff"
 )
@@ -46,36 +45,6 @@ func (a *App) resetPipelineState() {
 	a.resetDiscFields()
 }
 
-// LoadImageRequest contains the file path for loading an image.
-type LoadImageRequest struct {
-	FilePath string `json:"filePath"`
-}
-
-// LoadImageBytesRequest contains image bytes for loading browser-originated data.
-type LoadImageBytesRequest struct {
-	Data []byte `json:"data"`
-	Name string `json:"name,omitempty"`
-}
-
-// SuggestedCornerParams holds auto-computed corner detection defaults derived
-// from objective image properties (dimensions, luminance statistics).
-type SuggestedCornerParams struct {
-	MinDistance int `json:"minDistance"`
-	MaxCorners  int `json:"maxCorners"`
-}
-
-// ImageInfo contains image metadata and preview data.
-type ImageInfo struct {
-	Width   int     `json:"width"`
-	Height  int     `json:"height"`
-	Preview string  `json:"preview"`
-	Format  string  `json:"format"` // e.g. "JPEG", "PNG", "TIFF", "BMP"
-	DPIX    float64 `json:"dpiX"`   // horizontal DPI; 0 if unknown
-	DPIY    float64 `json:"dpiY"`   // vertical DPI; 0 if unknown
-
-	SuggestedCornerParams SuggestedCornerParams `json:"suggestedCornerParams"`
-}
-
 // LoadImage loads an image from disk and returns its metadata.
 func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	if !a.loadMu.TryLock() {
@@ -93,7 +62,7 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	src, err := a.decodeImageFile(req.FilePath)
 	if err != nil {
 		msg := fmt.Sprintf("LoadImage: decode error: %v", err)
-		a.logf(msg)
+		a.logf("%s", msg)
 		return nil, errors.New(msg)
 	}
 	a.logf("LoadImage: decode took %v", time.Since(t0))
@@ -114,7 +83,7 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 	preview, err := a.imagePreviewURL(a.currentImage)
 	if err != nil {
 		msg := fmt.Sprintf("LoadImage: preview registration error: %v", err)
-		a.logf(msg)
+		a.logf("%s", msg)
 		return nil, errors.New(msg)
 	}
 	a.logf("LoadImage: preview registration took %v", time.Since(t3))
@@ -124,7 +93,7 @@ func (a *App) LoadImage(req LoadImageRequest) (*ImageInfo, error) {
 
 	// Update window title with the filename
 	name := filepath.Base(req.FilePath)
-	runtime.WindowSetTitle(a.ctx, AppBaseTitle()+" — "+name)
+	a.setWindowTitle(AppBaseTitle() + " — " + name)
 
 	format, dpiX, dpiY := extractFileMeta(req.FilePath)
 	return &ImageInfo{
@@ -230,7 +199,7 @@ func (a *App) decodeViaMagick(path, outFmt string) (image.Image, error) {
 
 	if runErr := cmd.Run(); runErr != nil {
 		msg := fmt.Sprintf("decodeViaMagick: magick failed: %v stderr=%s", runErr, stderr.String())
-		a.logf(msg)
+		a.logf("%s", msg)
 		return nil, errors.New(msg)
 	}
 
@@ -238,17 +207,12 @@ func (a *App) decodeViaMagick(path, outFmt string) (image.Image, error) {
 	img, decErr := bmp.Decode(bytes.NewReader(stdout.Bytes()))
 	if decErr != nil {
 		msg := fmt.Sprintf("decodeViaMagick: bmp decode failed: %v", decErr)
-		a.logf(msg)
+		a.logf("%s", msg)
 		return nil, errors.New(msg)
 	}
 
 	a.logf("decodeViaMagick: OK, bounds=%v", img.Bounds())
 	return img, nil
-}
-
-// SaveRequest specifies the output file path for saving the processed image.
-type SaveRequest struct {
-	OutputPath string `json:"outputPath"`
 }
 
 // SaveImage writes the processed image to disk.
@@ -283,7 +247,7 @@ func (a *App) SaveImage(req SaveRequest) (*ProcessResult, error) {
 	}
 	if err != nil {
 		msg := fmt.Sprintf("SaveImage: encode error: %v", err)
-		a.logf(msg)
+		a.logf("%s", msg)
 		return nil, errors.New(msg)
 	}
 
@@ -299,7 +263,7 @@ func (a *App) SaveImage(req SaveRequest) (*ProcessResult, error) {
 		// If the CLI requested exit after launching the command, quit now.
 		if a.postSaveExit {
 			a.logf("SaveImage: started CLI post-save command, quitting as requested")
-			runtime.Quit(a.ctx)
+			a.quitApp()
 		}
 		a.logf("SaveImage: started CLI post-save command")
 	}
@@ -326,7 +290,7 @@ func (a *App) LoadImageBytes(req LoadImageBytesRequest) (*ImageInfo, error) {
 	src, format, err := a.decodeImageData(req.Data)
 	if err != nil {
 		msg := fmt.Sprintf("LoadImageBytes: decode error: %v", err)
-		a.logf(msg)
+		a.logf("%s", msg)
 		return nil, errors.New(msg)
 	}
 	a.logf("LoadImageBytes: decode took %v", time.Since(t0))
@@ -347,7 +311,7 @@ func (a *App) LoadImageBytes(req LoadImageBytesRequest) (*ImageInfo, error) {
 	preview, err := a.imagePreviewURL(a.currentImage)
 	if err != nil {
 		msg := fmt.Sprintf("LoadImageBytes: preview registration error: %v", err)
-		a.logf(msg)
+		a.logf("%s", msg)
 		return nil, errors.New(msg)
 	}
 	a.logf("LoadImageBytes: preview registration took %v", time.Since(t3))
@@ -355,7 +319,7 @@ func (a *App) LoadImageBytes(req LoadImageBytesRequest) (*ImageInfo, error) {
 	b := nrgba.Bounds()
 	a.logf("LoadImageBytes: total %v, returning %dx%d, preview=%q", time.Since(t0), b.Dx(), b.Dy(), preview)
 
-	runtime.WindowSetTitle(a.ctx, AppBaseTitle()+" — "+func() string {
+	a.setWindowTitle(AppBaseTitle() + " — " + func() string {
 		if req.Name != "" {
 			return req.Name
 		}
@@ -408,28 +372,28 @@ func (a *App) OpenSaveDialog() (string, error) {
 	a.logf("OpenSaveDialog: showing dialog")
 
 	defaultDir := ""
-	defaultName := "output"
+	defaultName := "output.png"
 	if a.loadedFilePath != "" {
 		dir := filepath.Dir(a.loadedFilePath)
 		if _, statErr := os.Stat(dir); statErr == nil {
 			defaultDir = dir
 		}
 		base := filepath.Base(a.loadedFilePath)
-		defaultName = strings.TrimSuffix(base, filepath.Ext(base))
+		if stem := strings.TrimSuffix(base, filepath.Ext(base)); stem != "" {
+			defaultName = stem + ".png"
+		}
 	}
 
-	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:            "Save Image",
-		DefaultDirectory: defaultDir,
-		DefaultFilename:  defaultName,
-		Filters: []runtime.FileFilter{
-			{DisplayName: "PNG Files (*.png)", Pattern: "*.png"},
-			{DisplayName: "JPEG Files (*.jpg;*.jpeg)", Pattern: "*.jpg;*.jpeg"},
-			{DisplayName: "BMP Files (*.bmp)", Pattern: "*.bmp"},
-			{DisplayName: "TIFF Files (*.tiff;*.tif)", Pattern: "*.tiff;*.tif"},
-			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
-		},
+	path, err := a.saveFileDialog("Save Image", defaultDir, defaultName, []FileFilter{
+		{DisplayName: "PNG Files (*.png)", Patterns: []string{"*.png"}},
+		{DisplayName: "JPEG Files (*.jpg;*.jpeg)", Patterns: []string{"*.jpg", "*.jpeg"}},
+		{DisplayName: "BMP Files (*.bmp)", Patterns: []string{"*.bmp"}},
+		{DisplayName: "TIFF Files (*.tiff;*.tif)", Patterns: []string{"*.tiff", "*.tif"}},
+		{DisplayName: "All Files (*.*)", Patterns: []string{"*.*"}},
 	})
+	if err == nil && path != "" && filepath.Ext(path) == "" {
+		path += ".png"
+	}
 	a.logf("OpenSaveDialog: path=%q err=%v", path, err)
 	return path, err
 }
@@ -635,14 +599,9 @@ func (a *App) OpenImageDialog() (string, error) {
 		}
 		defaultName = filepath.Base(a.loadedFilePath)
 	}
-	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title:            "Open Image",
-		DefaultDirectory: defaultDir,
-		DefaultFilename:  defaultName,
-		Filters: []runtime.FileFilter{
-			{DisplayName: "Image Files (*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif)", Pattern: "*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif"},
-			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
-		},
+	path, err := a.openFileDialog("Open Image", defaultDir, defaultName, []FileFilter{
+		{DisplayName: "Image Files (*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif)", Patterns: []string{"*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tiff", "*.tif", "*.gif", "*.webp"}},
+		{DisplayName: "All Files (*.*)", Patterns: []string{"*.*"}},
 	})
 	a.logf("OpenImageDialog: path=%q err=%v", path, err)
 	return path, err

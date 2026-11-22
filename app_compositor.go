@@ -19,36 +19,9 @@ import (
 	"atropos/internal/imageops"
 	"atropos/internal/raster"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/image/bmp"
 	"golang.org/x/image/tiff"
 )
-
-// ---- Types -------------------------------------------------------------------
-
-// CompositorStitchRequest carries the ordered list of source file paths and
-// the orientation that describes how consecutive images are arranged.
-// Orientation is one of: "ltr" (left-to-right, default), "rtl" (right-to-left),
-// "ttb" (top-to-bottom), "btt" (bottom-to-top).
-// For reversed orientations ("rtl", "btt") the image array is reversed before
-// stitching so that image 0 is always the anchor in the reference frame.
-type CompositorStitchRequest struct {
-	ImagePaths  []string `json:"imagePaths"`
-	Orientation string   `json:"orientation"`
-}
-
-// CompositorResult is returned by CompositorStitch.
-type CompositorResult struct {
-	Preview string `json:"preview"`
-	Width   int    `json:"width"`
-	Height  int    `json:"height"`
-	Message string `json:"message"`
-}
-
-// CompositorSaveRequest carries the output path for saving the stitched image.
-type CompositorSaveRequest struct {
-	OutputPath string `json:"outputPath"`
-}
 
 // ---- Methods -----------------------------------------------------------------
 
@@ -56,12 +29,9 @@ type CompositorSaveRequest struct {
 // types and returns the selected paths (empty slice if cancelled).
 func (a *App) CompositorOpenFilesDialog() ([]string, error) {
 	a.logf("CompositorOpenFilesDialog: showing dialog")
-	paths, err := runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select Images to Composite",
-		Filters: []runtime.FileFilter{
-			{DisplayName: "Image Files (*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif)", Pattern: "*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif"},
-			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
-		},
+	paths, err := a.openMultipleFilesDialog("Select Images to Composite", "", []FileFilter{
+		{DisplayName: "Image Files (*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.tif)", Patterns: []string{"*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tiff", "*.tif", "*.gif", "*.webp"}},
+		{DisplayName: "All Files (*.*)", Patterns: []string{"*.*"}},
 	})
 	a.logf("CompositorOpenFilesDialog: %d paths, err=%v", len(paths), err)
 	return paths, err
@@ -77,17 +47,27 @@ func (a *App) CompositorStitch(req CompositorStitchRequest) (*CompositorResult, 
 
 	a.logf("CompositorStitch: %d images, orientation=%q", len(req.ImagePaths), req.Orientation)
 
+	rotSteps := make([]int, len(req.ImagePaths))
+	for i := range rotSteps {
+		if i < len(req.RotationSteps) {
+			rotSteps[i] = ((req.RotationSteps[i] % 4) + 4) % 4
+		}
+	}
+
 	// For reversed orientations the user listed images in the opposite direction
-	// to the reference frame.  Reverse the path list so image[0] is always the
-	// "first" segment (anchor) and each subsequent image extends in the forward
-	// direction.
+	// to the reference frame.  Reverse the path and rotation lists together so
+	// image[0] is always the "first" segment (anchor) and each subsequent image
+	// keeps its matching per-image rotation.
 	paths := req.ImagePaths
 	if req.Orientation == "rtl" || req.Orientation == "btt" {
 		rev := make([]string, len(paths))
+		revRot := make([]int, len(paths))
 		for i, p := range paths {
 			rev[len(paths)-1-i] = p
+			revRot[len(paths)-1-i] = rotSteps[i]
 		}
 		paths = rev
+		rotSteps = revRot
 	}
 
 	// Decode all images in parallel — decoding is I/O + CPU bound and dominates
@@ -100,16 +80,17 @@ func (a *App) CompositorStitch(req CompositorStitchRequest) (*CompositorResult, 
 	}
 	ch := make(chan decodeResult, len(paths))
 	for i, path := range paths {
-		go func(i int, path string) {
+		rot := rotSteps[i]
+		go func(i int, path string, rot int) {
 			raw, err := a.decodeImageFile(path)
 			if err != nil {
 				ch <- decodeResult{idx: i, err: fmt.Errorf("failed to decode image %d (%q): %w", i, filepath.Base(path), err)}
 				return
 			}
-			img := raster.ToNRGBA(raw)
-			a.logf("CompositorStitch: image %d decoded: %v", i, img.Bounds())
+			img := imageops.RotateQuarterTurns(raster.ToNRGBA(raw), rot)
+			a.logf("CompositorStitch: image %d decoded: %v (rot=%d)", i, img.Bounds(), rot)
 			ch <- decodeResult{idx: i, img: img}
-		}(i, path)
+		}(i, path, rot)
 	}
 	imgs := make([]*image.NRGBA, len(paths))
 	for range paths {
@@ -129,6 +110,7 @@ func (a *App) CompositorStitch(req CompositorStitchRequest) (*CompositorResult, 
 	// Cache the result.
 	a.compositorMu.Lock()
 	a.compositorResult = result
+	a.compositorOverlay = nil
 	a.compositorMu.Unlock()
 
 	preview, err := a.imagePreviewURL(result)
@@ -147,13 +129,126 @@ func (a *App) CompositorStitch(req CompositorStitchRequest) (*CompositorResult, 
 	}, nil
 }
 
-// CompositorLoadResultRequest carries optional post-processing for the
-// compositor output before it enters the editing pipeline.
-type CompositorLoadResultRequest struct {
-	// RotationSteps is the number of 90-degree clockwise rotations to apply
-	// to the stitched image before loading it.  0 = no rotation, 1 = 90° CW,
-	// 2 = 180°, 3 = 270° CW.
-	RotationSteps int `json:"rotationSteps"`
+// CompositorAlignOverlay aligns repeated scans to the first scan's canvas.
+// The listed order is the stacking order: the final scan is on top.
+func (a *App) CompositorAlignOverlay(req CompositorStitchRequest) (*CompositorResult, error) {
+	if len(req.ImagePaths) < 2 {
+		return nil, fmt.Errorf("provide at least 2 image paths (got %d)", len(req.ImagePaths))
+	}
+	imgs := make([]*image.NRGBA, len(req.ImagePaths))
+	type decoded struct {
+		index int
+		image *image.NRGBA
+		err   error
+	}
+	results := make(chan decoded, len(imgs))
+	for i, path := range req.ImagePaths {
+		rot := 0
+		if i < len(req.RotationSteps) {
+			rot = ((req.RotationSteps[i] % 4) + 4) % 4
+		}
+		go func(i int, path string, rot int) {
+			raw, err := a.decodeImageFile(path)
+			if err != nil {
+				results <- decoded{index: i, err: fmt.Errorf("failed to decode image %d (%q): %w", i+1, filepath.Base(path), err)}
+				return
+			}
+			img := imageops.RotateQuarterTurns(raster.ToNRGBA(raw), rot)
+			results <- decoded{index: i, image: img}
+		}(i, path, rot)
+	}
+	var decodeErr error
+	for range imgs {
+		r := <-results
+		if r.err != nil {
+			decodeErr = r.err
+		} else {
+			imgs[r.index] = r.image
+		}
+	}
+	if decodeErr != nil {
+		return nil, decodeErr
+	}
+	session, err := compositor.AlignOverlay(imgs)
+	if err != nil {
+		return nil, err
+	}
+	a.compositorMu.Lock()
+	a.compositorOverlay = session
+	a.compositorResult = nil
+	response, err := a.compositorOverlayPreviewLocked()
+	a.compositorMu.Unlock()
+	return response, err
+}
+
+func (a *App) CompositorAddMask(req CompositorMaskRequest) (*CompositorResult, error) {
+	a.compositorMu.Lock()
+	defer a.compositorMu.Unlock()
+	if a.compositorOverlay == nil {
+		return nil, fmt.Errorf("align repeated scans first")
+	}
+	if err := a.compositorOverlay.AddStroke(req.Stroke); err != nil {
+		return nil, err
+	}
+	a.compositorResult = nil
+	return a.compositorOverlayPreviewLocked()
+}
+
+func (a *App) CompositorUndoMask() (*CompositorResult, error) {
+	a.compositorMu.Lock()
+	defer a.compositorMu.Unlock()
+	if a.compositorOverlay == nil {
+		return nil, fmt.Errorf("align repeated scans first")
+	}
+	a.compositorOverlay.UndoStroke()
+	a.compositorResult = nil
+	return a.compositorOverlayPreviewLocked()
+}
+
+func (a *App) CompositorClearMasks() (*CompositorResult, error) {
+	a.compositorMu.Lock()
+	defer a.compositorMu.Unlock()
+	if a.compositorOverlay == nil {
+		return nil, fmt.Errorf("align repeated scans first")
+	}
+	a.compositorOverlay.ClearStrokes()
+	a.compositorResult = nil
+	return a.compositorOverlayPreviewLocked()
+}
+
+// Caller holds compositorMu so mask changes and their preview stay in order.
+func (a *App) compositorOverlayPreviewLocked() (*CompositorResult, error) {
+	previewImage := a.compositorOverlay.Render(1400)
+	preview, err := a.imagePreviewURL(previewImage)
+	if err != nil {
+		return nil, fmt.Errorf("preview registration failed: %w", err)
+	}
+	w, h := a.compositorOverlay.Size()
+	return &CompositorResult{Preview: preview, Width: w, Height: h, Message: fmt.Sprintf("Aligned %d scans on the first scan (%d×%d)", a.compositorOverlay.LayerCount(), w, h)}, nil
+}
+
+// CompositorRefreshPreview republishes the cached compositor output after an
+// image load has reset the shared preview store. Alignment and masks are kept.
+func (a *App) CompositorRefreshPreview() (*CompositorResult, error) {
+	a.compositorMu.Lock()
+	defer a.compositorMu.Unlock()
+	if a.compositorOverlay != nil {
+		return a.compositorOverlayPreviewLocked()
+	}
+	if a.compositorResult == nil {
+		return nil, fmt.Errorf("no compositor result available")
+	}
+	preview, err := a.imagePreviewURL(a.compositorResult)
+	if err != nil {
+		return nil, fmt.Errorf("preview registration failed: %w", err)
+	}
+	b := a.compositorResult.Bounds()
+	return &CompositorResult{
+		Preview: preview,
+		Width:   b.Dx(),
+		Height:  b.Dy(),
+		Message: fmt.Sprintf("Stitched result (%d×%d)", b.Dx(), b.Dy()),
+	}, nil
 }
 
 // CompositorLoadResult promotes the cached stitched image into the main editing
@@ -163,6 +258,10 @@ type CompositorLoadResultRequest struct {
 func (a *App) CompositorLoadResult(req CompositorLoadResultRequest) (*ImageInfo, error) {
 	a.compositorMu.Lock()
 	result := a.compositorResult
+	if a.compositorOverlay != nil && result == nil {
+		result = a.compositorOverlay.Render(0)
+		a.compositorResult = result
+	}
 	a.compositorMu.Unlock()
 
 	if result == nil {
@@ -194,9 +293,7 @@ func (a *App) CompositorLoadResult(req CompositorLoadResultRequest) (*ImageInfo,
 	}
 
 	b := img.Bounds()
-	if a.ctx != nil {
-		runtime.WindowSetTitle(a.ctx, AppBaseTitle()+" — [Compositor Result]")
-	}
+	a.setWindowTitle(AppBaseTitle() + " — [Compositor Result]")
 	a.logf("CompositorLoadResult: loaded %dx%d stitched image into editing pipeline (rotationSteps=%d)", b.Dx(), b.Dy(), steps)
 	return &ImageInfo{
 		Width:                 b.Dx(),
@@ -211,6 +308,10 @@ func (a *App) CompositorLoadResult(req CompositorLoadResultRequest) (*ImageInfo,
 func (a *App) CompositorSave(req CompositorSaveRequest) (string, error) {
 	a.compositorMu.Lock()
 	result := a.compositorResult
+	if a.compositorOverlay != nil && result == nil {
+		result = a.compositorOverlay.Render(0)
+		a.compositorResult = result
+	}
 	a.compositorMu.Unlock()
 
 	if result == nil {
@@ -254,15 +355,11 @@ func (a *App) CompositorSave(req CompositorSaveRequest) (string, error) {
 // formats and returns the chosen path (empty string if cancelled).
 func (a *App) CompositorOpenSaveDialog() (string, error) {
 	a.logf("CompositorOpenSaveDialog: showing dialog")
-	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:           "Save Stitched Image",
-		DefaultFilename: "stitched.png",
-		Filters: []runtime.FileFilter{
-			{DisplayName: "PNG (*.png)", Pattern: "*.png"},
-			{DisplayName: "JPEG (*.jpg)", Pattern: "*.jpg"},
-			{DisplayName: "TIFF (*.tiff)", Pattern: "*.tiff"},
-			{DisplayName: "BMP (*.bmp)", Pattern: "*.bmp"},
-		},
+	path, err := a.saveFileDialog("Save Stitched Image", "", "stitched.png", []FileFilter{
+		{DisplayName: "PNG (*.png)", Patterns: []string{"*.png"}},
+		{DisplayName: "JPEG (*.jpg)", Patterns: []string{"*.jpg", "*.jpeg"}},
+		{DisplayName: "TIFF (*.tiff)", Patterns: []string{"*.tiff", "*.tif"}},
+		{DisplayName: "BMP (*.bmp)", Patterns: []string{"*.bmp"}},
 	})
 	a.logf("CompositorOpenSaveDialog: path=%q err=%v", path, err)
 	return path, err

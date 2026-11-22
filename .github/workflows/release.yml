@@ -17,17 +17,17 @@ jobs:
         include:
           - name: Windows
             os: windows-latest
-            build-flags: -o atropos.exe
+            ldflags: -H=windowsgui
             binary: build/bin/atropos.exe
             asset-name: atropos-windows-amd64.exe
           - name: macOS
             os: macos-latest
-            build-flags: ""
-            binary: build/bin/atropos.app
+            ldflags: ""
+            binary: build/bin/Atropos.app
             asset-name: atropos-macos-universal.zip
           - name: Linux
             os: ubuntu-latest
-            build-flags: -tags webkit2_41
+            ldflags: ""
             binary: build/bin/atropos
             asset-name: atropos-linux-amd64
 
@@ -37,45 +37,68 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version-file: "go.mod"
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install Linux dependencies
+      - name: Install Linux Gio dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
-
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
-
-      - name: Install frontend dependencies
-        run: npm ci
-        working-directory: frontend
-
-      - name: Build frontend
-        run: npm run build
-        working-directory: frontend
+          sudo apt-get install -y pkg-config libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dev libxcursor-dev libxfixes-dev libvulkan-dev libffi-dev
 
       - name: Compute version string
         shell: bash
         run: echo "APP_VERSION=$(git log -1 --format=%cd-%h --date=format:%Y%m%d --abbrev=6)" >> "$GITHUB_ENV"
 
+      - name: Generate Windows resource (.syso)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if ! command -v windres >/dev/null 2>&1; then
+            for d in /c/msys64/mingw64/bin /c/msys64/ucrt64/bin; do
+              if [[ -x "$d/windres.exe" ]]; then
+                export PATH="$d:$PATH"
+                break
+              fi
+            done
+          fi
+          windres -F pe-x86-64 -O coff -I build/windows -i build/windows/atropos.rc -o rsrc_windows_amd64.syso
+
       - name: Build application
         shell: bash
-        run: wails build ${{ matrix.build-flags }} -ldflags "-X main.AppVersion=$APP_VERSION"
+        run: |
+          mkdir -p build/bin
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            CGO_ENABLED=1 GOARCH=amd64 go build -ldflags "-X main.AppVersion=$APP_VERSION" -o build/bin/atropos-amd64 .
+            CGO_ENABLED=1 GOARCH=arm64 go build -ldflags "-X main.AppVersion=$APP_VERSION" -o build/bin/atropos-arm64 .
+            APP_BUNDLE="${{ matrix.binary }}"
+            mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
+            lipo -create -output "$APP_BUNDLE/Contents/MacOS/atropos" build/bin/atropos-amd64 build/bin/atropos-arm64
+            chmod +x "$APP_BUNDLE/Contents/MacOS/atropos"
+            sed "s/__APP_VERSION__/$APP_VERSION/g" build/darwin/Info.plist > "$APP_BUNDLE/Contents/Info.plist"
+            ICONSET=build/bin/atropos.iconset
+            mkdir -p "$ICONSET"
+            sips -z 16 16     build/appicon.png --out "$ICONSET/icon_16x16.png" >/dev/null
+            sips -z 32 32     build/appicon.png --out "$ICONSET/icon_16x16@2x.png" >/dev/null
+            sips -z 32 32     build/appicon.png --out "$ICONSET/icon_32x32.png" >/dev/null
+            sips -z 64 64     build/appicon.png --out "$ICONSET/icon_32x32@2x.png" >/dev/null
+            sips -z 128 128   build/appicon.png --out "$ICONSET/icon_128x128.png" >/dev/null
+            sips -z 256 256   build/appicon.png --out "$ICONSET/icon_128x128@2x.png" >/dev/null
+            sips -z 256 256   build/appicon.png --out "$ICONSET/icon_256x256.png" >/dev/null
+            sips -z 512 512   build/appicon.png --out "$ICONSET/icon_256x256@2x.png" >/dev/null
+            sips -z 512 512   build/appicon.png --out "$ICONSET/icon_512x512.png" >/dev/null
+            cp build/appicon.png "$ICONSET/icon_512x512@2x.png"
+            iconutil -c icns "$ICONSET" -o "$APP_BUNDLE/Contents/Resources/iconfile.icns"
+            rm -rf "$ICONSET"
+            codesign --force --deep --sign - "$APP_BUNDLE"
+          else
+            go build -ldflags "${{ matrix.ldflags }} -X main.AppVersion=$APP_VERSION" -o "${{ matrix.binary }}" .
+          fi
 
       - name: Package binary for release
         shell: bash
         run: |
-          if [[ "${{ matrix.binary }}" == *.app ]]; then
-            cd build/bin && zip -r "$GITHUB_WORKSPACE/${{ matrix.asset-name }}" atropos.app
+          if [[ "${{ matrix.asset-name }}" == *.zip ]]; then
+            ditto -c -k --sequesterRsrc --keepParent "${{ matrix.binary }}" "$GITHUB_WORKSPACE/${{ matrix.asset-name }}"
           else
             cp "${{ matrix.binary }}" "${{ matrix.asset-name }}"
           fi

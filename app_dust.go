@@ -8,15 +8,6 @@ import (
 	"atropos/internal/raster"
 )
 
-// DustRemovalRequest selects one of three dust-removal strength banks.
-// DPI controls the detector's morphology and area scaling; a non-positive
-// value falls back to 300 DPI.
-type DustRemovalRequest struct {
-	Level     string               `json:"level"`
-	DPI       float64              `json:"dpi"`
-	Selection *AdjustmentSelection `json:"selection,omitempty"`
-}
-
 // DustRemoval applies the dust-removal process to the current working image
 // as one undoable operation.
 func (a *App) DustRemoval(req DustRemovalRequest) (*ProcessResult, error) {

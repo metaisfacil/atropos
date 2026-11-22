@@ -16,26 +16,7 @@ import (
 
 	"atropos/internal/cornerdetect"
 	"atropos/internal/patchmatch"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
-
-// TouchUpPoint is an image-space point in a touch-up brush stroke.
-type TouchUpPoint struct {
-	X float64 `json:"x"`
-	Y float64 `json:"y"`
-}
-
-// TouchUpStrokeRequest is the compact brush representation sent by the
-// frontend. Keeping the stroke as points avoids constructing, PNG-encoding,
-// base64-encoding, transferring, decoding, and rescanning a full-size mask.
-type TouchUpStrokeRequest struct {
-	Points     []TouchUpPoint       `json:"points"`
-	BrushSize  float64              `json:"brushSize"`
-	PatchSize  int                  `json:"patchSize"`
-	Iterations int                  `json:"iterations"`
-	Selection  *AdjustmentSelection `json:"selection,omitempty"`
-}
 
 // buildStrokeMask rasterizes round brush segments into an Alpha image whose
 // bounds are limited to the painted area but remain in source-image coordinates.
@@ -416,29 +397,6 @@ func (a *App) cancelTouchup() bool {
 	return false
 }
 
-// touchUpDoneEvent is the payload sent on the "touchup-done" Wails event.
-// A successful touch-up publishes a normal immutable preview revision and, for
-// a reasonably small brush rectangle, a lossless patch that lets the canvas
-// promote its current viewport without re-rendering all of the unchanged pixels.
-type touchUpDoneEvent struct {
-	Cancelled     bool                 `json:"cancelled,omitempty"`
-	Error         string               `json:"error,omitempty"`
-	Preview       string               `json:"preview,omitempty"`
-	Patch         *touchUpPreviewPatch `json:"patch,omitempty"`
-	Message       string               `json:"message,omitempty"`
-	Width         int                  `json:"width,omitempty"`
-	Height        int                  `json:"height,omitempty"`
-	DescreenReset bool                 `json:"descreenReset,omitempty"`
-}
-
-type touchUpPreviewPatch struct {
-	DataURL string `json:"dataURL"`
-	X       int    `json:"x"`
-	Y       int    `json:"y"`
-	Width   int    `json:"width"`
-	Height  int    `json:"height"`
-}
-
 const touchUpPreviewPatchMaxPixels = 512 * 512
 
 // encodeTouchUpPreviewPatch returns the exact output rectangle covering the
@@ -611,7 +569,7 @@ func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, it
 			a.logf("TouchUpApply %d: finished outcome=%s backend=%s in %s", generation, outcome, backend, time.Since(operationStarted))
 		}()
 
-		emit := func(ev touchUpDoneEvent) { runtime.EventsEmit(a.ctx, "touchup-done", ev) }
+		emit := func(ev touchUpDoneEvent) { a.emitTouchupDone(ev) }
 
 		var out *image.NRGBA
 		var fillErr error
