@@ -1315,8 +1315,12 @@ func (e *EditorUI) syncDiscResponse(res *ProcessResult) {
 	if res == nil {
 		return
 	}
-	e.discLiveActive = false
-	e.discLiveTransform = discLiveTransform{}
+	if e.ctrlDrag == nil && e.shiftDrag == nil {
+		// A commit landing mid-drag must not stop the in-progress gesture's
+		// fallback transform.
+		e.discLiveActive = false
+		e.discLiveTransform = discLiveTransform{}
+	}
 	e.discActive = res.DiscRadius > 0
 	if res.DiscRadius > 0 {
 		e.discCenter = image.Pt(res.DiscCenterX, res.DiscCenterY)

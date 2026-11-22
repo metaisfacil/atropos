@@ -27,7 +27,7 @@ Understand the image fields before editing anything:
 - `levelsBaseImage` — snapshot for non-stacking levels edits
 - `descreenBaseImage` — snapshot for non-stacking descreen parameter changes
 - `descreenResultImage` — tracks the last descreen output pointer for session invalidation
-- `discBaseImage` — deterministic source for disc redraws
+- `discBaseImage` — deterministic source for disc redraws; post-disc pixel edits install an edited copy here (`app_disc_edit.go`)
 - `discWorkingCrop` — cached subregion used by disc redraws
 - `discNoMaskPreview` — unmasked disc preview used during live drag feedback
 - `undoStack` / `redoStack` - shared tiled history, capped at 100 total steps and 1024 MiB
@@ -59,7 +59,7 @@ Mode switching must:
 5. Not clearing `cornerEntry` in `resetImageState(true)` causes the previous image's preview to flash back when loading a new image while in corner mode.
 6. Forgetting to reset tool toggles in `loadFile` leaves tools visually active on the new image.
 7. Forgetting `CancelTouchup()` in a new reset or load path allows an in-flight touch-up to mutate cleared state.
-8. Omitting disc state from `LoadImage` / `RecropImage` resets can leak stale disc state into later operations.
+8. Omitting disc state from `LoadImage` / `RecropImage` resets can leak stale disc state into later operations. While a disc is live (`discEditing()`), never write `warpedImage` directly: the next redraw discards it. Edit `discBaseImage` via `installDiscSource`, or change a redraw parameter (insets, `rotationAngle`, `discScale`).
 9. Forgetting to clear descreen state (`descreenBaseImage` / `descreenResultImage`) in a full image-state reset can make descreen sessions reuse stale baselines.
 
 ### Mode Switching
@@ -118,6 +118,7 @@ Key files:
 - `app_io.go`, `app_clipboard.go` — load, save, recrop, clipboard, file I/O
 - `app_corner.go` — corners, warp fill, perspective operations
 - `app_disc.go` — disc rendering
+- `app_disc_edit.go` — post-disc edits applied to the disc source (`discSourceMap`, edit region, rotated selections, output scale)
 - `app_normal.go` — normal rectangle crop
 - `app_line.go` — line mode / quadrilateral crop
 - `app_touchup.go`, `app_iopaint.go`, `internal/patchmatch/` — touch-up pipeline

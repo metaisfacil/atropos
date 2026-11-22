@@ -117,13 +117,9 @@ type App struct {
 	// subsequent redraw (such as AutoContrast) preserves those trims.
 	discCropInsets discCropInsets
 
-	// discBakedBase snapshots warpedImage when a direct post-disc raster edit
-	// (such as Touch-up, Dust removal, or Descreen) modifies the cropped disc.
-	// Subsequent disc redraws (StraightEdgeRotate, RotateDisc, levels) render
-	// from discBakedBase at (rotationAngle - discBakedAngle) so those edits
-	// are never silently discarded.
-	discBakedBase  *image.NRGBA
-	discBakedAngle float64
+	// discScale is the output scale from Resize, applied as the last step of
+	// every disc redraw (see app_disc_edit.go).
+	discScale discScale
 	// nudgeRun lets consecutive keyboard nudges share one undo step (see ShiftDisc).
 	nudgeRun discNudgeRun
 

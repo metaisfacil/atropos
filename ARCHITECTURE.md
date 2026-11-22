@@ -125,7 +125,7 @@ originalImage  ── immutable after LoadImage; never modified
 | `levelsBaseImage` | `*image.NRGBA` | Snapshot taken on the **first** slider drag after any committing operation. All subsequent slider ticks apply levels to this base, preventing value stacking. Cleared by `saveUndo()`. |
 | `descreenBaseImage` | `*image.NRGBA` | Snapshot captured at the start of a Descreen session. Parameter tweaks in the same session always re-apply to this base image, not the already-descreened output. |
 | `descreenResultImage` | `*image.NRGBA` | Pointer to the last Descreen output. Used to detect external working-image changes (for example SetLevels) so Descreen re-snapshots on next apply instead of reusing stale base state. |
-| `discBaseImage` | `*image.NRGBA` | Snapshot of `currentImage` captured at `DrawDisc` time. `redrawDisc()` **always** sources from this image, not `warpedImage`, so every re-render of the disc is deterministic. |
+| `discBaseImage` | `*image.NRGBA` | Snapshot of `currentImage` captured at `DrawDisc` time. `redrawDisc()` **always** sources from this image, not `warpedImage`, so every re-render of the disc is deterministic. Post-disc pixel edits (Dust removal, Descreen, Touch-up, selection-scoped Levels/Auto contrast) install an edited **copy** here (it is never mutated in place, because preview assets and history reference it); see [Post-disc edits](#post-disc-edits). |
 | `discNoMaskPreview` | `string` | Versioned preview asset URL for the disc source without mask compositing. Used by frontend live drag/rotate preview so interactions stay fluid while backend commits asynchronously. |
 | `discWorkingCrop` | `*image.NRGBA` | Pre-cropped sub-region of `discBaseImage` centred on the disc with a generous extra margin (`discWorkingCropShiftPadding = 500 px`). `redrawDisc` reads from this small image instead of the full `discBaseImage` to avoid cache thrashing on large images. Refreshed on `DrawDisc` and when a shift moves the disc outside the cached region. Cleared by `ResetDisc`. |
 | `discWorkingCropRect` | `image.Rectangle` | Records the rect of `discBaseImage` that `discWorkingCrop` covers (in `discBaseImage` coordinates). Used to detect when a shift has moved the disc outside the working crop. |
@@ -412,7 +412,7 @@ ClearLines()
 
 ---
 
-## Disc Mode (`app_disc.go` / `app_adjust.go`)
+## Disc Mode (`app_disc.go` / `app_disc_edit.go` / `app_adjust.go`)
 
 Disc mode is the most stateful mode. Every re-render replays the full pipeline from `discBaseImage`.
 
@@ -450,10 +450,27 @@ redrawDisc()
            rotateArbitrary(feathered, rotationAngle, bgColor)
     7. if postDiscBlack != 0 OR postDiscWhite != 255:
            applyLevels(feathered, postDiscBlack, postDiscWhite)
-    8. warpedImage = result
-    9. levelsBaseImage = nil
-    10. Return preview
+    8. crop discCropInsets (edge crops / Trim borders)
+    9. resize by discScale (output scale from Resize), if set
+    10. warpedImage = result
+    11. levelsBaseImage = nil
+    12. Return preview
 ```
+
+### Post-disc edits
+
+While a disc is live (`discEditing()`), nothing writes `warpedImage` directly: the next redraw would discard it. Every post-disc operation either changes a redraw parameter or edits the source (`app_disc_edit.go`):
+
+- **Source edits.** Dust removal, Descreen, Touch-up, and selection-scoped Levels/Auto contrast write an edited copy into `discBaseImage` (`installDiscSource`), then redraw. Shift, rotation, radius and feather therefore keep working afterwards, and edits move with the disc art.
+  - Whole-image edits process `discEditRegion()`: the crop square plus one disc radius on every side. A later shift beyond that margin shows unedited source.
+  - Result-space selections and touch-up strokes are mapped into source space with `discSourceMap` (the inverse of crop → rotate → inset crop → output scale). A selection becomes a rotated rectangle: `discSelectionInSource` returns its bounding box and a per-pixel inside test.
+  - Descreen keeps its non-stacking session (`descreenBaseImage` / `descreenResultImage` hold disc sources) across its own redraws, and doesn't report `DescreenReset`. Selection-scoped slider Levels keep `levelsBaseImage` (a disc source) across ticks.
+  - A disc touch-up fills `discBaseImage` (`touchupSource`), and its done event carries the redraw's preview.
+- **Parameters.**
+  - 90° `Rotate` adds ±90° to `rotationAngle` and rotates `discCropInsets` and `discScale` with it. `imageops.Rotate` pivots on pixel index w/2, so this can land one pixel off an exact flip.
+  - `TrimBorders` and `Crop` add to `discCropInsets`. Amounts are converted from output pixels through `discScale`, and `Crop` redraws when a scale is set.
+  - `ResizeImage` sets `discScale` relative to the unscaled size (`discPreScaleSize`). It is applied last on every redraw.
+- History snapshots `discBaseImage` by tile and records `discScale`, so undo restores source edits and parameters together.
 
 ### Operations that trigger redrawDisc
 
@@ -469,7 +486,7 @@ redrawDisc()
 
 During a disc `Ctrl+Drag` (shift) or `Shift+Drag` (rotate) the image content moves while the vignette (feather, cutout, background fill) stays put, so the release does not visibly change the viewport. The vignette is rotationally symmetric about the rotation pivot (the crop centre, which is the mask centre), so the same overlay serves both.
 
-- `DiscShiftPreview()` (`app_disc.go`) is read-only. It returns `discBaseImage` as a preview asset plus the exact geometry `redrawDisc` uses: the crop pivot in source and result space, the mask centre, rotation, radius/feather/cutout, post-disc levels, and the levels-adjusted background colour. **Any change to the `redrawDisc` pipeline (crop rect, rotation pivot, inset crop, mask, levels order) must be mirrored there.** `TestDiscShiftPreviewMatchesCommittedShift` enforces this. Baked discs (`discBakedBase != nil`) return an error because their redraw ignores `discCenter`; the UI then falls back to translating the whole raster.
+- `DiscShiftPreview()` (`app_disc.go`) is read-only. It returns `discBaseImage` as a preview asset plus the exact geometry `redrawDisc` uses: the crop pivot in source and result space, the mask centre, rotation, radius/feather/cutout, post-disc levels, and the levels-adjusted background colour. **Any change to the `redrawDisc` pipeline (crop rect, rotation pivot, inset crop, mask, levels order, output scale) must be mirrored there.** It shares `discSourceMap` with the post-disc edits. `TestDiscShiftPreviewMatchesCommittedShift` enforces this. Its pivot, mask centre and size are in unscaled render pixels; the UI maps them to the stage per axis, which also covers an output scale. Post-disc edits live in `discBaseImage`, so the preview stays available after them.
 - `ui/disc_shift_live.go` builds a `discShiftLiveLayer`. It holds a content raster of the unmasked source, downsampled to stage scale and covering the disc plus the per-gesture shift bound (`discShiftMaxShift`, enforced through `computeDiscShift`'s `maxShift`). It also holds a vignette overlay rendered at screen resolution with `imageops.CircularMask`. The content is drawn through `Rotate(S − shift − SourcePivot, Rotation + angle) + Pivot`, and the overlay stays fixed. Pending changes are a `discLivePose` (centre shift plus extra angle). `limitGesture` bounds shifts by magnitude and then uses `covers` to stop any gesture where the visible part of the disc would need source pixels outside the raster. This only bites for large rotations while zoomed in, since the raster then covers just the visible area plus a margin.
 - Gio composites in linear light, but the committed mask blends in gamma space. Feather pixels are therefore tuned for the content under them at press time (`vignetteTranslucent`). On release they are replaced with opaque, exactly composited colours for the final shift, rendered off the UI thread (`refreshDiscShiftOverlay`). `TestDiscShiftLiveGPUMatchesReference` checks press, drag and release on the headless GPU.
 - The lifecycle lives in `ui/disc_shift_session.go`. One layer serves a whole chain of drags: the content raster doesn't depend on the disc centre, so each release adds its shift or rotation to `base` and queues a `ShiftDisc` / `RotateDisc`. Shifts and rotations can be mixed within one run of drags. A press while commits are still in flight continues on the same layer, limited so the total pose stays inside the raster (`limitGesture`). Shift-to-source mapping uses the rotation the screen shows, including rotations still in flight (`liveDiscRotation`).

@@ -40,11 +40,15 @@ func (a *App) workingImage() *image.NRGBA {
 // setWorkingImage stores the result of an adjustment. It always writes to
 // warpedImage so that SaveImage (which only reads warpedImage) always has
 // something to save, even when the user adjusts before cropping.
+//
+// While a disc is live (discEditing), pixel edits must instead go into
+// discBaseImage via installDiscSource; writing warpedImage directly would be
+// discarded by the next disc redraw.
 func (a *App) setWorkingImage(img *image.NRGBA) {
-	a.warpedImage = img
-	if a.discRadius > 0 {
-		a.bakeDiscWorkingImage(img)
+	if a.discEditing() {
+		a.logf("setWorkingImage: warning: direct write while a disc is live; the next redraw will discard it")
 	}
+	a.warpedImage = img
 }
 
 // saveUndo pushes the current working image onto the undo stack and clears
@@ -125,17 +129,11 @@ func (a *App) stepHistory(redo bool) (*ProcessResult, error) {
 		return nil, err
 	}
 	// Prepare both directions before mutating the stacks or document.
-	var discBase, discBaked *image.NRGBA
+	var discBase *image.NRGBA
 	var unmasked string
 	if entry.disc != nil {
 		discBase = entry.disc.base.restore()
-		discBaked = entry.disc.bakedBase.restore()
-		if discBaked != nil {
-			unmasked, err = a.imagePreviewURL(discBaked)
-			if err != nil {
-				return nil, err
-			}
-		} else if discBase != nil {
+		if discBase != nil {
 			unmasked, err = a.imagePreviewURL(discBase)
 			if err != nil {
 				return nil, err
@@ -178,8 +176,7 @@ func (a *App) stepHistory(redo bool) (*ProcessResult, error) {
 		a.discNoMaskPreview = ""
 		a.discWorkingCropRect = image.Rectangle{}
 		a.discCropInsets = discCropInsets{}
-		a.discBakedBase = nil
-		a.discBakedAngle = 0
+		a.discScale = discScale{}
 		a.postDiscBlack = 0
 		a.postDiscWhite = 255
 		a.levelsBaseImage = nil
@@ -197,7 +194,7 @@ func (a *App) stepHistory(redo bool) (*ProcessResult, error) {
 	}
 
 	a.selectedCorners = append([]image.Point(nil), entry.selectedCorners...)
-	a.restoreHistoryDisc(entry.disc, discBase, discBaked, unmasked)
+	a.restoreHistoryDisc(entry.disc, discBase, unmasked)
 	b := restored.Bounds()
 	res := &ProcessResult{
 		Preview:       preview,
@@ -270,19 +267,29 @@ func (a *App) Crop(req CropRequest) (*ProcessResult, error) {
 	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
 
-	a.warpedImage = raster.CropNRGBA(a.warpedImage, r)
-	if a.discRadius > 0 {
+	if a.discEditing() {
+		// Edge crops are disc insets (in unscaled render pixels), so the disc
+		// stays live. Unscaled, the direct crop below is exactly the redraw.
 		switch req.Direction {
 		case "top":
-			a.discCropInsets.top += r.Min.Y - b.Min.Y
+			a.discCropInsets.top += a.discScaledLength(r.Min.Y-b.Min.Y, true)
 		case "bottom":
-			a.discCropInsets.bottom += b.Max.Y - r.Max.Y
+			a.discCropInsets.bottom += a.discScaledLength(b.Max.Y-r.Max.Y, true)
 		case "left":
-			a.discCropInsets.left += r.Min.X - b.Min.X
+			a.discCropInsets.left += a.discScaledLength(r.Min.X-b.Min.X, false)
 		case "right":
-			a.discCropInsets.right += b.Max.X - r.Max.X
+			a.discCropInsets.right += a.discScaledLength(b.Max.X-r.Max.X, false)
+		}
+		if !a.discScale.identity() {
+			result, err := a.redrawDisc()
+			if err != nil {
+				return nil, err
+			}
+			result.DescreenReset = descreenReset
+			return result, nil
 		}
 	}
+	a.warpedImage = raster.CropNRGBA(a.warpedImage, r)
 
 	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
@@ -303,10 +310,26 @@ func (a *App) Rotate(req RotateRequest) (*ProcessResult, error) {
 	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
 
-	a.warpedImage = imageops.Rotate90(a.warpedImage, req.FlipCode)
-	if a.discRadius > 0 {
-		a.bakeDiscWorkingImage(a.warpedImage)
+	if a.discEditing() {
+		// Rotating the render 90° about its centre equals rotating the disc by
+		// 90° with the edge insets (and output scale) turned along with it.
+		in := a.discCropInsets
+		if req.FlipCode == 1 { // clockwise
+			a.rotationAngle += 90
+			a.discCropInsets = discCropInsets{top: in.left, right: in.top, bottom: in.right, left: in.bottom}
+		} else {
+			a.rotationAngle -= 90
+			a.discCropInsets = discCropInsets{top: in.right, right: in.bottom, bottom: in.left, left: in.top}
+		}
+		a.discScale = discScale{x: a.discScale.y, y: a.discScale.x}
+		result, err := a.redrawDisc()
+		if err != nil {
+			return nil, err
+		}
+		result.DescreenReset = descreenReset
+		return result, nil
 	}
+	a.warpedImage = imageops.Rotate90(a.warpedImage, req.FlipCode)
 
 	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
@@ -333,6 +356,22 @@ func (a *App) ResizeImage(req ResizeRequest) (*ProcessResult, error) {
 
 	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
+	if a.discEditing() {
+		// Resize becomes the disc's output scale, applied last on every
+		// redraw, so shift / rotation / feather keep working afterwards.
+		pre := a.discPreScaleSize()
+		a.discScale = discScale{x: float64(req.Width) / float64(pre.X), y: float64(req.Height) / float64(pre.Y)}
+		if a.discScale.identity() {
+			a.discScale = discScale{}
+		}
+		result, err := a.redrawDisc()
+		if err != nil {
+			return nil, err
+		}
+		result.Message = fmt.Sprintf("Resized to %dx%d", result.Width, result.Height)
+		result.DescreenReset = descreenReset
+		return result, nil
+	}
 	resized := raster.ResizeNRGBA(src, req.Width, req.Height)
 	a.setWorkingImage(resized)
 
@@ -375,6 +414,10 @@ func (a *App) AutoContrast(req AutoContrastRequest) (*ProcessResult, error) {
 	selectionRect, selectionKey, err := resolveAdjustmentSelection(req.Selection, working.Bounds())
 	if err != nil {
 		return nil, err
+	}
+
+	if !preWarp && selectionKey.Active && a.discEditing() {
+		return a.discSelectionAutoContrast(selectionRect, selectionKey, descreenReset)
 	}
 
 	// Prefer the pre-adjustment base when the sliders have been touched.
@@ -445,9 +488,6 @@ func (a *App) AutoContrast(req AutoContrastRequest) (*ProcessResult, error) {
 
 	// Post-warp, non-disc path (corner / line mode after warp, or selection-scoped).
 	a.warpedImage = adjusted
-	if a.discRadius > 0 {
-		a.bakeDiscWorkingImage(adjusted)
-	}
 	// Restore the pre-adjustment base for slider sessions as above.
 	a.levelsBaseImage = preLevelsBase
 	a.levelsSelection = selectionKey
@@ -537,10 +577,20 @@ func (a *App) TrimBorders() (*ProcessResult, error) {
 
 	descreenReset := a.descreenResultImage != nil
 	a.saveUndo()
-	a.warpedImage = raster.CropNRGBA(img, image.Rect(left, top, right, bottom))
-	if a.discRadius > 0 {
-		a.bakeDiscWorkingImage(a.warpedImage)
+	if a.discEditing() {
+		a.discCropInsets.top += a.discScaledLength(top, true)
+		a.discCropInsets.bottom += a.discScaledLength(h-bottom, true)
+		a.discCropInsets.left += a.discScaledLength(left, false)
+		a.discCropInsets.right += a.discScaledLength(w-right, false)
+		result, err := a.redrawDisc()
+		if err != nil {
+			return nil, err
+		}
+		result.Message = fmt.Sprintf("Trimmed borders (top=%d, bottom=%d, left=%d, right=%d)", top, h-bottom, left, w-right)
+		result.DescreenReset = descreenReset
+		return result, nil
 	}
+	a.warpedImage = raster.CropNRGBA(img, image.Rect(left, top, right, bottom))
 
 	preview, err := a.imagePreviewURL(a.warpedImage)
 	if err != nil {
@@ -586,6 +636,10 @@ func (a *App) Descreen(req DescreenRequest) (*ProcessResult, error) {
 	selectionRect, selectionKey, err := resolveAdjustmentSelection(req.Selection, src.Bounds())
 	if err != nil {
 		return nil, err
+	}
+
+	if a.discEditing() {
+		return a.discDescreen(req, selectionRect, selectionKey)
 	}
 
 	// Start a new descreen session when:
@@ -656,9 +710,13 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 	preWarp := a.warpedImage == nil
 	descreenReset := a.descreenResultImage != nil
 	working := a.workingImage()
-	_, selectionKey, err := resolveAdjustmentSelection(req.Selection, working.Bounds())
+	selectionRect, selectionKey, err := resolveAdjustmentSelection(req.Selection, working.Bounds())
 	if err != nil {
 		return nil, err
+	}
+
+	if !preWarp && selectionKey.Active && a.discEditing() {
+		return a.discSelectionLevels(req, selectionRect, selectionKey, descreenReset)
 	}
 
 	a.redoStack = nil
@@ -704,9 +762,6 @@ func (a *App) SetLevels(req SetLevelsRequest) (*ProcessResult, error) {
 	// Post-warp, non-disc path (corner / line mode after warp, or selection-scoped).
 	adjusted := applyLevelsInSelection(a.levelsBaseImage, req.Black, req.White, selectionKey)
 	a.warpedImage = adjusted
-	if a.discRadius > 0 {
-		a.bakeDiscWorkingImage(adjusted)
-	}
 	preview, err := a.imagePreviewURL(adjusted)
 	if err != nil {
 		return nil, err
