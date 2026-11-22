@@ -3,15 +3,23 @@ package ui
 import (
 	"image"
 	"image/draw"
+	"math"
 	"time"
+
+	"gioui.org/f32"
+	"gioui.org/layout"
 )
+
+// discRotateDeadZoneDp is the radius around the rotation pivot inside which
+// Shift+drag ignores the pointer (its angle there is unstable).
+const discRotateDeadZoneDp = 12
 
 // Lifecycle of the live Ctrl+drag layer (rendering lives in
 // disc_shift_live.go). All methods run on the UI thread.
 //
 // A layer is built once (prewarmed, or on demand at press) and then serves a
-// chain of drags: each release adds its shift to base and queues a ShiftDisc
-// commit, and the layer stays on screen until the render of the last commit
+// chain of drags: each release adds its shift or rotation to base and queues
+// a ShiftDisc / RotateDisc commit, and the layer stays on screen until the render of the last commit
 // is presented. A press during that time simply continues on the same layer,
 // so rapid successive drags never fall back to the stale raster.
 
@@ -84,18 +92,18 @@ func (e *EditorUI) buildDiscShiftLive(key discShiftLiveKey, done func(*discShift
 	})
 }
 
-// startDiscShiftLive picks the live layer for the Ctrl+drag that just
-// started: the current chain's layer if one is showing or still matches the
-// screen, else the prewarmed one, else one built on demand (the legacy
-// whole-raster translate shows until it lands).
-func (e *EditorUI) startDiscShiftLive(info viewportLayoutInfo) {
+// startDiscLive picks the live layer for the Ctrl+drag (shift) or
+// Shift+drag (rotate) that just started: the current chain's layer if one is
+// showing or still matches the screen, else the prewarmed one, else one built
+// on demand (the legacy whole-raster transform shows until it lands).
+func (e *EditorUI) startDiscLive(info viewportLayoutInfo) {
 	key := e.discShiftKey(info)
 	warm := e.discShiftWarm
 	warmOK := warm != nil && e.discShiftWarmKey == key
 	if l := e.discShiftLive; l != nil {
 		matches := !l.stale && l.validSource == key.source && l.key.info == info
 		if l.showing || (matches && !(l.coverageLow() && warmOK)) {
-			e.beginDiscShiftGesture(l)
+			e.beginDiscLiveGesture(l)
 			return
 		}
 	}
@@ -103,60 +111,70 @@ func (e *EditorUI) startDiscShiftLive(info viewportLayoutInfo) {
 	if warmOK {
 		e.discShiftWarm = nil
 		e.discShiftLive = warm
-		e.beginDiscShiftGesture(warm)
+		e.beginDiscLiveGesture(warm)
 		return
 	}
 	gen := e.discShiftLiveGen
 	e.buildDiscShiftLive(key, func(l *discShiftLiveLayer) {
-		if l == nil || gen != e.discShiftLiveGen || e.ctrlDrag == nil || e.discShiftLive != nil {
+		if l == nil || gen != e.discShiftLiveGen || (e.ctrlDrag == nil && e.shiftDrag == nil) || e.discShiftLive != nil {
 			return
 		}
 		e.discShiftLive = l
-		e.beginDiscShiftGesture(l)
-		l.dx, l.dy = l.clampGesture(e.ctrlDragShift.X, e.ctrlDragShift.Y)
+		e.beginDiscLiveGesture(l)
+		l.gesture = l.limitGesture(e.liveGesture)
 		e.invalidate()
 	})
 }
 
-// beginDiscShiftGesture makes l show and follow the pointer from its current
-// accumulated shift.
-func (e *EditorUI) beginDiscShiftGesture(l *discShiftLiveLayer) {
+// beginDiscLiveGesture makes l show and follow the pointer from its current
+// accumulated pose.
+func (e *EditorUI) beginDiscLiveGesture(l *discShiftLiveLayer) {
 	l.dragging, l.showing = true, true
-	l.dx, l.dy = 0, 0
+	l.gesture = discLivePose{}
 	if l.next != nil {
 		l.overlay, l.overlayExact, l.next = *l.next, false, nil
 	}
 	if e.ctrlDrag != nil {
 		// Clamp against where the disc will be once queued commits land.
-		e.ctrlDrag.startCenter = image.Pt(l.geo.CenterX+l.base.X, l.geo.CenterY+l.base.Y)
+		e.ctrlDrag.startCenter = image.Pt(l.geo.CenterX+l.base.shift.X, l.geo.CenterY+l.base.shift.Y)
 	}
 }
 
-// releaseDiscShiftGesture ends the current gesture. A non-zero shift joins
-// base and its commit is tracked; a zero shift just settles.
-func (e *EditorUI) releaseDiscShiftGesture(dx, dy int) {
+// liveDiscRotation is the disc rotation the screen currently shows, counting
+// chain commits that have not landed yet.
+func (e *EditorUI) liveDiscRotation() float64 {
+	if l := e.discShiftLive; l != nil && l.showing {
+		return l.rotation(l.base)
+	}
+	return e.discRotation
+}
+
+// releaseDiscLiveGesture ends the current gesture. A non-zero change joins
+// base and its commit is tracked; a zero change just settles.
+func (e *EditorUI) releaseDiscLiveGesture(p discLivePose) {
+	e.liveGesture = discLivePose{}
 	l := e.discShiftLive
 	if l == nil || !l.dragging {
 		return
 	}
 	l.dragging = false
-	l.dx, l.dy = 0, 0
-	if dx == 0 && dy == 0 {
+	l.gesture = discLivePose{}
+	if p.isZero() {
 		e.settleDiscShiftLive(l)
 		return
 	}
-	l.base = l.base.Add(image.Pt(dx, dy))
+	l.base = l.base.add(p)
 	l.pending++
 	e.refreshDiscShiftOverlay(l)
 }
 
-// cancelDiscShiftGesture abandons the current gesture without committing,
+// cancelDiscLiveGesture abandons the current gesture without committing,
 // keeping any chain of earlier commits on screen.
-func (e *EditorUI) cancelDiscShiftGesture() {
-	e.ctrlDragShift = image.Point{}
+func (e *EditorUI) cancelDiscLiveGesture() {
+	e.liveGesture = discLivePose{}
 	if l := e.discShiftLive; l != nil && l.dragging {
 		l.dragging = false
-		l.dx, l.dy = 0, 0
+		l.gesture = discLivePose{}
 		e.settleDiscShiftLive(l)
 	}
 }
@@ -189,15 +207,17 @@ func (e *EditorUI) refreshDiscShiftOverlay(l *discShiftLiveLayer) {
 	})
 }
 
-// discShiftCommitted records the outcome of one of the chain's commits.
-func (e *EditorUI) discShiftCommitted(l *discShiftLiveLayer, dx, dy int, res *ProcessResult) {
+// discLiveCommitted records the outcome of one of the chain's commits.
+func (e *EditorUI) discLiveCommitted(l *discShiftLiveLayer, p discLivePose, res *ProcessResult) {
 	if l == nil || e.discShiftLive != l {
 		return
 	}
 	l.pending = max(0, l.pending-1)
-	l.settled = l.settled.Add(image.Pt(dx, dy))
-	if res == nil || res.DiscCenterX != l.geo.CenterX+l.settled.X || res.DiscCenterY != l.geo.CenterY+l.settled.Y {
-		// The backend clamped differently; the layer no longer matches.
+	l.settled = l.settled.add(p)
+	want := l.geo
+	if res == nil || res.DiscCenterX != want.CenterX+l.settled.shift.X || res.DiscCenterY != want.CenterY+l.settled.shift.Y ||
+		math.Abs(res.DiscRotation-l.rotation(l.settled)) > 1e-6 {
+		// The backend ended up somewhere else (e.g. clamped the centre).
 		l.stale = true
 	}
 	if res != nil && res.Preview != "" {
@@ -205,6 +225,77 @@ func (e *EditorUI) discShiftCommitted(l *discShiftLiveLayer, dx, dy int, res *Pr
 		l.own[res.Preview] = true
 	}
 	e.settleDiscShiftLive(l)
+}
+
+// discRotateDragState turns a Shift+drag into a rotation: the disc turns by
+// the angle the pointer sweeps around the rotation pivot, like grabbing the
+// disc and turning it. The angle is unwrapped so full turns accumulate.
+type discRotateDragState struct {
+	pivot   f32.Point // screen px the last angle was measured around
+	pointer f32.Point // last pointer position (for the guide)
+	lastRaw float64   // last pointer angle around pivot (degrees)
+	rebase  bool      // next sample only re-anchors lastRaw
+	total   float64   // unwrapped gesture angle (degrees, clockwise positive)
+	applied float64   // angle actually shown (after coverage limits)
+}
+
+// update folds a pointer sample into the gesture. Within deadZone of the
+// pivot the angle is meaningless, so the gesture pauses there and re-anchors
+// on leaving it instead of jumping; a moved pivot re-anchors likewise.
+func (r *discRotateDragState) update(p, pivot f32.Point, deadZone float32) {
+	r.pointer = p
+	v := p.Sub(pivot)
+	if math.Hypot(float64(v.X), float64(v.Y)) < float64(deadZone) {
+		r.rebase = true
+		return
+	}
+	raw := math.Atan2(float64(v.Y), float64(v.X)) * 180 / math.Pi
+	if r.rebase || pivot != r.pivot {
+		r.lastRaw, r.pivot, r.rebase = raw, pivot, false
+		return
+	}
+	d := math.Mod(raw-r.lastRaw+540, 360) - 180
+	r.total += d
+	r.lastRaw = raw
+}
+
+// discRotatePivot is the screen position the disc rotates around: the live
+// layer's pivot when available, else the stage centre the legacy transform
+// uses.
+func (e *EditorUI) discRotatePivot(info viewportLayoutInfo) f32.Point {
+	if l := e.discShiftLive; l != nil && l.dragging && l.geo.Width > 0 && l.geo.Height > 0 {
+		return f32.Pt(
+			float32(info.StageX+l.geo.PivotX*info.StageWidth/float64(l.geo.Width)),
+			float32(info.StageY+l.geo.PivotY*info.StageHeight/float64(l.geo.Height)),
+		)
+	}
+	return f32.Pt(float32(info.StageX+info.StageWidth/2), float32(info.StageY+info.StageHeight/2))
+}
+
+// discRotateGuide describes the rotation handle to draw, if a Shift+drag is
+// active.
+func (e *EditorUI) discRotateGuide() *discRotateGuide {
+	r := e.shiftDrag
+	if r == nil || r.pivot == (f32.Point{}) {
+		return nil
+	}
+	return &discRotateGuide{Pivot: r.pivot, Pointer: r.pointer, Angle: r.applied}
+}
+
+// updateDiscRotateDrag applies a pointer sample to the active Shift+drag.
+func (e *EditorUI) updateDiscRotateDrag(gtx layout.Context, info viewportLayoutInfo, pos f32.Point) {
+	r := e.shiftDrag
+	if r == nil {
+		return
+	}
+	r.update(pos, e.discRotatePivot(info), float32(gtx.Dp(discRotateDeadZoneDp)))
+	e.liveGesture = discLivePose{angle: r.total}
+	r.applied = r.total
+	if l := e.discShiftLive; l != nil && l.dragging {
+		l.gesture = l.limitGesture(e.liveGesture)
+		r.applied = l.gesture.angle
+	}
+	e.discLiveTransform.Angle = float32(r.applied)
 }
 
 // settleDiscShiftLive hides l once nothing is moving or pending and the
@@ -296,7 +387,7 @@ func (e *EditorUI) maybeWarmDiscShift() {
 func (e *EditorUI) clearDiscShiftLive() {
 	e.discShiftLiveGen++
 	e.discShiftLive = nil
-	e.ctrlDragShift = image.Point{}
+	e.liveGesture = discLivePose{}
 }
 
 // gpuRGBA returns img as the premultiplied *image.RGBA that paint.NewImageOp

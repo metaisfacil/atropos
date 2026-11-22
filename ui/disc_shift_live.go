@@ -33,9 +33,12 @@ const (
 // source content that follows the pointer beneath a vignette that stays fixed
 // in result-image space, so releasing the mouse does not change the picture.
 //
-// One layer serves a whole chain of drags. The content raster does not depend
-// on the disc centre, so each committed shift just accumulates into base and
-// the layer stays on screen until the last commit of the chain is presented.
+// One layer serves a whole chain of drags (Ctrl+drag shifts and Shift+drag
+// rotations). The content raster depends on neither the disc centre nor the
+// rotation, so each committed change just accumulates into base and the layer
+// stays on screen until the last commit of the chain is presented. The
+// vignette is rotationally symmetric about the rotation pivot, so it stays
+// fixed for both.
 type discShiftLiveLayer struct {
 	// Immutable after build; overlay goroutines read only these.
 	geo         DiscShiftPreview
@@ -45,6 +48,8 @@ type discShiftLiveLayer struct {
 	contentRect image.Rectangle
 	contentSize image.Point
 	overlayRect image.Rectangle // viewport px, for the stage at build time
+	visible     [4]float64      // visible result-space rect at build (x0,y0,x1,y1)
+	srcBounds   image.Rectangle
 	buildStageX float64
 	buildStageY float64
 	buildStageW float64
@@ -56,9 +61,9 @@ type discShiftLiveLayer struct {
 	overlayGen   uint64         // invalidates in-flight overlay renders
 	next         *paint.ImageOp // translucent overlay prepared for base
 
-	base     image.Point // shift released (committed or committing) since build
-	settled  image.Point // part of base confirmed by completed commits
-	dx, dy   int         // current gesture's shift on top of base
+	base     discLivePose // changes released (committed or committing) since build
+	settled  discLivePose // part of base confirmed by completed commits
+	gesture  discLivePose // current gesture on top of base
 	dragging bool
 	showing  bool // drawn instead of the regular raster
 	pending  int  // in-flight ShiftDisc commits from this chain
@@ -68,26 +73,127 @@ type discShiftLiveLayer struct {
 	stale       bool            // a foreign change was seen; drop once settled
 }
 
-// total is the disc-centre shift currently shown, relative to geo.
-func (l *discShiftLiveLayer) total() image.Point {
-	return l.base.Add(image.Pt(l.dx, l.dy))
+// discLivePose is a disc change relative to a layer's geometry: a centre
+// shift in source px and an extra rotation in degrees.
+type discLivePose struct {
+	shift image.Point
+	angle float64
 }
 
-// clampGesture limits a gesture shift so the accumulated shift stays within
-// the area the content raster covers.
-func (l *discShiftLiveLayer) clampGesture(dx, dy int) (int, int) {
-	tx, ty := float64(l.base.X+dx), float64(l.base.Y+dy)
-	m := l.key.maxShift
-	if mag := math.Hypot(tx, ty); m > 0 && mag > m {
-		tx, ty = math.Trunc(tx*m/mag), math.Trunc(ty*m/mag)
+func (p discLivePose) add(q discLivePose) discLivePose {
+	return discLivePose{shift: p.shift.Add(q.shift), angle: p.angle + q.angle}
+}
+
+func (p discLivePose) isZero() bool { return p.shift == (image.Point{}) && p.angle == 0 }
+
+// total is the disc change currently shown, relative to geo.
+func (l *discShiftLiveLayer) total() discLivePose { return l.base.add(l.gesture) }
+
+// rotation is the effective disc rotation (degrees) for pose p.
+func (l *discShiftLiveLayer) rotation(p discLivePose) float64 { return l.geo.Rotation + p.angle }
+
+// toSource maps result-image point (px, py) to source coords for pose p,
+// mirroring the affine chain in drawDiscShiftLive.
+func (l *discShiftLiveLayer) toSource(px, py float64, p discLivePose) (float64, float64) {
+	g := l.geo
+	rad := l.rotation(p) * math.Pi / 180
+	cos, sin := math.Cos(rad), math.Sin(rad)
+	rx, ry := px-g.PivotX, py-g.PivotY
+	return cos*rx + sin*ry + g.SourcePivotX + float64(p.shift.X),
+		-sin*rx + cos*ry + g.SourcePivotY + float64(p.shift.Y)
+}
+
+// covers reports whether the content raster holds every source pixel the
+// visible part of the disc needs at pose p (relative to geo).
+func (l *discShiftLiveLayer) covers(p discLivePose) bool {
+	g := l.geo
+	if math.Hypot(float64(p.shift.X), float64(p.shift.Y)) > l.key.maxShift+0.5 {
+		return false
 	}
-	return int(tx) - l.base.X, int(ty) - l.base.Y
+	x0, y0, x1, y1 := l.visible[0], l.visible[1], l.visible[2], l.visible[3]
+	cx, cy, r := g.MaskCenterX, g.MaskCenterY, float64(g.Radius)
+	ok := func(px, py float64) bool {
+		// Only the disc is visible (the vignette is opaque outside it), so
+		// points beyond the rim are pulled onto it.
+		if dx, dy := px-cx, py-cy; dx*dx+dy*dy > r*r {
+			d := math.Hypot(dx, dy)
+			px, py = cx+dx*r/d, cy+dy*r/d
+		}
+		sx, sy := l.toSource(px, py, p)
+		if sx < float64(l.srcBounds.Min.X) || sy < float64(l.srcBounds.Min.Y) ||
+			sx > float64(l.srcBounds.Max.X) || sy > float64(l.srcBounds.Max.Y) {
+			return true // nothing exists there in the committed render either
+		}
+		cr := l.contentRect
+		return sx >= float64(cr.Min.X)-1 && sy >= float64(cr.Min.Y)-1 &&
+			sx <= float64(cr.Max.X)+1 && sy <= float64(cr.Max.Y)+1
+	}
+	const n = 24
+	for i := 0; i <= n; i++ {
+		t := float64(i) / n
+		if !ok(x0+(x1-x0)*t, y0) || !ok(x0+(x1-x0)*t, y1) || !ok(x0, y0+(y1-y0)*t) || !ok(x1, y0+(y1-y0)*t) {
+			return false
+		}
+	}
+	for i := 0; i < 4*n; i++ {
+		a := float64(i) * 2 * math.Pi / (4 * n)
+		px, py := cx+r*math.Cos(a), cy+r*math.Sin(a)
+		if px >= x0 && px <= x1 && py >= y0 && py <= y1 && !ok(px, py) {
+			return false
+		}
+	}
+	return true
 }
 
-// coverageLow reports that most of the shift range has been used up, so a
-// freshly centred layer is worth building.
+// limitGesture returns the gesture closest to want (on the way from the
+// current gesture) that keeps the total pose inside the content raster.
+func (l *discShiftLiveLayer) limitGesture(want discLivePose) discLivePose {
+	// Shifts are bounded by magnitude first (cheap and direction-preserving).
+	tx, ty := float64(l.base.shift.X+want.shift.X), float64(l.base.shift.Y+want.shift.Y)
+	if m := l.key.maxShift; m > 0 {
+		if mag := math.Hypot(tx, ty); mag > m {
+			tx, ty = math.Trunc(tx*m/mag), math.Trunc(ty*m/mag)
+		}
+	}
+	want.shift = image.Pt(int(tx)-l.base.shift.X, int(ty)-l.base.shift.Y)
+	if l.covers(l.base.add(want)) {
+		return want
+	}
+	from := l.gesture
+	lerp := func(t float64) discLivePose {
+		return discLivePose{
+			shift: image.Pt(
+				from.shift.X+int(math.Round(float64(want.shift.X-from.shift.X)*t)),
+				from.shift.Y+int(math.Round(float64(want.shift.Y-from.shift.Y)*t)),
+			),
+			angle: from.angle + (want.angle-from.angle)*t,
+		}
+	}
+	lo, hi := 0.0, 1.0
+	for i := 0; i < 12; i++ {
+		mid := (lo + hi) / 2
+		if l.covers(l.base.add(lerp(mid))) {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return lerp(lo)
+}
+
+// coverageLow reports that a good part of the movement range has been used
+// up, so a freshly centred layer is worth building.
 func (l *discShiftLiveLayer) coverageLow() bool {
-	return math.Hypot(float64(l.base.X), float64(l.base.Y)) > l.key.maxShift/2
+	b := l.base
+	if math.Hypot(float64(b.shift.X), float64(b.shift.Y)) > l.key.maxShift/2 {
+		return true
+	}
+	for _, d := range []float64{-10, 10} {
+		if !l.covers(discLivePose{shift: b.shift, angle: b.angle + d}) {
+			return true
+		}
+	}
+	return false
 }
 
 // discShiftMaxShift bounds a single Ctrl+drag gesture (in source pixels) so
@@ -168,26 +274,28 @@ func buildDiscShiftLiveLayer(geo DiscShiftPreview, src *image.NRGBA, info viewpo
 		contentRect: region,
 		contentSize: content.Bounds().Size(),
 		overlayRect: overlayRect,
+		visible:     [4]float64{vx0, vy0, vx1, vy1},
+		srcBounds:   src.Bounds(),
 		buildStageX: info.StageX,
 		buildStageY: info.StageY,
 		buildStageW: info.StageWidth,
 		buildStageH: info.StageHeight,
 	}
-	l.overlay = l.computeOverlay(image.Point{}, false)
+	l.overlay = l.computeOverlay(discLivePose{}, false)
 	return l
 }
 
-// computeOverlay renders the vignette for a total shift. With exact set,
+// computeOverlay renders the vignette for a total pose. With exact set,
 // feather pixels are opaque with the precise committed colour for the content
 // under them, which is only valid while content is static (after release).
 // Otherwise they are translucent and tuned for that content (see
 // vignetteTranslucent). It reads only immutable fields, so it may run on any
 // goroutine.
-func (l *discShiftLiveLayer) computeOverlay(total image.Point, exact bool) paint.ImageOp {
+func (l *discShiftLiveLayer) computeOverlay(total discLivePose, exact bool) paint.ImageOp {
 	g := l.geo
 	scaleX := l.buildStageW / float64(g.Width)
 	scaleY := l.buildStageH / float64(g.Height)
-	sample := func(px, py float64) [3]float64 { return l.sampleContent(px, py, total.X, total.Y) }
+	sample := func(px, py float64) [3]float64 { return l.sampleContent(px, py, total) }
 	img := renderDiscVignette(g, l.overlayRect, l.buildStageX, l.buildStageY, scaleX, scaleY, sample, exact)
 	op := paint.NewImageOp(img)
 	op.Filter = paint.FilterLinear
@@ -195,15 +303,9 @@ func (l *discShiftLiveLayer) computeOverlay(total image.Point, exact bool) paint
 }
 
 // sampleContent returns the (levels-adjusted, gamma-encoded 0..255) content
-// colour the live layer shows at result-image point (px, py) for a pending
-// shift (dx, dy). It mirrors the affine chain in drawDiscShiftLive.
-func (l *discShiftLiveLayer) sampleContent(px, py float64, dx, dy int) [3]float64 {
-	g := l.geo
-	rad := g.Rotation * math.Pi / 180
-	cos, sin := math.Cos(rad), math.Sin(rad)
-	rx, ry := px-g.PivotX, py-g.PivotY
-	sx := cos*rx + sin*ry + g.SourcePivotX + float64(dx)
-	sy := -sin*rx + cos*ry + g.SourcePivotY + float64(dy)
+// colour the live layer shows at result-image point (px, py) for pose p.
+func (l *discShiftLiveLayer) sampleContent(px, py float64, p discLivePose) [3]float64 {
+	sx, sy := l.toSource(px, py, p)
 	cr, img := l.contentRect, l.contentImg
 	u := (sx-float64(cr.Min.X))*float64(l.contentSize.X)/float64(cr.Dx()) - 0.5
 	v := (sy-float64(cr.Min.Y))*float64(l.contentSize.Y)/float64(cr.Dy()) - 0.5
@@ -381,7 +483,7 @@ func srgbEncode(l float64) float64 {
 	return 1.055*math.Pow(l, 1/2.4) - 0.055
 }
 
-// drawDiscShiftLive paints the live content (shifted by l.total()) and the
+// drawDiscShiftLive paints the live content (at pose l.total()) and the
 // stationary vignette, clipped to the visible stage.
 func drawDiscShiftLive(ops *op.Ops, l *discShiftLiveLayer, info viewportLayoutInfo, vpRect image.Rectangle) {
 	g := l.geo
@@ -403,7 +505,8 @@ func drawDiscShiftLive(ops *op.Ops, l *discShiftLiveLayer, info viewportLayoutIn
 	scaleX := float32(info.StageWidth / float64(g.Width))
 	scaleY := float32(info.StageHeight / float64(g.Height))
 	cr := l.contentRect
-	shift := l.total()
+	pose := l.total()
+	shift := pose.shift
 	// raster px → source px → disc-relative (with pending shift) → rotate →
 	// result px → stage px.
 	contentAff := f32.AffineId().
@@ -412,7 +515,7 @@ func drawDiscShiftLive(ops *op.Ops, l *discShiftLiveLayer, info viewportLayoutIn
 			float32(float64(cr.Min.X)-g.SourcePivotX-float64(shift.X)),
 			float32(float64(cr.Min.Y)-g.SourcePivotY-float64(shift.Y)),
 		)).
-		Rotate(f32.Point{}, float32(g.Rotation*math.Pi/180)).
+		Rotate(f32.Point{}, float32(l.rotation(pose)*math.Pi/180)).
 		Offset(f32.Pt(float32(g.PivotX), float32(g.PivotY))).
 		Scale(f32.Point{}, f32.Pt(scaleX, scaleY)).
 		Offset(f32.Pt(float32(info.StageX), float32(info.StageY)))

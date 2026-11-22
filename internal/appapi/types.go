@@ -211,8 +211,12 @@ type DiscDrawRequest struct {
 }
 
 // DiscRotateRequest specifies the rotation angle for disc mode.
+// DiscRotateRequest rotates the disc by Angle degrees (clockwise positive).
+// Nudge marks a keyboard nudge (Q/E); see ShiftDiscRequest for how nudges
+// share undo steps.
 type DiscRotateRequest struct {
 	Angle float64 `json:"angle"`
+	Nudge bool    `json:"nudge"`
 }
 
 // PixelColorRequest holds image-space coordinates for colour sampling.
@@ -223,9 +227,9 @@ type PixelColorRequest struct {
 
 // ShiftDiscRequest holds the pixel offset to shift the disc centre by. Every
 // shift is undoable. Nudge marks a keyboard nudge: an unbroken run of nudges
-// (nothing else in between) shares one undo step, so holding an arrow key
-// cannot flood the shared history. Other shifts (e.g. a Ctrl+drag) are each
-// their own step.
+// (arrow-key shifts and Q/E rotations, with nothing else in between) shares
+// one undo step, so holding a key cannot flood the shared history. Other
+// shifts (e.g. a Ctrl+drag) are each their own step.
 type ShiftDiscRequest struct {
 	DX    int  `json:"dx"`
 	DY    int  `json:"dy"`

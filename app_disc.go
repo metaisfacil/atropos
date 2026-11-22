@@ -335,14 +335,20 @@ func (a *App) StraightEdgeRotate(req StraightEdgeRotateRequest) (*ProcessResult,
 	return a.redrawDisc()
 }
 
-// RotateDisc rotates the disc image by the specified angle.
+// RotateDisc rotates the disc image by the specified angle. Like ShiftDisc it
+// is undoable: a Shift+drag is its own step, and keyboard nudges (Q/E) share
+// the unbroken nudge run's step.
 func (a *App) RotateDisc(req DiscRotateRequest) (*ProcessResult, error) {
-	a.logf("RotateDisc: angle=%.2f (cumulative before: %.2f)", req.Angle, a.rotationAngle)
+	a.logf("RotateDisc: angle=%.2f nudge=%v (cumulative before: %.2f)", req.Angle, req.Nudge, a.rotationAngle)
 	if a.discRadius <= 0 {
 		return nil, fmt.Errorf("no disc defined")
 	}
+	turned := req.Angle != 0
+	continuing := a.beginDiscHistoryStep(req.Nudge, turned)
 	a.rotationAngle += req.Angle
-	return a.redrawDisc()
+	res, err := a.redrawDisc()
+	a.endDiscHistoryStep(req.Nudge, turned || continuing, err)
+	return res, err
 }
 
 // GetPixelColor samples the disc base image at (x,y), sets bgColor, and
@@ -412,31 +418,45 @@ func (a *App) ShiftDisc(req ShiftDiscRequest) (*ProcessResult, error) {
 	next.X = clamp(next.X, minX, maxX)
 	next.Y = clamp(next.Y, minY, maxY)
 	// History captures the disc centre, so undo returns to the pre-shift
-	// crop rather than past the disc entirely. A nudge continuing an unbroken
-	// run reuses the step the run opened: any other operation re-renders or
-	// steps history, which changes warpedImage or the stack depth.
-	run := a.nudgeRun
-	continuing := req.Nudge && run.result != nil && run.result == a.warpedImage && run.depth == len(a.undoStack)
+	// crop rather than past the disc entirely.
 	moved := next != a.discCenter
-	if moved && !continuing {
-		a.saveUndo()
-	}
+	continuing := a.beginDiscHistoryStep(req.Nudge, moved)
 	a.discCenter = next
 
 	a.logf("ShiftDisc: new center=(%d,%d)", a.discCenter.X, a.discCenter.Y)
 	res, err := a.redrawDisc()
-	a.nudgeRun = discNudgeRun{}
-	if err == nil && req.Nudge && (moved || continuing) {
-		a.nudgeRun = discNudgeRun{result: a.warpedImage, depth: len(a.undoStack)}
-	}
+	a.endDiscHistoryStep(req.Nudge, moved || continuing, err)
 	return res, err
 }
 
-// discNudgeRun identifies the state left by the last keyboard nudge so the
-// next one can join its undo step.
+// discNudgeRun identifies the state left by the last keyboard nudge (shift
+// or rotate) so the next one can join its undo step.
 type discNudgeRun struct {
 	result *image.NRGBA
 	depth  int
+}
+
+// beginDiscHistoryStep records an undo step for a disc shift/rotation that
+// changes something, unless it is a nudge continuing an unbroken nudge run:
+// then it reuses the step the run opened. Any other operation re-renders or
+// steps history, changing warpedImage or the stack depth, which ends the run.
+// It reports whether the run continues.
+func (a *App) beginDiscHistoryStep(nudge, changes bool) bool {
+	run := a.nudgeRun
+	continuing := nudge && run.result != nil && run.result == a.warpedImage && run.depth == len(a.undoStack)
+	if changes && !continuing {
+		a.saveUndo()
+	}
+	return continuing
+}
+
+// endDiscHistoryStep opens (or extends) the nudge run after a successful
+// nudge that is part of one, and ends it otherwise.
+func (a *App) endDiscHistoryStep(nudge, inRun bool, err error) {
+	a.nudgeRun = discNudgeRun{}
+	if err == nil && nudge && inRun {
+		a.nudgeRun = discNudgeRun{result: a.warpedImage, depth: len(a.undoStack)}
+	}
 }
 
 // DiscShiftPreview reports the geometry of the current disc render so the UI

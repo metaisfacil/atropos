@@ -430,7 +430,7 @@ func (e *EditorUI) applyKeyboardRotate(ccw bool) {
 			if ccw {
 				ang = -15.0
 			}
-			res, err = e.app.RotateDisc(DiscRotateRequest{Angle: ang})
+			res, err = e.app.RotateDisc(DiscRotateRequest{Angle: ang, Nudge: true})
 		} else {
 			flip := 1
 			if ccw {

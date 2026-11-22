@@ -72,7 +72,7 @@ Once a crop has been applied in any mode, the **Re-crop** button appears. Clicki
 
 ### Undo / Redo
 
-Ctrl/⌘ + Z to undo, Ctrl/⌘ + Y to redo. The undo/redo history stores up to 100 steps and 1 GiB of memory before the oldest states are discarded.
+Ctrl/⌘ + Z to undo, Ctrl/⌘ + Y to redo. The undo/redo history stores up to 100 steps and 1 GiB of memory before the oldest states are discarded. In Disc mode, each Ctrl+Drag shift and Shift+Drag rotation is its own step, while an unbroken run of arrow-key and Q/E nudges counts as one.
 
 ### Save
 
@@ -99,7 +99,7 @@ Ctrl/⌘ + S or the **Save image** button. Output format is determined by the fi
 | Arrow keys | Shift disc 5 px (20 px with Shift) |
 | + / − | Feather size ±1 (disc mode) |
 | Ctrl+Drag | Live-shift disc centre |
-| Shift+Drag | Live-rotate disc |
+| Shift+Drag | Live-rotate disc (move the pointer around the disc centre) |
 | Shift+Scroll | Feather size (disc mode) |
 | Scroll | Zoom in/out (cursor-anchored) |
 | Space+Drag | Pan canvas |

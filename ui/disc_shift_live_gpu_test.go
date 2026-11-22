@@ -17,9 +17,9 @@ import (
 // referenceDiscShiftPixel is the CPU model of the live preview (and, via
 // TestDiscShiftPreviewMatchesCommittedShift in package main, of the committed
 // ShiftDisc render) at result-image point (px, py).
-func referenceDiscShiftPixel(src *image.NRGBA, g DiscShiftPreview, dx, dy int, px, py float64) [3]float64 {
+func referenceDiscShiftPixel(src *image.NRGBA, g DiscShiftPreview, dx, dy int, angle, px, py float64) [3]float64 {
 	mask := imageops.NewCircularMask(g.Radius, g.FeatherSize, g.CutoutRadius)
-	rad := g.Rotation * math.Pi / 180
+	rad := (g.Rotation + angle) * math.Pi / 180
 	cos, sin := math.Cos(rad), math.Sin(rad)
 	rx, ry := px-g.PivotX, py-g.PivotY
 	sx := cos*rx + sin*ry + g.SourcePivotX + float64(dx) - 0.5
@@ -106,8 +106,8 @@ func TestDiscShiftLiveGPUMatchesReference(t *testing.T) {
 		for y := 0; y < geo.Height; y++ {
 			for x := 0; x < geo.Width; x++ {
 				px, py := float64(x)+0.5, float64(y)+0.5
-				shift := layer.total()
-				want := referenceDiscShiftPixel(src, geo, shift.X, shift.Y, px, py)
+				pose := layer.total()
+				want := referenceDiscShiftPixel(src, geo, pose.shift.X, pose.shift.Y, pose.angle, px, py)
 				o := shot.PixOffset(int(info.StageX)+x, int(info.StageY)+y)
 				mx, my := px-geo.MaskCenterX, py-geo.MaskCenterY
 				a := mask.Alpha(mx*mx + my*my)
@@ -135,14 +135,20 @@ func TestDiscShiftLiveGPUMatchesReference(t *testing.T) {
 	// Fine-tuning drag: content moved a little under a vignette tuned for the
 	// start content stays close. (This pattern has a ~56px period, so large
 	// moves decorrelate the feather completely; release fixes that up.)
-	layer.dx, layer.dy = 3, -2
+	layer.gesture = discLivePose{shift: image.Pt(3, -2)}
 	if mean, fm := measure("drag"); mean > 2 || fm > 5 {
 		t.Fatalf("drag: live layer diverges (mean=%.2f feather=%.2f)", mean, fm)
 	}
-	// Release after a large move: the vignette is pinned to the exact
-	// committed look.
-	layer.dx, layer.dy = 0, 0
-	layer.base = image.Pt(13, -7)
+	// Fine rotation (~3px of travel at the rim) behaves the same; this also
+	// checks the GPU rotation direction and pivot match the reference.
+	layer.gesture = discLivePose{angle: 1.5}
+	if mean, fm := measure("rotate"); mean > 2 || fm > 5 {
+		t.Fatalf("rotate: live layer diverges (mean=%.2f feather=%.2f)", mean, fm)
+	}
+	// Release after a large move and turn: the vignette is pinned to the
+	// exact committed look.
+	layer.gesture = discLivePose{}
+	layer.base = discLivePose{shift: image.Pt(13, -7), angle: -24}
 	layer.overlay = layer.computeOverlay(layer.total(), true)
 	if mean, fm := measure("release"); mean > 1.5 || fm > 2.5 {
 		t.Fatalf("release: live layer diverges from committed look (mean=%.2f feather=%.2f)", mean, fm)

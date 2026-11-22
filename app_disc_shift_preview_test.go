@@ -13,11 +13,12 @@ import (
 
 // composeDiscShiftPreview reproduces, at full resolution, what the UI draws
 // during a Ctrl+drag: source content shifted by (dx,dy) and mapped through the
-// preview geometry, beneath the stationary vignette.
-func composeDiscShiftPreview(src *image.NRGBA, p *DiscShiftPreview, dx, dy int) *image.NRGBA {
+// preview geometry and turned by angle degrees, beneath the stationary
+// vignette.
+func composeDiscShiftPreview(src *image.NRGBA, p *DiscShiftPreview, dx, dy int, angle float64) *image.NRGBA {
 	out := image.NewNRGBA(image.Rect(0, 0, p.Width, p.Height))
 	mask := imageops.NewCircularMask(p.Radius, p.FeatherSize, p.CutoutRadius)
-	rad := p.Rotation * math.Pi / 180
+	rad := (p.Rotation + angle) * math.Pi / 180
 	cos, sin := math.Cos(rad), math.Sin(rad)
 	levels := func(v float64) float64 {
 		if p.LevelsBlack == 0 && p.LevelsWhite == 255 {
@@ -164,12 +165,12 @@ func TestDiscShiftPreviewMatchesCommittedShift(t *testing.T) {
 			}
 
 			// Before any shift the preview must already match the current render.
-			mean, maxD := diffStats(t, a.warpedImage, composeDiscShiftPreview(src, preview, 0, 0))
+			mean, maxD := diffStats(t, a.warpedImage, composeDiscShiftPreview(src, preview, 0, 0, 0))
 			if mean > tc.maxMean || maxD > tc.maxSingle {
 				t.Fatalf("unshifted preview differs from render: mean=%.3f max=%d", mean, maxD)
 			}
 
-			want := composeDiscShiftPreview(src, preview, tc.dx, tc.dy)
+			want := composeDiscShiftPreview(src, preview, tc.dx, tc.dy, 0)
 			if _, err := a.ShiftDisc(ShiftDiscRequest{DX: tc.dx, DY: tc.dy}); err != nil {
 				t.Fatal(err)
 			}
@@ -316,5 +317,95 @@ func TestShiftDiscNudgesCoalesce(t *testing.T) {
 	}
 	if a.discCenter != centre.Sub(image.Pt(0, 10)) {
 		t.Fatalf("undo of post-feather nudge run: centre=%v, want %v", a.discCenter, centre.Sub(image.Pt(0, 10)))
+	}
+}
+
+// A live Shift+drag rotates the content about the preview pivot under the
+// fixed vignette; that must match what RotateDisc commits, including with
+// edge crops and an existing rotation.
+func TestDiscShiftPreviewMatchesCommittedRotation(t *testing.T) {
+	a := newTestApp(320, 300)
+	fillDiscShiftTestPattern(a.currentImage, false)
+	a.bgColor = color.NRGBA{R: 200, G: 40, B: 90, A: 255}
+	a.featherSize = 12
+	a.discCenterCutout = true
+	a.discCutoutPercent = 15
+	if _, err := a.DrawDisc(DiscDrawRequest{CenterX: 160, CenterY: 150, Radius: 90}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.RotateDisc(DiscRotateRequest{Angle: 9}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []CropRequest{{Direction: "top", Amount: 5}, {Direction: "right", Amount: 8}} {
+		if _, err := a.Crop(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	preview, err := a.DiscShiftPreview()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, _ := a.ResolvePreviewImage(preview.Source)
+	want := composeDiscShiftPreview(src, preview, 0, 0, -23.5)
+	if _, err := a.RotateDisc(DiscRotateRequest{Angle: -23.5}); err != nil {
+		t.Fatal(err)
+	}
+	mean, maxD := diffStats(t, a.warpedImage, want)
+	t.Logf("committed vs preview: mean=%.3f max=%d", mean, maxD)
+	if mean > 0.6 || maxD > 4 {
+		t.Fatalf("rotation preview differs from committed rotation: mean=%.3f max=%d", mean, maxD)
+	}
+}
+
+// Shift+drag rotations are their own undo steps; Q/E rotations are nudges
+// and share one step with an unbroken run of arrow-key nudges.
+func TestRotateDiscUndoSteps(t *testing.T) {
+	a := newTestApp(320, 300)
+	fillDiscShiftTestPattern(a.currentImage, true)
+	if _, err := a.DrawDisc(DiscDrawRequest{CenterX: 160, CenterY: 150, Radius: 90}); err != nil {
+		t.Fatal(err)
+	}
+	base := len(a.undoStack)
+	for _, angle := range []float64{7.5, -2} {
+		if _, err := a.RotateDisc(DiscRotateRequest{Angle: angle}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(a.undoStack); got != base+2 {
+		t.Fatalf("two Shift+drag rotations made %d steps, want 2", got-base)
+	}
+	if _, err := a.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if a.rotationAngle != 7.5 {
+		t.Fatalf("undo of second rotation: angle=%v, want 7.5", a.rotationAngle)
+	}
+
+	// Q, E, arrow, Q: one unbroken nudge run, one step.
+	before, centre := len(a.undoStack), a.discCenter
+	for _, step := range []func() error{
+		func() error { _, err := a.RotateDisc(DiscRotateRequest{Angle: -15, Nudge: true}); return err },
+		func() error { _, err := a.RotateDisc(DiscRotateRequest{Angle: 15, Nudge: true}); return err },
+		func() error { _, err := a.ShiftDisc(ShiftDiscRequest{DX: 5, Nudge: true}); return err },
+		func() error { _, err := a.RotateDisc(DiscRotateRequest{Angle: -15, Nudge: true}); return err },
+	} {
+		if err := step(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(a.undoStack); got != before+1 {
+		t.Fatalf("mixed nudge run made %d steps, want 1", got-before)
+	}
+	if _, err := a.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if a.rotationAngle != 7.5 || a.discCenter != centre {
+		t.Fatalf("undo of nudge run: angle=%v centre=%v, want 7.5 %v", a.rotationAngle, a.discCenter, centre)
+	}
+	if _, err := a.RotateDisc(DiscRotateRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(a.undoStack); got != before {
+		t.Fatal("zero rotation added an undo step")
 	}
 }

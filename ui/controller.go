@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image"
 	_ "image/png"
-	"math"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -158,9 +157,9 @@ type EditorUI struct {
 	discShiftWarmKey  discShiftLiveKey
 	discShiftWarmGen  uint64
 	discShiftWarmWant discShiftWarmWant
-	ctrlDragShift     image.Point // pending Ctrl+drag shift in source px
+	liveGesture       discLivePose // pending Ctrl/Shift+drag change (before coverage limits)
 	ctrlDrag          *discCtrlDragState
-	shiftDrag         *discShiftDragState
+	shiftDrag         *discRotateDragState
 
 	// Line state
 	lines          []lineI
@@ -1373,17 +1372,14 @@ func (e *EditorUI) applyStraightEdgeRotate(angleDeg float64) {
 }
 
 func (e *EditorUI) commitDiscRotateDrag(angle float64) {
-	if e.app == nil || !e.discActive {
+	if e.app == nil || !e.discActive || angle == 0 {
 		e.discLiveActive = false
 		e.discLiveTransform = discLiveTransform{}
-		return
-	}
-	if math.Abs(angle) < 0.01 {
-		e.discLiveActive = false
-		e.discLiveTransform = discLiveTransform{}
+		e.clearDiscShiftLive()
 		return
 	}
 	gen := e.transitionGen
+	live := e.discShiftLive // tracks this commit (see releaseDiscLiveGesture)
 	e.runBackend(func() {
 		res, err := e.app.RotateDisc(DiscRotateRequest{Angle: angle})
 		e.postUI(func() {
@@ -1393,10 +1389,12 @@ func (e *EditorUI) commitDiscRotateDrag(angle float64) {
 			if err != nil {
 				e.discLiveActive = false
 				e.discLiveTransform = discLiveTransform{}
+				e.clearDiscShiftLive()
 				e.showError(err)
 				return
 			}
 			e.syncDiscResponse(res)
+			e.discLiveCommitted(live, discLivePose{angle: angle}, res)
 			e.unsavedChanges = true
 		})
 	})
@@ -1410,7 +1408,7 @@ func (e *EditorUI) commitDiscShiftDrag(dx, dy int) {
 		return
 	}
 	gen := e.transitionGen
-	live := e.discShiftLive // tracks this commit (see releaseDiscShiftGesture)
+	live := e.discShiftLive // tracks this commit (see releaseDiscLiveGesture)
 	e.runBackend(func() {
 		res, err := e.app.ShiftDisc(ShiftDiscRequest{DX: dx, DY: dy})
 		e.postUI(func() {
@@ -1425,7 +1423,7 @@ func (e *EditorUI) commitDiscShiftDrag(dx, dy int) {
 				return
 			}
 			e.syncDiscResponse(res)
-			e.discShiftCommitted(live, dx, dy, res)
+			e.discLiveCommitted(live, discLivePose{shift: image.Pt(dx, dy)}, res)
 			e.unsavedChanges = true
 		})
 	})
@@ -2391,6 +2389,7 @@ func (e *EditorUI) mainVisualState() viewportVisualState {
 		LineStartImg:              e.lineStartImg,
 		CtrlDragActive:            e.ctrlDrag != nil,
 		ShiftDragActive:           e.shiftDrag != nil,
+		DiscRotateGuide:           e.discRotateGuide(),
 	}
 }
 

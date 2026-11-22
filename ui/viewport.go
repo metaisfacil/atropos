@@ -55,6 +55,14 @@ type discLiveTransform struct {
 	Angle float32
 }
 
+// discRotateGuide is the Shift+drag rotation handle: a line from the pivot
+// to the pointer, labelled with the gesture's angle.
+type discRotateGuide struct {
+	Pivot   f32.Point
+	Pointer f32.Point
+	Angle   float64
+}
+
 type touchupCursorState struct {
 	X        float64
 	Y        float64
@@ -76,6 +84,7 @@ type viewportVisualState struct {
 	DiscLiveActive            bool
 	DiscLiveTransform         discLiveTransform
 	DiscShiftLive             *discShiftLiveLayer
+	DiscRotateGuide           *discRotateGuide
 	DiscCenter                image.Point
 	DiscRadius                int
 	DiscCenterCutout          bool
@@ -1207,6 +1216,18 @@ func drawCanvasGuides(gtx layout.Context, th *material.Theme, visual viewportVis
 		a := f32.Pt(float32(info.StageX)+visual.DragStart.X, float32(info.StageY)+visual.DragStart.Y)
 		b := f32.Pt(float32(info.StageX)+visual.DragCurrent.X, float32(info.StageY)+visual.DragCurrent.Y)
 		drawStrokeLine(ops, a, b, 2, colYellow)
+	}
+
+	// 3b. Disc Shift+drag rotation handle
+	if g := visual.DiscRotateGuide; g != nil {
+		shadow := color.NRGBA{A: 140}
+		light := color.NRGBA{R: 255, G: 255, B: 255, A: 230}
+		drawStrokeLine(ops, g.Pivot, g.Pointer, 3, shadow)
+		drawStrokeLine(ops, g.Pivot, g.Pointer, 1.5, light)
+		drawSolidCircle(ops, g.Pivot, 4, shadow)
+		drawSolidCircle(ops, g.Pivot, 2.5, light)
+		label := fmt.Sprintf("%+.1f°", g.Angle)
+		drawBrushSizeReadout(gtx, th, label, g.Pointer, 6, info)
 	}
 
 	// 4. Disc mode initial circle draw guide
