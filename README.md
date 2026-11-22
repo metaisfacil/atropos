@@ -32,6 +32,8 @@ A standard rectangular crop. Drag to select a region and click **Crop** to apply
 
 Add two or more overlapping scan segments in order, choose an orientation, and click **Stitch images** to align and blend them into a single continuous image. Once stitched, **Load output** sends the result directly into the main editing pipeline — ready for cropping and adjustment without saving an intermediate file.
 
+Choosing **Overlay repeated scans** as the orientation aligns several scans of the same item instead of stitching them. After **Align scans**, pick a layer under **Paint from** and brush its pixels onto the result.
+
 ---
 
 ## Common operations
@@ -50,7 +52,7 @@ Detects and removes near-solid white or black edge strips from the current outpu
 
 ### Descreen
 
-A pure-Go, real-FFT-based filter for reducing halftone screen patterns in scanned print media. Use the Descreen controls (thresh/radius/middle/highlights restoration), then apply.
+A pure-Go, real-FFT-based filter for reducing halftone screen patterns in scanned print media. Use the Descreen controls (Thresh, Radius, Middle, Highs, and an optional luminance-only Fast mode), then apply.
 
 ### Touch-up brush
 
@@ -58,7 +60,7 @@ A content-aware brush for removing dust, scratches, or other blemishes. Enable i
 
 ### Crop edges
 
-The physical WASD positions trim the top, left, bottom, and right edges of the working image. The amount defaults to 3 source pixels per keypress and can be changed under **Options → Fill & crop → Crop edges keys**. The Shortcuts panel displays the corresponding keys for the active layout (for example, ZQSD on AZERTY).
+The physical WASD positions trim the top, left, bottom, and right edges of the working image. The amount defaults to 3 source pixels per keypress and can be changed under **Options → Fill & crop → Keyboard Edge Crop**. The Shortcuts panel displays the corresponding keys for the active layout (for example, ZQSD on AZERTY).
 
 ### Rotate
 
@@ -87,15 +89,18 @@ Ctrl/⌘ + S or the **Save image** button. Output format is determined by the fi
 | Physical E position | Rotate CW 90° (or disc +15°) |
 | Ctrl/⌘ + Z | Undo |
 | Ctrl/⌘ + Y | Redo |
+| Ctrl/⌘ + C | Copy image/selection |
+| Ctrl/⌘ + V | Paste image |
 | Ctrl/⌘ + O | Load |
 | Ctrl/⌘ + S | Save |
 | Ctrl/⌘ + W | Quit |
+| Enter | Apply rectangle crop (normal mode) |
 | Y | Eyedropper — set background colour (disc mode) |
 | Arrow keys | Shift disc 5 px (20 px with Shift) |
 | + / − | Feather size ±1 (disc mode) |
 | Ctrl+Drag | Live-shift disc centre |
 | Shift+Drag | Live-rotate disc |
-| Ctrl+Scroll | Feather size (disc mode) |
+| Shift+Scroll | Feather size (disc mode) |
 | Scroll | Zoom in/out (cursor-anchored) |
 | Space+Drag | Pan canvas |
 
