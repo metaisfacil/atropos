@@ -68,9 +68,9 @@ Q and E rotate 90° counter-clockwise and clockwise. In disc mode these instead 
 
 Once a crop has been applied in any mode, the **Re-crop** button appears. Clicking it (after confirmation) promotes the current output image to the new source, resets all state, and returns to phase 1 — allowing you to chain crop modes (e.g. perspective-correct with Corner mode, then circular-crop the result with Disc mode) without saving an intermediate file.
 
-### Undo
+### Undo / Redo
 
-Ctrl/⌘ + Z. Holds up to 10 snapshots.
+Ctrl/⌘ + Z to undo, Ctrl/⌘ + Y to redo. The undo/redo history stores up to 100 steps and 1 GiB of memory before the oldest states are discarded.
 
 ### Save
 
@@ -86,6 +86,7 @@ Ctrl/⌘ + S or the **Save image** button. Output format is determined by the fi
 | Physical Q position | Rotate CCW 90° (or disc −15°) |
 | Physical E position | Rotate CW 90° (or disc +15°) |
 | Ctrl/⌘ + Z | Undo |
+| Ctrl/⌘ + Y | Redo |
 | Ctrl/⌘ + O | Load |
 | Ctrl/⌘ + S | Save |
 | Ctrl/⌘ + W | Quit |
