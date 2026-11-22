@@ -1012,11 +1012,9 @@ func (e *EditorUI) handleModeSwitch(nextMode string) {
 	hadPostCrop := e.canRecrop || e.cropSkipped || e.discActive || e.linesProcessed || e.cornerCount >= 4
 	gen := e.beginTransition()
 	e.resetImageState(false)
-	if !hadPostCrop {
-		e.mainViewport.Zoom = 1
-		e.mainViewport.ScrollX = 0
-		e.mainViewport.ScrollY = 0
-	}
+	// Before any crop every mode shows the same full scan, so zoom and scroll
+	// carry over. Leaving a post-crop state resets them below, once the full
+	// scan replaces the cropped result.
 
 	dots := e.dotRadius
 	autoDetect := e.settings.AutoDetectOnModeSwitch

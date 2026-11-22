@@ -1660,3 +1660,49 @@ func TestCompositorRotatedPreviewResolvesFromCache(t *testing.T) {
 }
 
 
+
+// Before any crop every mode shows the same full scan, so switching modes
+// keeps the user's zoom and scroll; leaving a post-crop state resets them
+// because the full scan replaces the cropped result.
+func TestModeSwitchKeepsZoomUntilPostCrop(t *testing.T) {
+	ui := newTestEditorUI(t)
+	scan := writeTestScanPNG(t, "modeswitch_zoom.png", 240, 180)
+	ui.loadFile(scan, false)
+
+	var ops op.Ops
+	render := func() {
+		ops.Reset()
+		ui.layoutRoot(layout.Context{
+			Ops:         &ops,
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(1280, 900)),
+			Now:         time.Now(),
+		})
+	}
+	render()
+	ui.mainViewport.SetZoomKeepCenter(3)
+	render()
+	zoom, sx, sy := ui.mainViewport.Zoom, ui.mainViewport.ScrollX, ui.mainViewport.ScrollY
+	if zoom != 3 || sx <= 0 || sy <= 0 {
+		t.Fatalf("setup: zoom=%v scroll=(%v,%v), want zoom 3 with non-zero scroll", zoom, sx, sy)
+	}
+
+	for _, mode := range []string{"disc", "line", "normal", "corner"} {
+		ui.handleModeSwitch(mode)
+		render()
+		if v := ui.mainViewport; v.Zoom != zoom || v.ScrollX != sx || v.ScrollY != sy {
+			t.Fatalf("pre-crop switch to %s reset the view: zoom=%v scroll=(%v,%v), want %v (%v,%v)", mode, v.Zoom, v.ScrollX, v.ScrollY, zoom, sx, sy)
+		}
+	}
+
+	ui.handleModeSwitch("normal")
+	ui.handleSkipCrop()
+	render()
+	ui.mainViewport.SetZoomKeepCenter(3)
+	render()
+	ui.handleModeSwitch("disc")
+	render()
+	if v := ui.mainViewport; v.Zoom != 1 || v.ScrollX != 0 || v.ScrollY != 0 {
+		t.Fatalf("post-crop switch kept the view: zoom=%v scroll=(%v,%v), want fit", v.Zoom, v.ScrollX, v.ScrollY)
+	}
+}
