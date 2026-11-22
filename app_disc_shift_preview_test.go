@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"image"
 	"image/color"
 	"math"
 	"testing"
 
 	"atropos/internal/imageops"
+	"atropos/internal/raster"
 )
 
 // composeDiscShiftPreview reproduces, at full resolution, what the UI draws
@@ -191,5 +193,128 @@ func TestDiscShiftPreviewUnavailable(t *testing.T) {
 	a.bakeDiscWorkingImage(a.warpedImage)
 	if _, err := a.DiscShiftPreview(); err == nil {
 		t.Fatal("expected error for a baked disc, whose redraw ignores the centre")
+	}
+}
+
+// Every disc shift is undoable: a Ctrl+drag shift is its own step, and undo
+// returns to the pre-shift crop rather than past the disc.
+func TestShiftDiscUndoSteps(t *testing.T) {
+	a := newTestApp(320, 300)
+	fillDiscShiftTestPattern(a.currentImage, true)
+	if _, err := a.DrawDisc(DiscDrawRequest{CenterX: 160, CenterY: 150, Radius: 90}); err != nil {
+		t.Fatal(err)
+	}
+	drawn := raster.CloneNRGBA(a.warpedImage)
+	steps := len(a.undoStack)
+
+	if _, err := a.ShiftDisc(ShiftDiscRequest{DX: 12, DY: -7}); err != nil {
+		t.Fatal(err)
+	}
+	first := raster.CloneNRGBA(a.warpedImage)
+	if _, err := a.ShiftDisc(ShiftDiscRequest{DX: 5, DY: 9}); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.undoStack) != steps+2 {
+		t.Fatalf("undo steps = %d, want %d", len(a.undoStack), steps+2)
+	}
+
+	res, err := a.Undo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.discCenter != image.Pt(172, 143) || res.DiscCenterX != 172 || res.DiscCenterY != 143 || !bytes.Equal(a.warpedImage.Pix, first.Pix) {
+		t.Fatalf("undo of second drag: centre=%v result=(%d,%d)", a.discCenter, res.DiscCenterX, res.DiscCenterY)
+	}
+	if _, err := a.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if a.discRadius != 90 || a.discCenter != image.Pt(160, 150) || !bytes.Equal(a.warpedImage.Pix, drawn.Pix) {
+		t.Fatalf("undo of first drag did not restore the drawn crop: radius=%d centre=%v", a.discRadius, a.discCenter)
+	}
+	if _, err := a.Redo(); err != nil {
+		t.Fatal(err)
+	}
+	if a.discCenter != image.Pt(172, 143) || !bytes.Equal(a.warpedImage.Pix, first.Pix) {
+		t.Fatalf("redo did not re-apply the first drag: centre=%v", a.discCenter)
+	}
+
+	// A shift fully clamped at the image edge changes nothing and records nothing.
+	b := newTestApp(200, 200)
+	if _, err := b.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 100}); err != nil {
+		t.Fatal(err)
+	}
+	n := len(b.undoStack)
+	for _, nudge := range []bool{false, true} {
+		if _, err := b.ShiftDisc(ShiftDiscRequest{DX: 30, DY: 0, Nudge: nudge}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(b.undoStack) != n {
+		t.Fatal("no-op clamped shift added an undo step")
+	}
+}
+
+// An unbroken run of keyboard nudges is one undo step; any other operation
+// in between (a Ctrl+drag, a re-render such as a feather change, an undo)
+// starts a new one.
+func TestShiftDiscNudgesCoalesce(t *testing.T) {
+	a := newTestApp(320, 300)
+	fillDiscShiftTestPattern(a.currentImage, true)
+	if _, err := a.DrawDisc(DiscDrawRequest{CenterX: 160, CenterY: 150, Radius: 90}); err != nil {
+		t.Fatal(err)
+	}
+	nudge := func(dx, dy int) {
+		t.Helper()
+		if _, err := a.ShiftDisc(ShiftDiscRequest{DX: dx, DY: dy, Nudge: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := len(a.undoStack)
+	start := a.discCenter
+
+	for i := 0; i < 30; i++ {
+		nudge(5, 0)
+	}
+	nudge(0, -5)
+	if got := len(a.undoStack); got != base+1 {
+		t.Fatalf("31 consecutive nudges made %d undo steps, want 1", got-base)
+	}
+	if _, err := a.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if a.discCenter != start {
+		t.Fatalf("undo of nudge run: centre=%v, want %v", a.discCenter, start)
+	}
+
+	// After an undo, nudging starts a fresh step.
+	nudge(5, 0)
+	nudge(5, 0)
+	if got := len(a.undoStack); got != base+1 {
+		t.Fatalf("nudges after undo made %d steps, want 1", got-base)
+	}
+	// A Ctrl+drag splits the run on both sides.
+	if _, err := a.ShiftDisc(ShiftDiscRequest{DX: -8, DY: 3}); err != nil {
+		t.Fatal(err)
+	}
+	nudge(0, 5)
+	if got := len(a.undoStack); got != base+3 {
+		t.Fatalf("nudge / drag / nudge made %d steps, want 3", got-base)
+	}
+	// So does any other re-render, e.g. a feather change.
+	if _, err := a.SetFeatherSize(FeatherSizeRequest{Size: 30}); err != nil {
+		t.Fatal(err)
+	}
+	beforeFeatherRun := len(a.undoStack)
+	nudge(0, 5)
+	nudge(0, 5)
+	if got := len(a.undoStack); got != beforeFeatherRun+1 {
+		t.Fatalf("nudges after a feather change made %d steps, want 1", got-beforeFeatherRun)
+	}
+	centre := a.discCenter
+	if _, err := a.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if a.discCenter != centre.Sub(image.Pt(0, 10)) {
+		t.Fatalf("undo of post-feather nudge run: centre=%v, want %v", a.discCenter, centre.Sub(image.Pt(0, 10)))
 	}
 }

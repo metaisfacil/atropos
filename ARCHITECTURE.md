@@ -458,7 +458,7 @@ redrawDisc()
 ### Operations that trigger redrawDisc
 
 - `RotateDisc(angle)` - adds angle to rotationAngle, calls redrawDisc
-- `ShiftDisc(dx, dy)` - adjusts discCenter, calls redrawDisc
+- `ShiftDisc(dx, dy)` - pushes an undo step (unless the centre is clamped unchanged), adjusts discCenter, calls redrawDisc. With `Nudge` set (arrow keys), an unbroken run of nudges shares one undo step: a nudge reuses the run's step while `warpedImage` and the undo depth are still what the previous nudge left (`nudgeRun`), so any other operation in between starts a new step. Each Ctrl+drag release is its own step.
 - `SetFeatherRadius(radius)` - updates discRadius and crop dimensions, calls redrawDisc
 - `SetFeatherSize(size)` - updates featherSize, calls redrawDisc if discRadius > 0
 - `GetPixelColor(x, y)` - sets bgColor from discBaseImage pixel, calls redrawDisc

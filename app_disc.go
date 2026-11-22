@@ -382,7 +382,7 @@ func (a *App) GetPixelColor(req PixelColorRequest) (*ProcessResult, error) {
 
 // ShiftDisc moves the disc center by (dx,dy) pixels and re-renders.
 func (a *App) ShiftDisc(req ShiftDiscRequest) (*ProcessResult, error) {
-	a.logf("ShiftDisc: dx=%d dy=%d", req.DX, req.DY)
+	a.logf("ShiftDisc: dx=%d dy=%d nudge=%v", req.DX, req.DY, req.Nudge)
 	if a.discRadius <= 0 {
 		return nil, fmt.Errorf("no disc defined")
 	}
@@ -395,8 +395,7 @@ func (a *App) ShiftDisc(req ShiftDiscRequest) (*ProcessResult, error) {
 	} else if a.currentImage != nil {
 		imgBounds = a.currentImage.Bounds()
 	}
-	a.discCenter.X += req.DX
-	a.discCenter.Y += req.DY
+	next := a.discCenter.Add(image.Pt(req.DX, req.DY))
 
 	minX := imgBounds.Min.X + a.discRadius
 	maxX := imgBounds.Max.X - a.discRadius
@@ -410,11 +409,34 @@ func (a *App) ShiftDisc(req ShiftDiscRequest) (*ProcessResult, error) {
 		minY = imgBounds.Min.Y
 		maxY = imgBounds.Max.Y
 	}
-	a.discCenter.X = clamp(a.discCenter.X, minX, maxX)
-	a.discCenter.Y = clamp(a.discCenter.Y, minY, maxY)
+	next.X = clamp(next.X, minX, maxX)
+	next.Y = clamp(next.Y, minY, maxY)
+	// History captures the disc centre, so undo returns to the pre-shift
+	// crop rather than past the disc entirely. A nudge continuing an unbroken
+	// run reuses the step the run opened: any other operation re-renders or
+	// steps history, which changes warpedImage or the stack depth.
+	run := a.nudgeRun
+	continuing := req.Nudge && run.result != nil && run.result == a.warpedImage && run.depth == len(a.undoStack)
+	moved := next != a.discCenter
+	if moved && !continuing {
+		a.saveUndo()
+	}
+	a.discCenter = next
 
 	a.logf("ShiftDisc: new center=(%d,%d)", a.discCenter.X, a.discCenter.Y)
-	return a.redrawDisc()
+	res, err := a.redrawDisc()
+	a.nudgeRun = discNudgeRun{}
+	if err == nil && req.Nudge && (moved || continuing) {
+		a.nudgeRun = discNudgeRun{result: a.warpedImage, depth: len(a.undoStack)}
+	}
+	return res, err
+}
+
+// discNudgeRun identifies the state left by the last keyboard nudge so the
+// next one can join its undo step.
+type discNudgeRun struct {
+	result *image.NRGBA
+	depth  int
 }
 
 // DiscShiftPreview reports the geometry of the current disc render so the UI
@@ -534,6 +556,7 @@ func (a *App) resetDiscFields() {
 	a.discNoMaskPreview = ""
 	a.postDiscBlack = 0
 	a.postDiscWhite = 255
+	a.nudgeRun = discNudgeRun{}
 }
 
 // ResetDisc clears the disc selection and restores the pre-disc image.

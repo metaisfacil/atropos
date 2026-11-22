@@ -221,10 +221,15 @@ type PixelColorRequest struct {
 	Y int `json:"y"`
 }
 
-// ShiftDiscRequest holds the pixel offset to shift the disc centre by.
+// ShiftDiscRequest holds the pixel offset to shift the disc centre by. Every
+// shift is undoable. Nudge marks a keyboard nudge: an unbroken run of nudges
+// (nothing else in between) shares one undo step, so holding an arrow key
+// cannot flood the shared history. Other shifts (e.g. a Ctrl+drag) are each
+// their own step.
 type ShiftDiscRequest struct {
-	DX int `json:"dx"`
-	DY int `json:"dy"`
+	DX    int  `json:"dx"`
+	DY    int  `json:"dy"`
+	Nudge bool `json:"nudge"`
 }
 
 // DiscShiftPreview describes the current disc render so the UI can preview a
