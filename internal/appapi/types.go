@@ -227,6 +227,41 @@ type ShiftDiscRequest struct {
 	DY int `json:"dy"`
 }
 
+// DiscShiftPreview describes the current disc render so the UI can preview a
+// Ctrl+drag shift by moving unmasked source content beneath a stationary
+// vignette. Fractional coordinates use continuous pixel-edge space (pixel i
+// spans [i, i+1)).
+//
+// A source point S maps into result-image space as
+// Rotate(S - shift - SourcePivot, Rotation) + Pivot, where Rotate matches
+// imageops.Rotate and shift is the pending (dx, dy) applied to the disc centre.
+type DiscShiftPreview struct {
+	// Source is a preview URL for the unmasked, unrotated, pre-levels disc
+	// source image (discBaseImage).
+	Source       string  `json:"source"`
+	CenterX      int     `json:"centerX"`
+	CenterY      int     `json:"centerY"`
+	SourcePivotX float64 `json:"sourcePivotX"`
+	SourcePivotY float64 `json:"sourcePivotY"`
+	PivotX       float64 `json:"pivotX"`
+	PivotY       float64 `json:"pivotY"`
+	MaskCenterX  float64 `json:"maskCenterX"`
+	MaskCenterY  float64 `json:"maskCenterY"`
+	Rotation     float64 `json:"rotation"`
+	Radius       int     `json:"radius"`
+	FeatherSize  int     `json:"featherSize"`
+	CutoutRadius int     `json:"cutoutRadius"`
+	// BgR/G/B is the vignette fill colour after post-disc levels.
+	BgR         uint8 `json:"bgR"`
+	BgG         uint8 `json:"bgG"`
+	BgB         uint8 `json:"bgB"`
+	LevelsBlack int   `json:"levelsBlack"`
+	LevelsWhite int   `json:"levelsWhite"`
+	// Width/Height are the dimensions of the committed result image.
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
 // FeatherSizeRequest holds the new feather width.
 type FeatherSizeRequest struct {
 	Size int `json:"size"`

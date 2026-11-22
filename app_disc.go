@@ -22,7 +22,14 @@ func (insets discCropInsets) crop(img *image.NRGBA) *image.NRGBA {
 	if img == nil || insets == (discCropInsets{}) {
 		return img
 	}
-	b := img.Bounds()
+	return raster.CropNRGBA(img, insets.rect(img.Bounds()))
+}
+
+// rect returns the sub-rectangle of b that crop keeps.
+func (insets discCropInsets) rect(b image.Rectangle) image.Rectangle {
+	if insets == (discCropInsets{}) {
+		return b
+	}
 	r := image.Rect(b.Min.X+insets.left, b.Min.Y+insets.top,
 		b.Max.X-insets.right, b.Max.Y-insets.bottom)
 	// A changed radius or center can make previous trims too large. Keep
@@ -31,7 +38,29 @@ func (insets discCropInsets) crop(img *image.NRGBA) *image.NRGBA {
 	r.Min.Y = clamp(r.Min.Y, b.Min.Y, b.Max.Y-1)
 	r.Max.X = clamp(r.Max.X, r.Min.X+1, b.Max.X)
 	r.Max.Y = clamp(r.Max.Y, r.Min.Y+1, b.Max.Y)
-	return raster.CropNRGBA(img, r)
+	return r
+}
+
+// discCropRect returns the region of base that redrawDisc crops for the
+// current disc centre and radius.
+func (a *App) discCropRect(base *image.NRGBA) image.Rectangle {
+	ob := base.Bounds()
+	return image.Rect(
+		clamp(a.discCenter.X-a.discRadius, ob.Min.X, ob.Max.X),
+		clamp(a.discCenter.Y-a.discRadius, ob.Min.Y, ob.Max.Y),
+		clamp(a.discCenter.X+a.discRadius, ob.Min.X, ob.Max.X),
+		clamp(a.discCenter.Y+a.discRadius, ob.Min.Y, ob.Max.Y),
+	)
+}
+
+// discCutoutRadius returns the centre-cutout radius in source pixels (0 when
+// the cutout is disabled).
+func (a *App) discCutoutRadius() int {
+	if !a.discCenterCutout || a.discCutoutPercent <= 0 {
+		return 0
+	}
+	// Cutout radius = half the cutout diameter, which is discCutoutPercent% of the disc diameter.
+	return int(math.Round(float64(a.discRadius) * float64(a.discCutoutPercent) / 100.0))
 }
 
 // refreshDiscWorkingCrop pre-crops discBaseImage around the current disc
@@ -155,12 +184,8 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 	// Determine the required crop rect in discBaseImage coords.
 	// discRadius is the fixed outer edge of the selection. Feathering is drawn
 	// inward from that edge, so changing featherSize must not resize the crop.
-	ob := base.Bounds()
-	reqX1 := clamp(a.discCenter.X-a.discRadius, ob.Min.X, ob.Max.X)
-	reqY1 := clamp(a.discCenter.Y-a.discRadius, ob.Min.Y, ob.Max.Y)
-	reqX2 := clamp(a.discCenter.X+a.discRadius, ob.Min.X, ob.Max.X)
-	reqY2 := clamp(a.discCenter.Y+a.discRadius, ob.Min.Y, ob.Max.Y)
-	reqRect := image.Rect(reqX1, reqY1, reqX2, reqY2)
+	reqRect := a.discCropRect(base)
+	reqX1, reqY1, reqX2, reqY2 := reqRect.Min.X, reqRect.Min.Y, reqRect.Max.X, reqRect.Max.Y
 
 	// Use the pre-cropped working region when it covers the required rect.
 	// This avoids reading from the huge discBaseImage on every shift, which
@@ -189,11 +214,7 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 		localCenter = image.Pt(a.discCenter.X-reqX1, a.discCenter.Y-reqY1)
 	}
 
-	centerCutoutRadius := 0
-	if a.discCenterCutout && a.discCutoutPercent > 0 {
-		// Cutout radius = half the cutout diameter, which is discCutoutPercent% of the disc diameter.
-		centerCutoutRadius = int(math.Round(float64(a.discRadius) * float64(a.discCutoutPercent) / 100.0))
-	}
+	centerCutoutRadius := a.discCutoutRadius()
 
 	// Prepare the unmasked disc preview (used during live drag operations).
 	unmasked := cropped
@@ -394,6 +415,71 @@ func (a *App) ShiftDisc(req ShiftDiscRequest) (*ProcessResult, error) {
 
 	a.logf("ShiftDisc: new center=(%d,%d)", a.discCenter.X, a.discCenter.Y)
 	return a.redrawDisc()
+}
+
+// DiscShiftPreview reports the geometry of the current disc render so the UI
+// can preview a Ctrl+drag shift: unmasked source content moves under a
+// vignette that stays fixed in result space. It mirrors redrawDisc exactly
+// (crop → mask → rotate about the crop centre → levels → inset crop) and does
+// not mutate any state. Baked discs (post-disc raster edits) ignore the disc
+// centre when redrawing, so no live shift preview is offered for them.
+func (a *App) DiscShiftPreview() (*DiscShiftPreview, error) {
+	if a.discRadius <= 0 || a.discBaseImage == nil || a.warpedImage == nil {
+		return nil, fmt.Errorf("no disc defined")
+	}
+	if a.discBakedBase != nil {
+		return nil, fmt.Errorf("disc shift preview unavailable after raster edits")
+	}
+	base := a.discBaseImage
+	source, err := a.imagePreviewURL(base)
+	if err != nil {
+		return nil, err
+	}
+
+	req := a.discCropRect(base)
+	// imageops.Rotate pivots on pixel index (w/2, h/2); in continuous
+	// pixel-edge coordinates that is half a pixel further on.
+	cropPivotX := float64(req.Dx())/2 + 0.5
+	cropPivotY := float64(req.Dy())/2 + 0.5
+	keep := a.discCropInsets.rect(image.Rect(0, 0, req.Dx(), req.Dy()))
+	pivotX := cropPivotX - float64(keep.Min.X)
+	pivotY := cropPivotY - float64(keep.Min.Y)
+
+	// ApplyCircularMask measures from the centre pixel index.
+	localX := float64(a.discCenter.X-req.Min.X) + 0.5 - cropPivotX
+	localY := float64(a.discCenter.Y-req.Min.Y) + 0.5 - cropPivotY
+	rad := a.rotationAngle * math.Pi / 180
+	cos, sin := math.Cos(rad), math.Sin(rad)
+
+	bg := a.bgColor
+	if a.postDiscBlack != 0 || a.postDiscWhite != 255 {
+		px := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+		px.SetNRGBA(0, 0, color.NRGBA{R: bg.R, G: bg.G, B: bg.B, A: 255})
+		bg = imageops.ApplyLevels(px, a.postDiscBlack, a.postDiscWhite).NRGBAAt(0, 0)
+	}
+	out := a.warpedImage.Bounds()
+	return &DiscShiftPreview{
+		Source:       source,
+		CenterX:      a.discCenter.X,
+		CenterY:      a.discCenter.Y,
+		SourcePivotX: float64(req.Min.X) + cropPivotX,
+		SourcePivotY: float64(req.Min.Y) + cropPivotY,
+		PivotX:       pivotX,
+		PivotY:       pivotY,
+		MaskCenterX:  pivotX + cos*localX - sin*localY,
+		MaskCenterY:  pivotY + sin*localX + cos*localY,
+		Rotation:     a.rotationAngle,
+		Radius:       a.discRadius,
+		FeatherSize:  a.featherSize,
+		CutoutRadius: a.discCutoutRadius(),
+		BgR:          bg.R,
+		BgG:          bg.G,
+		BgB:          bg.B,
+		LevelsBlack:  a.postDiscBlack,
+		LevelsWhite:  a.postDiscWhite,
+		Width:        out.Dx(),
+		Height:       out.Dy(),
+	}, nil
 }
 
 // SetFeatherRadius updates the fixed outer radius and re-renders the disc.

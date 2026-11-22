@@ -158,6 +158,9 @@ func (s *stubBackend) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 func (s *stubBackend) StraightEdgeRotate(StraightEdgeRotateRequest) (*ProcessResult, error) { return s.cleanResult(""), nil }
 func (s *stubBackend) RotateDisc(DiscRotateRequest) (*ProcessResult, error)                 { return s.cleanResult(""), nil }
 func (s *stubBackend) ShiftDisc(ShiftDiscRequest) (*ProcessResult, error)                   { return s.cleanResult(""), nil }
+func (s *stubBackend) DiscShiftPreview() (*DiscShiftPreview, error) {
+	return nil, fmt.Errorf("stub: no disc shift preview")
+}
 func (s *stubBackend) GetPixelColor(PixelColorRequest) (*ProcessResult, error)              { return s.cleanResult(""), nil }
 func (s *stubBackend) SetFeatherRadius(FeatherRadiusRequest) (*ProcessResult, error)        { return s.cleanResult(""), nil }
 func (s *stubBackend) SetFeatherSize(FeatherSizeRequest) (*ProcessResult, error)            { return s.cleanResult(""), nil }

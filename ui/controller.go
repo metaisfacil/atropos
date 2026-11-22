@@ -152,6 +152,13 @@ type EditorUI struct {
 	featherSize       int
 	discLiveActive    bool
 	discLiveTransform discLiveTransform
+	discShiftLive     *discShiftLiveLayer // live Ctrl+drag layer (see disc_shift_live.go)
+	discShiftLiveGen  uint64
+	discShiftWarm     *discShiftLiveLayer // prebuilt layer for discShiftWarmKey
+	discShiftWarmKey  discShiftLiveKey
+	discShiftWarmGen  uint64
+	discShiftWarmWant discShiftWarmWant
+	ctrlDragShift     image.Point // pending Ctrl+drag shift in source px
 	ctrlDrag          *discCtrlDragState
 	shiftDrag         *discShiftDragState
 
@@ -697,6 +704,7 @@ func (e *EditorUI) beginTransition() uint64 {
 	e.transitionGen++
 	e.detectGen++
 	e.cancelActiveCanvasDrag()
+	e.clearDiscShiftLive()
 	e.loading = false
 	e.loadingFull = false
 	e.loadingMessage = ""
@@ -737,6 +745,7 @@ func (e *EditorUI) resetImageState(clearCornerCache bool) {
 	e.featherSize = 20
 	e.discLiveActive = false
 	e.discLiveTransform = discLiveTransform{}
+	e.clearDiscShiftLive()
 
 	e.lines = nil
 	e.linesProcessed = false
@@ -1394,17 +1403,14 @@ func (e *EditorUI) commitDiscRotateDrag(angle float64) {
 }
 
 func (e *EditorUI) commitDiscShiftDrag(dx, dy int) {
-	if e.app == nil || !e.discActive {
+	if e.app == nil || !e.discActive || (dx == 0 && dy == 0) {
 		e.discLiveActive = false
 		e.discLiveTransform = discLiveTransform{}
-		return
-	}
-	if dx == 0 && dy == 0 {
-		e.discLiveActive = false
-		e.discLiveTransform = discLiveTransform{}
+		e.clearDiscShiftLive()
 		return
 	}
 	gen := e.transitionGen
+	live := e.discShiftLive // tracks this commit (see releaseDiscShiftGesture)
 	e.runBackend(func() {
 		res, err := e.app.ShiftDisc(ShiftDiscRequest{DX: dx, DY: dy})
 		e.postUI(func() {
@@ -1414,10 +1420,12 @@ func (e *EditorUI) commitDiscShiftDrag(dx, dy int) {
 			if err != nil {
 				e.discLiveActive = false
 				e.discLiveTransform = discLiveTransform{}
+				e.clearDiscShiftLive()
 				e.showError(err)
 				return
 			}
 			e.syncDiscResponse(res)
+			e.discShiftCommitted(live, dx, dy, res)
 			e.unsavedChanges = true
 		})
 	})
@@ -1785,6 +1793,7 @@ func (e *EditorUI) handleResetAction() {
 		e.featherSize = 20
 		e.discLiveActive = false
 		e.discLiveTransform = discLiveTransform{}
+		e.clearDiscShiftLive()
 		e.runBackend(func() {
 			res, err := e.app.ResetDisc()
 			e.postUI(func() { applyResetResponse(res, err, false) })
@@ -2366,6 +2375,7 @@ func (e *EditorUI) mainVisualState() viewportVisualState {
 		DiscActive:                e.discActive,
 		DiscLiveActive:            e.discLiveActive,
 		DiscLiveTransform:         e.discLiveTransform,
+		DiscShiftLive:             e.visibleDiscShiftLive(),
 		DiscCenter:                e.discCenter,
 		DiscRadius:                e.discRadius,
 		DiscCenterCutout:          e.settings.DiscCenterCutout,
@@ -2483,6 +2493,7 @@ func (e *EditorUI) layoutRoot(gtx layout.Context) layout.Dimensions {
 									e.optimisticCrop = nil
 									e.invalidate()
 								}
+								e.onDiscShiftPresented(source)
 							},
 							Invalidate: e.invalidate,
 							DebugLog: func(format string, args ...any) {
@@ -2490,6 +2501,9 @@ func (e *EditorUI) layoutRoot(gtx layout.Context) layout.Dimensions {
 									e.app.Logf(format, args...)
 								}
 							},
+							// The live Ctrl+drag layer covers the raster; keep its
+							// replacement build off the UI thread.
+							PreferAsyncRaster: e.visibleDiscShiftLive() != nil,
 						},
 					)
 				}),
@@ -2497,6 +2511,8 @@ func (e *EditorUI) layoutRoot(gtx layout.Context) layout.Dimensions {
 			)
 		}),
 	)
+
+	e.maybeWarmDiscShift()
 
 	// Sidebar resize sash positioned right over the sidebar/canvas border
 	e.layoutSidebarSash(gtx, sidebarW)
