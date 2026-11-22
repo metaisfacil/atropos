@@ -629,9 +629,14 @@ func (e *EditorUI) layoutShortcutsAccordion(gtx layout.Context, maxH int) layout
 		func(gtx layout.Context) layout.Dimensions {
 			postReady := e.canSave()
 			loaded := e.imageLoaded
+			// Mirrors the isDisc condition in applyKeyboardRotate.
+			rotateLabel := "Rotate 90° CCW / CW"
+			if e.mode == "disc" && e.discActive && e.discRadius > 0 {
+				rotateLabel = "Rotate disc ±15°"
+			}
 			items := []layout.FlexChild{
 				rowItem([]string{keyW, keyA, keyS, keyD}, "Crop edges", postReady),
-				rowItem([]string{keyQ, keyE}, "Rotate ±15° / Disc rotate", postReady),
+				rowItem([]string{keyQ, keyE}, rotateLabel, postReady),
 				rowItem([]string{"Ctrl+Z", "Ctrl+Y"}, "Undo / Redo", loaded),
 				rowItem([]string{"Ctrl+C"}, "Copy image or selection", loaded),
 				rowItem([]string{"Ctrl+V"}, "Paste image", true),
