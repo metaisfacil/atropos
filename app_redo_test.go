@@ -94,14 +94,23 @@ func TestRedoDiscEntryRestoresSourceForSubsequentRenders(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := snapshotUndoImage(a.warpedImage, nil)
-	if _, err := a.Undo(); err != nil {
-		t.Fatal(err)
+	// Rotation is its own undo step; the second undo crosses the initial crop.
+	for i := 0; i < 2; i++ {
+		if _, err := a.Undo(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if a.discBaseImage != nil {
 		t.Fatal("undo kept disc source live")
 	}
 	res, err := a.Redo()
 	if err != nil {
+		t.Fatal(err)
+	}
+	if a.discBaseImage == nil || a.discRadius != 50 || a.rotationAngle != 0 || res.UnmaskedPreview == "" {
+		t.Fatal("redo of the disc draw lost disc render state")
+	}
+	if res, err = a.Redo(); err != nil {
 		t.Fatal(err)
 	}
 	if a.discBaseImage == nil || a.discRadius != 50 || a.rotationAngle != 15 || res.UnmaskedPreview == "" {

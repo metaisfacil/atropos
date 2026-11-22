@@ -254,7 +254,7 @@ func (e *EditorUI) handleEditorKeyDown(ke key.Event) {
 			dx := int(math.Round(cos*float64(visDx) + sin*float64(visDy)))
 			dy := int(math.Round(-sin*float64(visDx) + cos*float64(visDy)))
 			e.runBackend(func() {
-				res, err := e.app.ShiftDisc(ShiftDiscRequest{DX: dx, DY: dy})
+				res, err := e.app.ShiftDisc(ShiftDiscRequest{DX: dx, DY: dy, Nudge: true})
 				e.postUI(func() {
 					if err != nil {
 						e.showError(err)
@@ -430,7 +430,7 @@ func (e *EditorUI) applyKeyboardRotate(ccw bool) {
 			if ccw {
 				ang = -15.0
 			}
-			res, err = e.app.RotateDisc(DiscRotateRequest{Angle: ang})
+			res, err = e.app.RotateDisc(DiscRotateRequest{Angle: ang, Nudge: true})
 		} else {
 			flip := 1
 			if ccw {

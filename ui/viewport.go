@@ -55,6 +55,14 @@ type discLiveTransform struct {
 	Angle float32
 }
 
+// discRotateGuide is the Shift+drag rotation handle: a line from the pivot
+// to the pointer, labelled with the gesture's angle.
+type discRotateGuide struct {
+	Pivot   f32.Point
+	Pointer f32.Point
+	Angle   float64
+}
+
 type touchupCursorState struct {
 	X        float64
 	Y        float64
@@ -75,6 +83,8 @@ type viewportVisualState struct {
 	DiscActive                bool
 	DiscLiveActive            bool
 	DiscLiveTransform         discLiveTransform
+	DiscShiftLive             *discShiftLiveLayer
+	DiscRotateGuide           *discRotateGuide
 	DiscCenter                image.Point
 	DiscRadius                int
 	DiscCenterCutout          bool
@@ -139,6 +149,9 @@ type viewportCallbacks struct {
 	FixedDisplayWidth float64
 	HideScrollbars    bool
 	DisableWheelZoom  bool
+	// PreferAsyncRaster builds every raster on the background worker, even
+	// small ones, e.g. while a live overlay hides the raster anyway.
+	PreferAsyncRaster bool
 	Cursor            pointer.Cursor
 	GetCursor         func(gtx layout.Context) pointer.Cursor
 	GetVisual         func() viewportVisualState
@@ -465,7 +478,10 @@ func (v *viewportState) Layout(
 	vpStack := clip.Rect(vpRect).Push(gtx.Ops)
 	var liveStack op.TransformStack
 	hasLive := false
-	if visual.DiscLiveActive {
+	if visual.DiscShiftLive != nil {
+		// Live Ctrl+drag: content moves under a stationary vignette.
+		drawDiscShiftLive(gtx.Ops, visual.DiscShiftLive, info, vpRect)
+	} else if visual.DiscLiveActive {
 		cx := float32(info.StageX + info.StageWidth/2)
 		cy := float32(info.StageY + info.StageHeight/2)
 		liveAff := f32.AffineId().
@@ -475,7 +491,7 @@ func (v *viewportState) Layout(
 		hasLive = true
 	}
 
-	if v.activeEntry != nil {
+	if v.activeEntry != nil && visual.DiscShiftLive == nil {
 		// Draw neighboring cached rasters for same source/dims underneath active entry.
 		for i := range v.cache {
 			c := &v.cache[i]
@@ -649,11 +665,15 @@ func quantizeSourceRect(visible image.Rectangle, dims image.Point) image.Rectang
 }
 
 func boundedDestSize(srcRect image.Rectangle, stageScale float64) (int, int) {
+	return boundedDestSizeCap(srcRect, stageScale, viewportMaxDim, viewportMaxPixels)
+}
+
+func boundedDestSizeCap(srcRect image.Rectangle, stageScale float64, maxDim, maxPixels int) (int, int) {
 	w := max(1, min(srcRect.Dx(), int(math.Ceil(float64(srcRect.Dx())*stageScale))))
 	h := max(1, min(srcRect.Dy(), int(math.Ceil(float64(srcRect.Dy())*stageScale))))
-	factor := math.Min(1, math.Min(float64(viewportMaxDim)/float64(w), float64(viewportMaxDim)/float64(h)))
-	if float64(w)*float64(h)*factor*factor > float64(viewportMaxPixels) {
-		factor = math.Min(factor, math.Sqrt(float64(viewportMaxPixels)/(float64(w)*float64(h))))
+	factor := math.Min(1, math.Min(float64(maxDim)/float64(w), float64(maxDim)/float64(h)))
+	if float64(w)*float64(h)*factor*factor > float64(maxPixels) {
+		factor = math.Min(factor, math.Sqrt(float64(maxPixels)/(float64(w)*float64(h))))
 	}
 	if factor < 1 {
 		w = max(1, int(math.Floor(float64(w)*factor)))
@@ -774,7 +794,7 @@ func (v *viewportState) ensureRaster(
 	}
 
 	// Build small/medium rasters synchronously for zero flicker.
-	if srcRect.Dx()*srcRect.Dy() <= 1_500_000 {
+	if srcRect.Dx()*srcRect.Dy() <= 1_500_000 && !cb.PreferAsyncRaster {
 		entry := buildViewportRaster(rasterBuildSpec{
 			key:      key,
 			source:   source,
@@ -891,7 +911,7 @@ func buildViewportRaster(spec rasterBuildSpec) viewportRasterEntry {
 	} else {
 		bmp = downsampleViewportRegion(spec.srcImage, srcRect, spec.dstW, spec.dstH)
 	}
-	opImg := paint.NewImageOp(bmp)
+	opImg := paint.NewImageOp(gpuRGBA(bmp))
 	opImg.Filter = paint.FilterLinear
 	return viewportRasterEntry{
 		key:    spec.key,
@@ -1196,6 +1216,18 @@ func drawCanvasGuides(gtx layout.Context, th *material.Theme, visual viewportVis
 		a := f32.Pt(float32(info.StageX)+visual.DragStart.X, float32(info.StageY)+visual.DragStart.Y)
 		b := f32.Pt(float32(info.StageX)+visual.DragCurrent.X, float32(info.StageY)+visual.DragCurrent.Y)
 		drawStrokeLine(ops, a, b, 2, colYellow)
+	}
+
+	// 3b. Disc Shift+drag rotation handle
+	if g := visual.DiscRotateGuide; g != nil {
+		shadow := color.NRGBA{A: 140}
+		light := color.NRGBA{R: 255, G: 255, B: 255, A: 230}
+		drawStrokeLine(ops, g.Pivot, g.Pointer, 3, shadow)
+		drawStrokeLine(ops, g.Pivot, g.Pointer, 1.5, light)
+		drawSolidCircle(ops, g.Pivot, 4, shadow)
+		drawSolidCircle(ops, g.Pivot, 2.5, light)
+		label := fmt.Sprintf("%+.1f°", g.Angle)
+		drawBrushSizeReadout(gtx, th, label, g.Pointer, 6, info)
 	}
 
 	// 4. Disc mode initial circle draw guide

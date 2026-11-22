@@ -37,6 +37,7 @@ type DiscDrawRequest = appapi.DiscDrawRequest
 type DiscRotateRequest = appapi.DiscRotateRequest
 type PixelColorRequest = appapi.PixelColorRequest
 type ShiftDiscRequest = appapi.ShiftDiscRequest
+type DiscShiftPreview = appapi.DiscShiftPreview
 type FeatherSizeRequest = appapi.FeatherSizeRequest
 type FeatherRadiusRequest = appapi.FeatherRadiusRequest
 type StraightEdgeRotateRequest = appapi.StraightEdgeRotateRequest
@@ -145,6 +146,7 @@ type Backend interface {
 	StraightEdgeRotate(req StraightEdgeRotateRequest) (*ProcessResult, error)
 	RotateDisc(req DiscRotateRequest) (*ProcessResult, error)
 	ShiftDisc(req ShiftDiscRequest) (*ProcessResult, error)
+	DiscShiftPreview() (*DiscShiftPreview, error)
 	GetPixelColor(req PixelColorRequest) (*ProcessResult, error)
 	SetFeatherRadius(req FeatherRadiusRequest) (*ProcessResult, error)
 	SetFeatherSize(req FeatherSizeRequest) (*ProcessResult, error)

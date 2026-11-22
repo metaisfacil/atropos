@@ -36,6 +36,7 @@ type DiscDrawRequest = appapi.DiscDrawRequest
 type DiscRotateRequest = appapi.DiscRotateRequest
 type PixelColorRequest = appapi.PixelColorRequest
 type ShiftDiscRequest = appapi.ShiftDiscRequest
+type DiscShiftPreview = appapi.DiscShiftPreview
 type FeatherSizeRequest = appapi.FeatherSizeRequest
 type FeatherRadiusRequest = appapi.FeatherRadiusRequest
 type StraightEdgeRotateRequest = appapi.StraightEdgeRotateRequest

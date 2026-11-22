@@ -47,10 +47,9 @@ type discCtrlDragState struct {
 	stageW       float64
 	stageH       float64
 	natDims      image.Point
-}
-
-type discShiftDragState struct {
-	startX float32
+	// maxShift bounds the gesture (source px) so the live content layer
+	// built at press time always covers the disc; 0 means unbounded.
+	maxShift float64
 }
 
 type discShiftResult struct {
@@ -86,6 +85,7 @@ func computeDiscShift(
 	ctrlStartCenter image.Point,
 	stageW, stageH float64,
 	naturalDims image.Point,
+	maxShift float64,
 ) (discShiftResult, bool) {
 	if sourceDims.X <= 0 || sourceDims.Y <= 0 || discRadius <= 0 || stageW <= 0 || stageH <= 0 {
 		return discShiftResult{}, false
@@ -105,6 +105,10 @@ func computeDiscShift(
 
 	desiredImgDx := -(rotatedX*cos + rotatedY*sin)
 	desiredImgDy := -(-rotatedX*sin + rotatedY*cos)
+	if mag := math.Hypot(desiredImgDx, desiredImgDy); maxShift > 0 && mag > maxShift {
+		desiredImgDx *= maxShift / mag
+		desiredImgDy *= maxShift / mag
+	}
 
 	startCenter := ctrlStartCenter
 	if startCenter == (image.Point{}) {
@@ -519,12 +523,15 @@ func (e *EditorUI) handleCanvasPointer(gtx layout.Context, info viewportLayoutIn
 		if e.mode == "disc" && e.discActive && pe.Modifiers.Contain(key.ModShift) {
 			gtx.Execute(pointer.GrabCmd{Tag: &e.mainViewport.canvasTag, ID: pe.PointerID})
 			e.ctrlDrag = nil
-			e.shiftDrag = &discShiftDragState{startX: pe.Position.X}
+			e.shiftDrag = &discRotateDragState{rebase: true}
 			e.dragging = true
 			e.dragStart = &dp
 			e.dragCurrent = &dp
 			e.discLiveActive = true
 			e.discLiveTransform = discLiveTransform{}
+			e.liveGesture = discLivePose{}
+			e.startDiscLive(info)
+			e.updateDiscRotateDrag(gtx, info, pe.Position)
 			return
 		}
 
@@ -538,12 +545,15 @@ func (e *EditorUI) handleCanvasPointer(gtx layout.Context, info viewportLayoutIn
 				stageW:       info.StageWidth,
 				stageH:       info.StageHeight,
 				natDims:      info.StageDims,
+				maxShift:     discShiftMaxShift(info),
 			}
 			e.dragging = true
 			e.dragStart = &dp
 			e.dragCurrent = &dp
 			e.discLiveActive = true
 			e.discLiveTransform = discLiveTransform{}
+			e.liveGesture = discLivePose{}
+			e.startDiscLive(info)
 			return
 		}
 
@@ -727,20 +737,16 @@ func (e *EditorUI) handleCanvasPointer(gtx layout.Context, info viewportLayoutIn
 			return
 		}
 		if e.shiftDrag != nil {
-			dxDp := float64(pe.Position.X-e.shiftDrag.startX) / float64(gtx.Metric.PxPerDp)
-			e.discLiveTransform.Angle = float32(dxDp * 0.3)
+			e.updateDiscRotateDrag(gtx, info, pe.Position)
 			return
 		}
 		if e.ctrlDrag != nil {
-			screenDx := float64(pe.Position.X - e.ctrlDrag.startClientX)
-			screenDy := float64(pe.Position.Y - e.ctrlDrag.startClientY)
-			srcDims := e.discSourceDims
-			if srcDims.X <= 0 || srcDims.Y <= 0 {
-				srcDims = e.realImageDims
-			}
-			if shift, ok := computeDiscShift(screenDx, screenDy, srcDims, e.discRadius, e.discRotation, e.discCenter, e.ctrlDrag.startCenter, e.ctrlDrag.stageW, e.ctrlDrag.stageH, e.ctrlDrag.natDims); ok {
+			if shift, ok := e.discCtrlDragShift(pe.Position); ok {
 				e.discLiveTransform.Dx = shift.liveDx
 				e.discLiveTransform.Dy = shift.liveDy
+				if l := e.discShiftLive; l != nil && l.dragging {
+					l.gesture = discLivePose{shift: image.Pt(shift.dx, shift.dy)}
+				}
 			}
 			return
 		}
@@ -903,28 +909,38 @@ func (e *EditorUI) handleCanvasPointer(gtx layout.Context, info viewportLayoutIn
 		}
 
 		if e.mode == "disc" && e.shiftDrag != nil && e.discActive {
-			dxDp := float64(pe.Position.X-e.shiftDrag.startX) / float64(gtx.Metric.PxPerDp)
-			totalAngle := dxDp * 0.3
+			e.updateDiscRotateDrag(gtx, info, pe.Position)
+			angle := e.shiftDrag.applied
+			if math.Abs(angle) < 0.01 {
+				angle = 0
+			}
 			e.shiftDrag = nil
 			e.dragStart = nil
 			e.dragCurrent = nil
-			e.commitDiscRotateDrag(totalAngle)
+			// As with shifts, the live layer keeps showing until the
+			// committed render is presented.
+			e.releaseDiscLiveGesture(discLivePose{angle: angle})
+			if angle != 0 {
+				e.commitDiscRotateDrag(angle)
+			} else {
+				e.discLiveActive = false
+				e.discLiveTransform = discLiveTransform{}
+			}
 			return
 		}
 
 		if e.mode == "disc" && e.ctrlDrag != nil && e.discActive {
-			ctrl := e.ctrlDrag
-			screenDx := float64(pe.Position.X - ctrl.startClientX)
-			screenDy := float64(pe.Position.Y - ctrl.startClientY)
-			srcDims := e.discSourceDims
-			if srcDims.X <= 0 || srcDims.Y <= 0 {
-				srcDims = e.realImageDims
-			}
-			shift, ok := computeDiscShift(screenDx, screenDy, srcDims, e.discRadius, e.discRotation, e.discCenter, ctrl.startCenter, ctrl.stageW, ctrl.stageH, ctrl.natDims)
+			shift, ok := e.discCtrlDragShift(pe.Position)
 			e.ctrlDrag = nil
 			e.dragStart = nil
 			e.dragCurrent = nil
-			if ok {
+			if !ok {
+				shift = discShiftResult{}
+			}
+			// The live layer (if any) keeps showing, now including this
+			// shift, until the committed render is presented.
+			e.releaseDiscLiveGesture(discLivePose{shift: image.Pt(shift.dx, shift.dy)})
+			if shift.dx != 0 || shift.dy != 0 {
 				e.commitDiscShiftDrag(shift.dx, shift.dy)
 			} else {
 				e.discLiveActive = false
@@ -1018,6 +1034,30 @@ func (e *EditorUI) cancelActiveCanvasDrag() {
 	e.shiftDrag = nil
 	e.discLiveActive = false
 	e.discLiveTransform = discLiveTransform{}
+	e.cancelDiscLiveGesture()
+}
+
+// discCtrlDragShift converts the pointer position of the active Ctrl+drag
+// into a disc-centre shift, bounded by the live layer's coverage.
+func (e *EditorUI) discCtrlDragShift(pos f32.Point) (discShiftResult, bool) {
+	ctrl := e.ctrlDrag
+	if ctrl == nil {
+		return discShiftResult{}, false
+	}
+	srcDims := e.discSourceDims
+	if srcDims.X <= 0 || srcDims.Y <= 0 {
+		srcDims = e.realImageDims
+	}
+	shift, ok := computeDiscShift(float64(pos.X-ctrl.startClientX), float64(pos.Y-ctrl.startClientY), srcDims,
+		e.discRadius, e.liveDiscRotation(), e.discCenter, ctrl.startCenter, ctrl.stageW, ctrl.stageH, ctrl.natDims, ctrl.maxShift)
+	if ok {
+		e.liveGesture = discLivePose{shift: image.Pt(shift.dx, shift.dy)}
+		if l := e.discShiftLive; l != nil && l.dragging {
+			g := l.limitGesture(e.liveGesture)
+			shift.dx, shift.dy = g.shift.X, g.shift.Y
+		}
+	}
+	return shift, ok
 }
 
 func absInt(v int) int {

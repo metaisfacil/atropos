@@ -595,6 +595,60 @@ func Rotate(src *image.NRGBA, angleDeg float64, bg color.NRGBA) *image.NRGBA {
 
 // ---- Circular mask with feathering ----
 
+// CircularMask holds the precomputed radii of the feathered disc mask used by
+// ApplyCircularMask. It is exported so live previews can reproduce the exact
+// same falloff without re-rendering the full-resolution image.
+type CircularMask struct {
+	outerR2, innerR, innerR2, outerFeather   float64
+	cutoutR, cutoutR2, cutoutFeatherR2, feat float64
+}
+
+// NewCircularMask precomputes the mask radii for the given disc parameters.
+func NewCircularMask(radius, featherSize, centerCutoutRadius int) CircularMask {
+	outerFeatherSize := featherSize
+	if outerFeatherSize > radius {
+		outerFeatherSize = radius
+	}
+	outerR := float64(radius)
+	innerR := float64(radius - outerFeatherSize)
+	cutoutR := float64(centerCutoutRadius)
+	cutoutFeatherR := cutoutR + float64(featherSize)
+	return CircularMask{
+		outerR2:         outerR * outerR,
+		innerR:          innerR,
+		innerR2:         innerR * innerR,
+		outerFeather:    float64(outerFeatherSize),
+		cutoutR:         cutoutR,
+		cutoutR2:        cutoutR * cutoutR,
+		cutoutFeatherR2: cutoutFeatherR * cutoutFeatherR,
+		feat:            float64(featherSize),
+	}
+}
+
+// Alpha returns the content weight (1 = image, 0 = background) at squared
+// distance d2 from the disc centre.
+func (m CircularMask) Alpha(d2 float64) float64 {
+	switch {
+	case d2 >= m.outerR2:
+		return 0
+	case d2 > m.innerR2:
+		// Outer feather: 1 → 0
+		t := (math.Sqrt(d2) - m.innerR) / m.outerFeather
+		return 0.5 * (1 + math.Cos(t*math.Pi))
+	case m.cutoutR <= 0:
+		return 1
+	case d2 <= m.cutoutR2:
+		// Inside cutout hard core — bg.
+		return 0
+	case d2 < m.cutoutFeatherR2:
+		// Cutout feather: 0 → 1 as d goes from cutoutR to cutoutFeatherR.
+		t := (math.Sqrt(d2) - m.cutoutR) / m.feat
+		return 0.5 * (1 - math.Cos(t*math.Pi))
+	default:
+		return 1
+	}
+}
+
 // ApplyCircularMask masks the image to a disc with a smooth feathered edge.
 // radius is the fixed outer edge of the disc and featherSize is the width of
 // the transition drawn inward from that edge. Changing featherSize therefore
@@ -607,19 +661,7 @@ func ApplyCircularMask(src *image.NRGBA, center image.Point, radius, featherSize
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
 	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
-
-	outerFeatherSize := featherSize
-	if outerFeatherSize > radius {
-		outerFeatherSize = radius
-	}
-	outerR := float64(radius)
-	innerR := float64(radius - outerFeatherSize)
-	cutoutR := float64(centerCutoutRadius)
-	cutoutFeatherR := cutoutR + float64(featherSize)
-	outerR2 := outerR * outerR
-	innerR2 := innerR * innerR
-	cutoutR2 := cutoutR * cutoutR
-	cutoutFeatherR2 := cutoutFeatherR * cutoutFeatherR
+	mask := NewCircularMask(radius, featherSize, centerCutoutRadius)
 
 	nCPU := goruntime.NumCPU()
 	parallel.For(h, nCPU, func(start, end int) {
@@ -628,30 +670,7 @@ func ApplyCircularMask(src *image.NRGBA, center image.Point, radius, featherSize
 			for x := 0; x < w; x++ {
 				ddx := float64(x) - float64(center.X)
 				ddy := float64(y) - float64(center.Y)
-				d2 := ddx*ddx + ddy*ddy
-
-				var alpha float64
-				if d2 >= outerR2 {
-					alpha = 0.0
-				} else if d2 > innerR2 {
-					// Outer feather: 1 → 0
-					d := math.Sqrt(d2)
-					t := (d - innerR) / float64(outerFeatherSize)
-					alpha = 0.5 * (1 + math.Cos(t*math.Pi))
-				} else if cutoutR <= 0 {
-					alpha = 1.0
-				} else if d2 <= cutoutR2 {
-					// Inside cutout hard core — bg.
-					alpha = 0.0
-				} else if d2 < cutoutFeatherR2 {
-					// Cutout feather: 0 → 1 as d goes from cutoutR to cutoutFeatherR.
-					d := math.Sqrt(d2)
-					t := (d - cutoutR) / float64(featherSize)
-					alpha = 0.5 * (1 - math.Cos(t*math.Pi))
-				} else {
-					alpha = 1.0
-				}
-				alphaRow[x] = alpha
+				alphaRow[x] = mask.Alpha(ddx*ddx + ddy*ddy)
 			}
 			srcOffset := (b.Min.Y+y-src.Rect.Min.Y)*src.Stride + (b.Min.X-src.Rect.Min.X)*4
 			dstOffset := y * dst.Stride

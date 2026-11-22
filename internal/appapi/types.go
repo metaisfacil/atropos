@@ -211,8 +211,12 @@ type DiscDrawRequest struct {
 }
 
 // DiscRotateRequest specifies the rotation angle for disc mode.
+// DiscRotateRequest rotates the disc by Angle degrees (clockwise positive).
+// Nudge marks a keyboard nudge (Q/E); see ShiftDiscRequest for how nudges
+// share undo steps.
 type DiscRotateRequest struct {
 	Angle float64 `json:"angle"`
+	Nudge bool    `json:"nudge"`
 }
 
 // PixelColorRequest holds image-space coordinates for colour sampling.
@@ -221,10 +225,50 @@ type PixelColorRequest struct {
 	Y int `json:"y"`
 }
 
-// ShiftDiscRequest holds the pixel offset to shift the disc centre by.
+// ShiftDiscRequest holds the pixel offset to shift the disc centre by. Every
+// shift is undoable. Nudge marks a keyboard nudge: an unbroken run of nudges
+// (arrow-key shifts and Q/E rotations, with nothing else in between) shares
+// one undo step, so holding a key cannot flood the shared history. Other
+// shifts (e.g. a Ctrl+drag) are each their own step.
 type ShiftDiscRequest struct {
-	DX int `json:"dx"`
-	DY int `json:"dy"`
+	DX    int  `json:"dx"`
+	DY    int  `json:"dy"`
+	Nudge bool `json:"nudge"`
+}
+
+// DiscShiftPreview describes the current disc render so the UI can preview a
+// Ctrl+drag shift by moving unmasked source content beneath a stationary
+// vignette. Fractional coordinates use continuous pixel-edge space (pixel i
+// spans [i, i+1)).
+//
+// A source point S maps into result-image space as
+// Rotate(S - shift - SourcePivot, Rotation) + Pivot, where Rotate matches
+// imageops.Rotate and shift is the pending (dx, dy) applied to the disc centre.
+type DiscShiftPreview struct {
+	// Source is a preview URL for the unmasked, unrotated, pre-levels disc
+	// source image (discBaseImage).
+	Source       string  `json:"source"`
+	CenterX      int     `json:"centerX"`
+	CenterY      int     `json:"centerY"`
+	SourcePivotX float64 `json:"sourcePivotX"`
+	SourcePivotY float64 `json:"sourcePivotY"`
+	PivotX       float64 `json:"pivotX"`
+	PivotY       float64 `json:"pivotY"`
+	MaskCenterX  float64 `json:"maskCenterX"`
+	MaskCenterY  float64 `json:"maskCenterY"`
+	Rotation     float64 `json:"rotation"`
+	Radius       int     `json:"radius"`
+	FeatherSize  int     `json:"featherSize"`
+	CutoutRadius int     `json:"cutoutRadius"`
+	// BgR/G/B is the vignette fill colour after post-disc levels.
+	BgR         uint8 `json:"bgR"`
+	BgG         uint8 `json:"bgG"`
+	BgB         uint8 `json:"bgB"`
+	LevelsBlack int   `json:"levelsBlack"`
+	LevelsWhite int   `json:"levelsWhite"`
+	// Width/Height are the dimensions of the committed result image.
+	Width  int `json:"width"`
+	Height int `json:"height"`
 }
 
 // FeatherSizeRequest holds the new feather width.

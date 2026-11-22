@@ -71,7 +71,7 @@ func TestOptimisticCropDimensionsAndSourceRect(t *testing.T) {
 
 func TestComputeDiscShift(t *testing.T) {
 	// No rotation: dragging +20px screen when scale is 2x shifts disc center by -40
-	res, ok := computeDiscShift(20, 10, image.Pt(1000, 1000), 300, 0, image.Pt(500, 500), image.Pt(500, 500), 500, 500, image.Pt(1000, 1000))
+	res, ok := computeDiscShift(20, 10, image.Pt(1000, 1000), 300, 0, image.Pt(500, 500), image.Pt(500, 500), 500, 500, image.Pt(1000, 1000), 0)
 	if !ok {
 		t.Fatal("computeDiscShift unrotated failed")
 	}
@@ -80,7 +80,7 @@ func TestComputeDiscShift(t *testing.T) {
 	}
 
 	// 90° clockwise disc rotation: +screenX corresponds to +sourceY after inverse rotation
-	res90, ok := computeDiscShift(20, 0, image.Pt(1000, 1000), 300, 90, image.Pt(500, 500), image.Pt(500, 500), 500, 500, image.Pt(1000, 1000))
+	res90, ok := computeDiscShift(20, 0, image.Pt(1000, 1000), 300, 90, image.Pt(500, 500), image.Pt(500, 500), 500, 500, image.Pt(1000, 1000), 0)
 	if !ok {
 		t.Fatal("computeDiscShift 90° failed")
 	}

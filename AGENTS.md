@@ -65,7 +65,7 @@ Mode switching must:
 ### Mode Switching
 
 10. Calling `e.mode = m` after async operations instead of synchronously at the top of `handleModeSwitch` causes mode buttons to lag behind all other visual changes.
-11. Disc translation must honor current disc rotation in both live preview and backend commit (use `computeDiscShift` in `ui/canvas_input.go` and keep `discRotation` in sync).
+11. Disc translation must honor current disc rotation in both live preview and backend commit (use `computeDiscShift` in `ui/canvas_input.go` and keep `discRotation` in sync). `DiscShiftPreview` (`app_disc.go`) mirrors the `redrawDisc` pipeline for the live Ctrl+drag layer (`ui/disc_shift_live.go`); change both together or the preview will visibly jump on release.
 
 ### UI Layout, Viewport & Shortcuts
 
@@ -102,6 +102,7 @@ Key files:
 - `ui/theme.go`, `ui/widgets.go` — color palette, theme, buttons, commit-on-release sliders, delayed tooltips (1 s hover), dropdowns, inputs, animated accordions
 - `ui/viewport.go` — GPU image viewport renderer, LRU `paint.ImageOp` cache, async region downsampler, scrollbars, live disc transform, vector guides
 - `ui/canvas_input.go` — pointer hit testing and drag state machines across all 4 modes, adjustments marquee, touch-up brush, and straight edge
+- `ui/disc_shift_live.go`, `ui/disc_shift_session.go` — live disc Ctrl+drag preview (content moves under a fixed vignette): rendering, and the multi-drag session lifecycle plus background prewarm
 - `ui/shortcuts.go` — global/modal keyboard shortcuts and optimistic W/A/S/D crop helpers
 - `ui/controller.go` — `EditorUI` state machine, sequential `backendJobs` worker, UI queue, mode switching, undo/redo, save/close orchestration
 - `ui/sidebar.go`, `ui/adjustments.go`, `ui/statusbar.go` — resizable sidebar, mode panels, adjustments panel, toolbar, status bar, loading overlay

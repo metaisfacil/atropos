@@ -124,6 +124,8 @@ type App struct {
 	// are never silently discarded.
 	discBakedBase  *image.NRGBA
 	discBakedAngle float64
+	// nudgeRun lets consecutive keyboard nudges share one undo step (see ShiftDisc).
+	nudgeRun discNudgeRun
 
 	// postDiscBlack / postDiscWhite record any levels stretch applied after the
 	// disc was committed. redrawDisc re-applies them at the end of every render

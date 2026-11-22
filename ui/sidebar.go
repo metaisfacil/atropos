@@ -652,7 +652,7 @@ func (e *EditorUI) layoutShortcutsAccordion(gtx layout.Context, maxH int) layout
 					}),
 					rowItem([]string{"Arrows"}, "Nudge disc (+Shift 20px)", true),
 					rowItem([]string{"Ctrl+Drag"}, "Shift disc", true),
-					rowItem([]string{"Shift+Drag"}, "Rotate disc", true),
+					rowItem([]string{"Shift+Drag"}, "Rotate disc (circle the centre)", true),
 					rowItem([]string{"+", "−"}, "Feather size (or Shift+Wheel)", true),
 					rowItem([]string{"Y"}, "Pick disc background at cursor", true),
 				)
