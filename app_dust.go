@@ -22,6 +22,9 @@ func (a *App) DustRemoval(req DustRemovalRequest) (*ProcessResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if a.warpedImage != nil && a.discEditing() {
+		return a.discDustRemoval(level, req.DPI, selectionRect, selectionKey)
+	}
 	processSource := src
 	if selectionKey.Active {
 		processSource = raster.CropNRGBA(src, selectionRect)

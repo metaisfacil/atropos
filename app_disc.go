@@ -86,22 +86,6 @@ func (a *App) refreshDiscWorkingCrop() {
 	a.discWorkingCropRect = r
 }
 
-// bakeDiscWorkingImage records img as the new base for subsequent disc
-// redraws whenever a post-disc raster edit modifies warpedImage directly.
-// Prior rotation, levels, and edge crops are already baked into img, so
-// delta rotation starts from the current rotationAngle and post-disc levels
-// and crop insets reset to neutral.
-func (a *App) bakeDiscWorkingImage(img *image.NRGBA) {
-	if a.discRadius <= 0 || img == nil {
-		return
-	}
-	a.discBakedBase = raster.CloneNRGBA(img)
-	a.discBakedAngle = a.rotationAngle
-	a.postDiscBlack = 0
-	a.postDiscWhite = 255
-	a.discCropInsets = discCropInsets{}
-}
-
 // DrawDisc extracts and applies a circular mask with feathering.
 //
 // A snapshot of currentImage is captured into discBaseImage so that any
@@ -120,8 +104,7 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 	a.discRadius = req.Radius
 	a.rotationAngle = 0
 	a.discCropInsets = discCropInsets{}
-	a.discBakedBase = nil
-	a.discBakedAngle = 0
+	a.discScale = discScale{}
 
 	// Snapshot the adjusted working image as the immutable source for all
 	// disc renders. Using currentImage (not originalImage) means any levels
@@ -169,9 +152,6 @@ func (a *App) DrawDisc(req DiscDrawRequest) (*ProcessResult, error) {
 func (a *App) redrawDisc() (*ProcessResult, error) {
 	a.redoStack = nil
 	descreenReset := a.descreenResultImage != nil
-	if a.discBakedBase != nil {
-		return a.redrawBakedDisc(descreenReset)
-	}
 	base := a.discBaseImage
 	if base == nil {
 		// Safety fallback for callers that pre-date discBaseImage.
@@ -243,6 +223,8 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 		feathered = imageops.ApplyLevels(feathered, a.postDiscBlack, a.postDiscWhite)
 	}
 	feathered = a.discCropInsets.crop(feathered)
+	// Resize is an output scale applied last, so the disc stays live.
+	feathered = a.applyDiscScale(feathered)
 
 	a.descreenBaseImage = nil
 	a.descreenResultImage = nil
@@ -257,51 +239,6 @@ func (a *App) redrawDisc() (*ProcessResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	resultBounds := a.warpedImage.Bounds()
-
-	return &ProcessResult{
-		Preview:         preview,
-		Width:           resultBounds.Dx(),
-		Height:          resultBounds.Dy(),
-		UnmaskedPreview: a.discNoMaskPreview,
-		DiscCenterX:     a.discCenter.X,
-		DiscCenterY:     a.discCenter.Y,
-		DiscRadius:      a.discRadius,
-		DiscRotation:    a.rotationAngle,
-		DiscBgR:         int(a.bgColor.R),
-		DiscBgG:         int(a.bgColor.G),
-		DiscBgB:         int(a.bgColor.B),
-		DescreenReset:   descreenReset,
-	}, nil
-}
-
-func (a *App) redrawBakedDisc(descreenReset bool) (*ProcessResult, error) {
-	if a.discBakedBase == nil || a.discRadius <= 0 {
-		return nil, fmt.Errorf("no disc defined")
-	}
-	deltaAngle := a.rotationAngle - a.discBakedAngle
-	var img *image.NRGBA
-	if deltaAngle != 0 {
-		img = imageops.Rotate(a.discBakedBase, deltaAngle, a.bgColor)
-	} else {
-		img = raster.CloneNRGBA(a.discBakedBase)
-	}
-	if a.postDiscBlack != 0 || a.postDiscWhite != 255 {
-		img = imageops.ApplyLevels(img, a.postDiscBlack, a.postDiscWhite)
-	}
-	img = a.discCropInsets.crop(img)
-
-	a.descreenBaseImage = nil
-	a.descreenResultImage = nil
-	a.descreenSelection = adjustmentSelectionKey{}
-	a.levelsBaseImage = nil
-	a.warpedImage = img
-
-	preview, err := a.imagePreviewURL(a.warpedImage)
-	if err != nil {
-		return nil, err
-	}
-	a.discNoMaskPreview = preview
 	resultBounds := a.warpedImage.Bounds()
 
 	return &ProcessResult{
@@ -463,14 +400,14 @@ func (a *App) endDiscHistoryStep(nudge, inRun bool, err error) {
 // can preview a Ctrl+drag shift: unmasked source content moves under a
 // vignette that stays fixed in result space. It mirrors redrawDisc exactly
 // (crop → mask → rotate about the crop centre → levels → inset crop) and does
-// not mutate any state. Baked discs (post-disc raster edits) ignore the disc
-// centre when redrawing, so no live shift preview is offered for them.
+// not mutate any state. Post-disc pixel edits live in discBaseImage (see
+// app_disc_edit.go), so the preview stays available after them.
+//
+// Pivot, MaskCenter, Width and Height are in unscaled render pixels; the UI
+// maps them to the stage per axis, which also accounts for an output scale.
 func (a *App) DiscShiftPreview() (*DiscShiftPreview, error) {
-	if a.discRadius <= 0 || a.discBaseImage == nil || a.warpedImage == nil {
+	if !a.discEditing() {
 		return nil, fmt.Errorf("no disc defined")
-	}
-	if a.discBakedBase != nil {
-		return nil, fmt.Errorf("disc shift preview unavailable after raster edits")
 	}
 	base := a.discBaseImage
 	source, err := a.imagePreviewURL(base)
@@ -478,20 +415,12 @@ func (a *App) DiscShiftPreview() (*DiscShiftPreview, error) {
 		return nil, err
 	}
 
-	req := a.discCropRect(base)
-	// imageops.Rotate pivots on pixel index (w/2, h/2); in continuous
-	// pixel-edge coordinates that is half a pixel further on.
-	cropPivotX := float64(req.Dx())/2 + 0.5
-	cropPivotY := float64(req.Dy())/2 + 0.5
-	keep := a.discCropInsets.rect(image.Rect(0, 0, req.Dx(), req.Dy()))
-	pivotX := cropPivotX - float64(keep.Min.X)
-	pivotY := cropPivotY - float64(keep.Min.Y)
-
+	m := a.discSourceMapping()
+	pivotX, pivotY := m.resPivotX, m.resPivotY
 	// ApplyCircularMask measures from the centre pixel index.
-	localX := float64(a.discCenter.X-req.Min.X) + 0.5 - cropPivotX
-	localY := float64(a.discCenter.Y-req.Min.Y) + 0.5 - cropPivotY
-	rad := a.rotationAngle * math.Pi / 180
-	cos, sin := math.Cos(rad), math.Sin(rad)
+	localX := float64(a.discCenter.X) + 0.5 - m.srcPivotX
+	localY := float64(a.discCenter.Y) + 0.5 - m.srcPivotY
+	cos, sin := m.cos, m.sin
 
 	bg := a.bgColor
 	if a.postDiscBlack != 0 || a.postDiscWhite != 255 {
@@ -499,13 +428,13 @@ func (a *App) DiscShiftPreview() (*DiscShiftPreview, error) {
 		px.SetNRGBA(0, 0, color.NRGBA{R: bg.R, G: bg.G, B: bg.B, A: 255})
 		bg = imageops.ApplyLevels(px, a.postDiscBlack, a.postDiscWhite).NRGBAAt(0, 0)
 	}
-	out := a.warpedImage.Bounds()
+	out := a.discPreScaleSize()
 	return &DiscShiftPreview{
 		Source:       source,
 		CenterX:      a.discCenter.X,
 		CenterY:      a.discCenter.Y,
-		SourcePivotX: float64(req.Min.X) + cropPivotX,
-		SourcePivotY: float64(req.Min.Y) + cropPivotY,
+		SourcePivotX: m.srcPivotX,
+		SourcePivotY: m.srcPivotY,
 		PivotX:       pivotX,
 		PivotY:       pivotY,
 		MaskCenterX:  pivotX + cos*localX - sin*localY,
@@ -519,8 +448,8 @@ func (a *App) DiscShiftPreview() (*DiscShiftPreview, error) {
 		BgB:          bg.B,
 		LevelsBlack:  a.postDiscBlack,
 		LevelsWhite:  a.postDiscWhite,
-		Width:        out.Dx(),
-		Height:       out.Dy(),
+		Width:        out.X,
+		Height:       out.Y,
 	}, nil
 }
 
@@ -571,8 +500,7 @@ func (a *App) resetDiscFields() {
 	a.discWorkingCrop = nil
 	a.discWorkingCropRect = image.Rectangle{}
 	a.discCropInsets = discCropInsets{}
-	a.discBakedBase = nil
-	a.discBakedAngle = 0
+	a.discScale = discScale{}
 	a.discNoMaskPreview = ""
 	a.postDiscBlack = 0
 	a.postDiscWhite = 255

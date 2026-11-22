@@ -1048,8 +1048,14 @@ func (e *EditorUI) discCtrlDragShift(pos f32.Point) (discShiftResult, bool) {
 	if srcDims.X <= 0 || srcDims.Y <= 0 {
 		srcDims = e.realImageDims
 	}
+	natDims := ctrl.natDims
+	if l := e.discShiftLive; l != nil && l.dragging && l.geo.Width > 0 && l.geo.Height > 0 {
+		// The render may carry an output scale (Resize); map the pointer in
+		// unscaled render pixels, which is what a disc shift moves.
+		natDims = image.Pt(l.geo.Width, l.geo.Height)
+	}
 	shift, ok := computeDiscShift(float64(pos.X-ctrl.startClientX), float64(pos.Y-ctrl.startClientY), srcDims,
-		e.discRadius, e.liveDiscRotation(), e.discCenter, ctrl.startCenter, ctrl.stageW, ctrl.stageH, ctrl.natDims, ctrl.maxShift)
+		e.discRadius, e.liveDiscRotation(), e.discCenter, ctrl.startCenter, ctrl.stageW, ctrl.stageH, natDims, ctrl.maxShift)
 	if ok {
 		e.liveGesture = discLivePose{shift: image.Pt(shift.dx, shift.dy)}
 		if l := e.discShiftLive; l != nil && l.dragging {

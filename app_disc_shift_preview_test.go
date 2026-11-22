@@ -183,7 +183,9 @@ func TestDiscShiftPreviewMatchesCommittedShift(t *testing.T) {
 	}
 }
 
-func TestDiscShiftPreviewUnavailable(t *testing.T) {
+// The live preview is unavailable without a disc and stays available after
+// post-disc pixel edits, which now live in the disc source.
+func TestDiscShiftPreviewAvailability(t *testing.T) {
 	a := newTestApp(200, 200)
 	if _, err := a.DiscShiftPreview(); err == nil {
 		t.Fatal("expected error with no disc")
@@ -191,9 +193,17 @@ func TestDiscShiftPreviewUnavailable(t *testing.T) {
 	if _, err := a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 60}); err != nil {
 		t.Fatal(err)
 	}
-	a.bakeDiscWorkingImage(a.warpedImage)
-	if _, err := a.DiscShiftPreview(); err == nil {
-		t.Fatal("expected error for a baked disc, whose redraw ignores the centre")
+	edited := raster.CloneNRGBA(a.discBaseImage)
+	edited.SetNRGBA(100, 100, color.NRGBA{R: 255, A: 255})
+	if _, err := a.installDiscSource(edited); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := a.DiscShiftPreview()
+	if err != nil {
+		t.Fatalf("preview unavailable after a post-disc edit: %v", err)
+	}
+	if src, ok := a.ResolvePreviewImage(preview.Source); !ok || src != edited {
+		t.Fatal("preview source is not the edited disc source")
 	}
 }
 

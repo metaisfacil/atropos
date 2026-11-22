@@ -462,20 +462,44 @@ func encodeTouchUpPreviewPatch(out *image.NRGBA, mask *image.Alpha) (*touchUpPre
 	}, nil
 }
 
-// commitTouchupResult atomically verifies and records a completed touch-up.
-// A result is valid only while it is still the newest registered operation and
-// the working image is the exact source from which the fill was calculated.
-func (a *App) commitTouchupResult(ctx context.Context, generation uint64, srcImg, out *image.NRGBA) (bool, bool) {
+// touchupSource is the image a touch-up fills: the disc source while a disc
+// is live (so the edit survives later shifts and rotations), otherwise the
+// working image.
+func (a *App) touchupSource() *image.NRGBA {
+	if a.discEditing() {
+		return a.discBaseImage
+	}
+	return a.workingImage()
+}
+
+// commitTouchup atomically verifies and records a completed touch-up. A
+// result is valid only while it is still the newest registered operation and
+// the touch-up source is the exact image from which the fill was calculated.
+// It returns the image now on screen: out itself, or for a disc the redraw
+// from the edited source.
+func (a *App) commitTouchup(ctx context.Context, generation uint64, srcImg, out *image.NRGBA) (committed, descreenReset bool, display *image.NRGBA, err error) {
 	a.touchupMu.Lock()
 	defer a.touchupMu.Unlock()
-	if ctx.Err() != nil || a.touchupGen != generation || a.workingImage() != srcImg {
-		return false, false
+	if ctx.Err() != nil || a.touchupGen != generation || a.touchupSource() != srcImg {
+		return false, false, nil, nil
 	}
-	descreenReset := a.descreenResultImage != nil
+	descreenReset = a.descreenResultImage != nil
 	a.saveUndo()
-	a.setWorkingImage(out)
 	a.touchupCancel = nil
-	return true, descreenReset
+	if a.discEditing() {
+		if _, err := a.installDiscSource(out); err != nil {
+			return true, descreenReset, nil, err
+		}
+		return true, descreenReset, a.warpedImage, nil
+	}
+	a.setWorkingImage(out)
+	return true, descreenReset, out, nil
+}
+
+// commitTouchupResult is commitTouchup without the display image.
+func (a *App) commitTouchupResult(ctx context.Context, generation uint64, srcImg, out *image.NRGBA) (bool, bool) {
+	committed, descreenReset, _, _ := a.commitTouchup(ctx, generation, srcImg, out)
+	return committed, descreenReset
 }
 
 // TouchUpApply accepts the legacy full-size PNG mask. New brush callers should
@@ -497,10 +521,15 @@ func (a *App) TouchUpApply(maskB64 string, patchSize int, iterations int) (*Proc
 	}
 	a.logf("TouchUpApply: mask=%v bytes=%d prepared in %s (total %s)", mask.Bounds(), len(mask.Pix), time.Since(phaseStarted), time.Since(operationStarted))
 
-	srcImg := a.workingImage()
+	srcImg := a.touchupSource()
 	if srcImg == nil {
 		a.logf("TouchUpApply: failed before launch in %s: no image loaded", time.Since(operationStarted))
 		return nil, fmt.Errorf("no image loaded")
+	}
+	if a.discEditing() {
+		if mask, err = a.discMaskToSource(mask); err != nil {
+			return nil, err
+		}
 	}
 	return a.startTouchup(srcImg, mask, patchSize, iterations, operationStarted)
 }
@@ -519,23 +548,33 @@ func (a *App) TouchUpApplyStrokes(request TouchUpStrokeRequest) (*ProcessResult,
 	// Cancel first so a prior fill cannot commit while this stroke is being
 	// rasterized. The bounded rasterizer normally completes in a few milliseconds.
 	a.cancelTouchup()
-	srcImg := a.workingImage()
+	srcImg := a.touchupSource()
 	if srcImg == nil {
 		a.logf("TouchUpApplyStrokes: failed before launch in %s: no image loaded", time.Since(started))
 		return nil, fmt.Errorf("no image loaded")
 	}
 	phaseStarted := time.Now()
-	mask, err := buildStrokeMask(srcImg.Bounds(), request.Points, request.BrushSize)
+	// Strokes arrive in result-image space; a live disc fills its source.
+	disc := a.discEditing()
+	points, brushSize := request.Points, request.BrushSize
+	if disc {
+		points, brushSize = a.discStrokesToSource(points, brushSize)
+	}
+	mask, err := buildStrokeMask(srcImg.Bounds(), points, brushSize)
 	if err != nil {
 		a.logf("TouchUpApplyStrokes: mask rasterization failed in %s (total %s): %v", time.Since(phaseStarted), time.Since(started), err)
 		return nil, err
 	}
-	_, selectionKey, err := resolveAdjustmentSelection(request.Selection, srcImg.Bounds())
+	selectionRect, selectionKey, err := resolveAdjustmentSelection(request.Selection, a.workingImage().Bounds())
 	if err != nil {
 		a.logf("TouchUpApplyStrokes: selection resolution failed in %s (total %s): %v", time.Since(phaseStarted), time.Since(started), err)
 		return nil, err
 	}
-	mask, err = clipAlphaToAdjustmentSelection(mask, selectionKey)
+	if disc && selectionKey.Active {
+		mask, err = a.clipAlphaToDiscSelection(mask, selectionRect)
+	} else if !disc {
+		mask, err = clipAlphaToAdjustmentSelection(mask, selectionKey)
+	}
 	if err != nil {
 		a.logf("TouchUpApplyStrokes: mask clipping failed in %s (total %s): %v", time.Since(phaseStarted), time.Since(started), err)
 		return nil, err
@@ -549,6 +588,8 @@ func (a *App) TouchUpApplyStrokes(request TouchUpStrokeRequest) (*ProcessResult,
 func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, iterations int, operationStarted time.Time) (*ProcessResult, error) {
 	a.cancelTouchup()
 	ctx, cancel := context.WithCancel(context.Background())
+	// A disc fill edits the disc source; what is shown is its redraw.
+	disc := a.discEditing() && srcImg == a.discBaseImage
 	a.touchupMu.Lock()
 	a.touchupGen++
 	generation := a.touchupGen
@@ -604,42 +645,59 @@ func (a *App) startTouchup(srcImg *image.NRGBA, mask *image.Alpha, patchSize, it
 		// Publishing first preserves the invariant that a preview-publication
 		// failure cannot leave behind an invisible committed edit. A cancelled
 		// operation may leave one unreachable cache entry, which is harmless and
-		// bounded by the preview revision LRU.
+		// bounded by the preview revision LRU. A disc fill is shown through its
+		// redraw, which only exists after the commit.
+		var preview string
+		var previewErr error
 		phaseStarted = time.Now()
-		preview, previewErr := a.imagePreviewURL(out)
-		if previewErr != nil {
-			outcome = "error"
-			a.logf("TouchUpApply %d: preview publication failed in %s (total %s): %v", generation, time.Since(phaseStarted), time.Since(operationStarted), previewErr)
-			emit(touchUpDoneEvent{Error: previewErr.Error()})
-			return
+		if !disc {
+			if preview, previewErr = a.imagePreviewURL(out); previewErr != nil {
+				outcome = "error"
+				a.logf("TouchUpApply %d: preview publication failed in %s (total %s): %v", generation, time.Since(phaseStarted), time.Since(operationStarted), previewErr)
+				emit(touchUpDoneEvent{Error: previewErr.Error()})
+				return
+			}
+			a.logf("TouchUpApply %d: preview published in %s (total %s)", generation, time.Since(phaseStarted), time.Since(operationStarted))
 		}
-		a.logf("TouchUpApply %d: preview published in %s (total %s)", generation, time.Since(phaseStarted), time.Since(operationStarted))
 
 		// Serialize the small state commit with cancellation. The generation and
 		// source-pointer checks prevent a superseded worker from snapshotting a
 		// newer image into undo and then overwriting it with stale output.
 		phaseStarted = time.Now()
-		committed, descreenReset := a.commitTouchupResult(ctx, generation, srcImg, out)
+		committed, descreenReset, display, commitErr := a.commitTouchup(ctx, generation, srcImg, out)
 		if !committed {
 			a.logf("TouchUpApply %d: commit rejected in %s (total %s)", generation, time.Since(phaseStarted), time.Since(operationStarted))
 			emit(touchUpDoneEvent{Cancelled: true})
 			return
 		}
+		if commitErr == nil && disc {
+			preview, commitErr = a.imagePreviewURL(display)
+		}
+		if commitErr != nil {
+			outcome = "error"
+			a.logf("TouchUpApply %d: disc redraw failed in %s (total %s): %v", generation, time.Since(phaseStarted), time.Since(operationStarted), commitErr)
+			emit(touchUpDoneEvent{Error: commitErr.Error()})
+			return
+		}
 		a.logf("TouchUpApply %d: committed in %s (total %s)", generation, time.Since(phaseStarted), time.Since(operationStarted))
 
-		phaseStarted = time.Now()
-		patch, patchErr := encodeTouchUpPreviewPatch(out, mask)
-		if patchErr != nil {
-			// The immutable preview remains a complete, authoritative fallback.
-			a.logf("TouchUpApply %d: preview patch failed in %s: %v", generation, time.Since(phaseStarted), patchErr)
-		} else if patch != nil {
-			a.logf("TouchUpApply %d: preview patch %dx%d encoded in %s, payload=%d bytes (total %s)",
-				generation, patch.Width, patch.Height, time.Since(phaseStarted), len(patch.DataURL), time.Since(operationStarted))
-		} else {
-			a.logf("TouchUpApply %d: preview patch skipped in %s (total %s)", generation, time.Since(phaseStarted), time.Since(operationStarted))
+		var patch *touchUpPreviewPatch
+		if !disc { // the mask is in source space for a disc fill
+			phaseStarted = time.Now()
+			var patchErr error
+			patch, patchErr = encodeTouchUpPreviewPatch(out, mask)
+			if patchErr != nil {
+				// The immutable preview remains a complete, authoritative fallback.
+				a.logf("TouchUpApply %d: preview patch failed in %s: %v", generation, time.Since(phaseStarted), patchErr)
+			} else if patch != nil {
+				a.logf("TouchUpApply %d: preview patch %dx%d encoded in %s, payload=%d bytes (total %s)",
+					generation, patch.Width, patch.Height, time.Since(phaseStarted), len(patch.DataURL), time.Since(operationStarted))
+			} else {
+				a.logf("TouchUpApply %d: preview patch skipped in %s (total %s)", generation, time.Since(phaseStarted), time.Since(operationStarted))
+			}
 		}
 
-		b := out.Bounds()
+		b := display.Bounds()
 		emit(touchUpDoneEvent{Preview: preview, Patch: patch, Message: "Touch-up applied.", Width: b.Dx(), Height: b.Dy(), DescreenReset: descreenReset})
 		outcome = "success"
 	}()

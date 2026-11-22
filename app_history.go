@@ -24,14 +24,13 @@ type undoImage struct {
 // crosses the initial crop. Cache rasters are rebuilt, never kept in history.
 type historyDisc struct {
 	base            *undoImage
-	bakedBase       *undoImage
-	bakedAngle      float64
 	center          image.Point
 	radius, feather int
 	background      color.NRGBA
 	cutout          bool
 	cutoutPercent   int
 	cropInsets      discCropInsets
+	scale           discScale
 }
 
 func (a *App) captureHistory(previous undoEntry) undoEntry {
@@ -42,18 +41,11 @@ func (a *App) captureHistory(previous undoEntry) undoEntry {
 		selectedCorners: append([]image.Point(nil), a.selectedCorners...)}
 	if a.discRadius > 0 {
 		base := previous.image
-		var prevBaked *undoImage
 		if previous.disc != nil {
 			base = previous.disc.base
-			prevBaked = previous.disc.bakedBase
-		}
-		if prevBaked == nil {
-			prevBaked = entry.image
 		}
 		entry.disc = &historyDisc{
 			base:          snapshotUndoImage(a.discBaseImage, base),
-			bakedBase:     snapshotUndoImage(a.discBakedBase, prevBaked),
-			bakedAngle:    a.discBakedAngle,
 			center:        a.discCenter,
 			radius:        a.discRadius,
 			feather:       a.featherSize,
@@ -61,22 +53,23 @@ func (a *App) captureHistory(previous undoEntry) undoEntry {
 			cutout:        a.discCenterCutout,
 			cutoutPercent: a.discCutoutPercent,
 			cropInsets:    a.discCropInsets,
+			scale:         a.discScale,
 		}
 	}
 	return entry
 }
 
-func (a *App) restoreHistoryDisc(disc *historyDisc, base, bakedBase *image.NRGBA, unmasked string) {
+func (a *App) restoreHistoryDisc(disc *historyDisc, base *image.NRGBA, unmasked string) {
 	a.discWorkingCrop = nil
 	a.discWorkingCropRect = image.Rectangle{}
 	a.discBaseImage, a.discNoMaskPreview = base, unmasked
-	a.discBakedBase, a.discBakedAngle = bakedBase, 0
 	a.discCenter, a.discRadius = image.Point{}, 0
 	a.discCropInsets = discCropInsets{}
+	a.discScale = discScale{}
 	if disc == nil {
 		return
 	}
-	a.discBakedAngle = disc.bakedAngle
+	a.discScale = disc.scale
 	a.discCenter, a.discRadius, a.featherSize = disc.center, disc.radius, disc.feather
 	a.bgColor, a.discCenterCutout, a.discCutoutPercent = disc.background, disc.cutout, disc.cutoutPercent
 	a.discCropInsets = disc.cropInsets
@@ -151,7 +144,7 @@ func (a *App) undoBytes() int64 {
 			size += 256
 			images := []*undoImage{entry.image}
 			if entry.disc != nil {
-				images = append(images, entry.disc.base, entry.disc.bakedBase)
+				images = append(images, entry.disc.base)
 			}
 			for _, img := range images {
 				if img == nil {

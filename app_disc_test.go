@@ -689,22 +689,29 @@ func TestStraightEdgeRotate_PreservesTouchUpAndUndo(t *testing.T) {
 	if _, err := a.DrawDisc(DiscDrawRequest{CenterX: 100, CenterY: 100, Radius: 60}); err != nil {
 		t.Fatal(err)
 	}
-	origCenter := a.warpedImage.NRGBAAt(60, 60)
+	origCenter := a.warpedImage.NRGBAAt(60, 95)
+	origBase := a.discBaseImage
 
-	// Simulate a completed Touch-up commit painting a solid red patch at the disc center.
-	edited := raster.CloneNRGBA(a.warpedImage)
+	// Simulate a completed Touch-up commit: a live disc fills its source, so
+	// the edit is a red patch in discBaseImage, between the centre cutout
+	// and the outer feather (source (70..130, 120..140) is result
+	// (30..90, 80..100), wide enough to survive the rotations below).
+	edited := raster.CloneNRGBA(a.discBaseImage)
 	red := color.NRGBA{R: 220, G: 20, B: 20, A: 255}
-	for y := 50; y < 70; y++ {
-		for x := 50; x < 70; x++ {
+	for y := 120; y < 140; y++ {
+		for x := 70; x < 130; x++ {
 			edited.SetNRGBA(x, y, red)
 		}
 	}
 	gen := registerTouchupTestOperation(a)
-	if committed, _ := a.commitTouchupResult(context.Background(), gen, a.warpedImage, edited); !committed {
+	if committed, _ := a.commitTouchupResult(context.Background(), gen, a.discBaseImage, edited); !committed {
 		t.Fatal("expected post-disc touch-up commit to succeed")
 	}
-	if a.discBakedBase == nil {
-		t.Fatal("expected discBakedBase to snapshot post-disc touch-up")
+	if a.discBaseImage != edited {
+		t.Fatal("expected the touch-up to become the disc source")
+	}
+	if got := a.warpedImage.NRGBAAt(60, 95); got != red {
+		t.Fatalf("touch-up not visible in the redraw: got %+v", got)
 	}
 
 	// Applying Straight edge rotations must preserve the Touch-up edit.
@@ -717,7 +724,7 @@ func TestStraightEdgeRotate_PreservesTouchUpAndUndo(t *testing.T) {
 	if a.rotationAngle != -20.0 {
 		t.Fatalf("rotationAngle = %.2f, want -20.0", a.rotationAngle)
 	}
-	afterStraight := a.warpedImage.NRGBAAt(60, 60)
+	afterStraight := a.warpedImage.NRGBAAt(60, 95)
 	if afterStraight.R < 180 || afterStraight.G > 60 || afterStraight.B > 60 {
 		t.Fatalf("touch-up center patch was lost after StraightEdgeRotate: got %+v", afterStraight)
 	}
@@ -732,30 +739,38 @@ func TestStraightEdgeRotate_PreservesTouchUpAndUndo(t *testing.T) {
 	if a.rotationAngle != 0 {
 		t.Fatalf("rotationAngle after undoing straight edges = %.2f, want 0", a.rotationAngle)
 	}
-	afterUndoRot := a.warpedImage.NRGBAAt(60, 60)
-	if afterUndoRot != red {
-		t.Fatalf("touch-up patch altered after undoing straight edge: got %+v, want %+v", afterUndoRot, red)
+	if got := a.warpedImage.NRGBAAt(60, 95); got != red {
+		t.Fatalf("touch-up patch altered after undoing straight edge: got %+v, want %+v", got, red)
 	}
 
-	// Undo the Touch-up step itself: original pre-touch-up pixel returns and baked base clears.
+	// The edit lives in the source, so the disc can still be shifted and the
+	// patch moves with the disc art: result (50,95) is now source (100,135).
+	if _, err := a.ShiftDisc(ShiftDiscRequest{DX: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.warpedImage.NRGBAAt(50, 95); got != red {
+		t.Fatalf("touch-up did not move with the shifted disc: got %+v", got)
+	}
 	if _, err := a.Undo(); err != nil {
 		t.Fatal(err)
 	}
-	if a.discBakedBase != nil {
-		t.Fatal("expected discBakedBase=nil after undoing touch-up")
+
+	// Undo the Touch-up step itself: the original source and pixel return.
+	if _, err := a.Undo(); err != nil {
+		t.Fatal(err)
 	}
-	if got := a.warpedImage.NRGBAAt(60, 60); got != origCenter {
+	if got := a.warpedImage.NRGBAAt(60, 95); got != origCenter {
 		t.Fatalf("pixel after undoing touch-up = %+v, want %+v", got, origCenter)
 	}
+	if !bytes.Equal(a.discBaseImage.Pix, origBase.Pix) {
+		t.Fatal("undoing the touch-up did not restore the disc source")
+	}
 
-	// Redo restores Touch-up and baked base.
+	// Redo restores the Touch-up in both the source and the render.
 	if _, err := a.Redo(); err != nil {
 		t.Fatal(err)
 	}
-	if a.discBakedBase == nil {
-		t.Fatal("expected discBakedBase!=nil after redoing touch-up")
-	}
-	if got := a.warpedImage.NRGBAAt(60, 60); got != red {
+	if got := a.warpedImage.NRGBAAt(60, 95); got != red || a.discBaseImage.NRGBAAt(100, 135) != red {
 		t.Fatalf("pixel after redoing touch-up = %+v, want %+v", got, red)
 	}
 }

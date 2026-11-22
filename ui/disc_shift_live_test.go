@@ -289,3 +289,20 @@ func TestDiscRotateDragTracksPointerAngle(t *testing.T) {
 		t.Fatalf("pivot change changed the angle to %v", r.total)
 	}
 }
+
+// A disc commit landing during a drag (e.g. the previous drag's) must not
+// switch off the in-progress gesture's fallback transform.
+func TestSyncDiscResponseKeepsMidDragFallback(t *testing.T) {
+	e := newTestEditorUI(t)
+	e.shiftDrag = &discRotateDragState{}
+	e.discLiveActive, e.discLiveTransform = true, discLiveTransform{Angle: 5}
+	e.syncDiscResponse(&ProcessResult{DiscRadius: 50})
+	if !e.discLiveActive || e.discLiveTransform.Angle != 5 {
+		t.Fatal("mid-drag commit reset the fallback transform")
+	}
+	e.shiftDrag = nil
+	e.syncDiscResponse(&ProcessResult{DiscRadius: 50})
+	if e.discLiveActive {
+		t.Fatal("commit after the drag kept the fallback transform")
+	}
+}
